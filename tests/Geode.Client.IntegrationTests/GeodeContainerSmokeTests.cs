@@ -1,4 +1,3 @@
-using FluentAssertions;
 using Xunit;
 
 namespace Geode.Client.IntegrationTests;
@@ -11,7 +10,7 @@ public class GeodeContainerSmokeTests(GeodeFixture fx)
     {
         // Phase 0: only verifies Testcontainers + Geode image work in this env.
         // Replace once Phase 2 (Ping) brings real client connectivity.
-        fx.LocatorPort.Should().BeGreaterThan(0);
-        fx.ServerPort.Should().BeGreaterThan(0);
+        Assert.True(fx.LocatorPort > 0);
+        Assert.True(fx.ServerPort > 0);
     }
 }

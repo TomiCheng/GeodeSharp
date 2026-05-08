@@ -65,32 +65,60 @@ internal sealed class BigEndianBinaryWriter
     // ======================================================================
 
     /// <summary>Write a signed 8-bit integer (i8).</summary>
-    public void WriteSByte(sbyte value) =>
-        throw new NotImplementedException("Phase 2 handshake.");
+    /// <remarks>
+    /// Two's-complement reinterpretation: <c>(byte)value</c> produces the same
+    /// bit pattern that Java's <c>DataOutput::writeByte</c> writes for an
+    /// <c>int8_t</c> (e.g. <c>-1</c> → <c>0xFF</c>).
+    /// </remarks>
+    public void WriteSByte(sbyte value) => _buffer.WriteByte((byte)value);
 
     /// <summary>Write a 16-bit signed integer in big-endian byte order.</summary>
-    public void WriteInt16(short value) =>
-        throw new NotImplementedException("Phase 2 handshake / Phase 4 typed values.");
+    public void WriteInt16(short value)
+    {
+        Span<byte> tmp = stackalloc byte[sizeof(short)];
+        BinaryPrimitives.WriteInt16BigEndian(tmp, value);
+        _buffer.Write(tmp);
+    }
 
     /// <summary>Write a 16-bit unsigned integer in big-endian byte order. Mirrors cppcache <c>writeChar</c>.</summary>
-    public void WriteUInt16(ushort value) =>
-        throw new NotImplementedException("Phase 4 typed values.");
+    public void WriteUInt16(ushort value)
+    {
+        Span<byte> tmp = stackalloc byte[sizeof(ushort)];
+        BinaryPrimitives.WriteUInt16BigEndian(tmp, value);
+        _buffer.Write(tmp);
+    }
 
     /// <summary>Write a 32-bit unsigned integer in big-endian byte order.</summary>
-    public void WriteUInt32(uint value) =>
-        throw new NotImplementedException("Phase 4 typed values.");
+    public void WriteUInt32(uint value)
+    {
+        Span<byte> tmp = stackalloc byte[sizeof(uint)];
+        BinaryPrimitives.WriteUInt32BigEndian(tmp, value);
+        _buffer.Write(tmp);
+    }
 
     /// <summary>Write a 64-bit unsigned integer in big-endian byte order.</summary>
-    public void WriteUInt64(ulong value) =>
-        throw new NotImplementedException("Phase 4 typed values.");
+    public void WriteUInt64(ulong value)
+    {
+        Span<byte> tmp = stackalloc byte[sizeof(ulong)];
+        BinaryPrimitives.WriteUInt64BigEndian(tmp, value);
+        _buffer.Write(tmp);
+    }
 
     /// <summary>Write an IEEE 754 single-precision float in big-endian byte order.</summary>
-    public void WriteFloat(float value) =>
-        throw new NotImplementedException("Phase 4 typed values.");
+    public void WriteFloat(float value)
+    {
+        Span<byte> tmp = stackalloc byte[sizeof(float)];
+        BinaryPrimitives.WriteSingleBigEndian(tmp, value);
+        _buffer.Write(tmp);
+    }
 
     /// <summary>Write an IEEE 754 double-precision float in big-endian byte order.</summary>
-    public void WriteDouble(double value) =>
-        throw new NotImplementedException("Phase 4 typed values.");
+    public void WriteDouble(double value)
+    {
+        Span<byte> tmp = stackalloc byte[sizeof(double)];
+        BinaryPrimitives.WriteDoubleBigEndian(tmp, value);
+        _buffer.Write(tmp);
+    }
 
     /// <summary>
     /// Write a length-prefixed byte sequence: i32 length followed by the bytes,

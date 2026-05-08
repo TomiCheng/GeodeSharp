@@ -30,10 +30,79 @@ public class BigEndianBinaryReaderTests
     }
 
     [Fact]
+    public void ReadInt16_decodes_big_endian_bytes()
+    {
+        var r = new BigEndianBinaryReader(new byte[] { 0x01, 0x02 });
+        Assert.Equal(0x0102, r.ReadInt16());
+    }
+
+    [Fact]
+    public void ReadInt16_decodes_negative_value()
+    {
+        var r = new BigEndianBinaryReader(new byte[] { 0xFF, 0xFF });
+        Assert.Equal((short)-1, r.ReadInt16());
+    }
+
+    [Fact]
+    public void ReadUInt16_decodes_big_endian_bytes()
+    {
+        var r = new BigEndianBinaryReader(new byte[] { 0xAB, 0xCD });
+        Assert.Equal((ushort)0xABCD, r.ReadUInt16());
+    }
+
+    [Fact]
+    public void ReadUInt32_decodes_big_endian_bytes()
+    {
+        var r = new BigEndianBinaryReader(new byte[] { 0xDE, 0xAD, 0xBE, 0xEF });
+        Assert.Equal(0xDEADBEEFu, r.ReadUInt32());
+    }
+
+    [Fact]
+    public void ReadUInt64_decodes_big_endian_bytes()
+    {
+        var r = new BigEndianBinaryReader(new byte[]
+        {
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        });
+        Assert.Equal(0x0102030405060708UL, r.ReadUInt64());
+    }
+
+    [Fact]
+    public void ReadFloat_decodes_IEEE754_big_endian_bytes()
+    {
+        // 0x3F800000 → 1.0f.
+        var r = new BigEndianBinaryReader(new byte[] { 0x3F, 0x80, 0x00, 0x00 });
+        Assert.Equal(1.0f, r.ReadFloat());
+    }
+
+    [Fact]
+    public void ReadDouble_decodes_IEEE754_big_endian_bytes()
+    {
+        // 0x3FF0000000000000 → 1.0.
+        var r = new BigEndianBinaryReader(new byte[]
+        {
+            0x3F, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        });
+        Assert.Equal(1.0, r.ReadDouble());
+    }
+
+    [Fact]
     public void ReadByte_decodes_single_byte()
     {
         var r = new BigEndianBinaryReader(new byte[] { 0xAB });
         Assert.Equal(0xAB, r.ReadByte());
+    }
+
+    [Theory]
+    [InlineData(0x00, (sbyte)0)]
+    [InlineData(0x01, (sbyte)1)]
+    [InlineData(0x7F, (sbyte)127)]
+    [InlineData(0xFF, (sbyte)-1)]
+    [InlineData(0x80, (sbyte)-128)]
+    public void ReadSByte_decodes_two_complement_byte(byte raw, sbyte expected)
+    {
+        var r = new BigEndianBinaryReader(new byte[] { raw });
+        Assert.Equal(expected, r.ReadSByte());
     }
 
     [Theory]

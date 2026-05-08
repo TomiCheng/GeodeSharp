@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
 using Xunit;
@@ -51,6 +52,10 @@ public sealed class GeodeFixture : IAsyncLifetime
 }
 
 [CollectionDefinition(nameof(GeodeCollection))]
+[SuppressMessage(
+    "Naming",
+    "CA1711:Identifiers should not have incorrect suffix",
+    Justification = "xUnit [CollectionDefinition] uses the class name as the collection identifier; renaming away from the 'Collection' suffix would break the [Collection(nameof(GeodeCollection))] usage convention.")]
 public sealed class GeodeCollection : ICollectionFixture<GeodeFixture>
 {
 }

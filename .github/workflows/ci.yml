@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # MinVer needs full history for tag-based versioning
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore -c Release
+
+      - name: Unit tests
+        run: dotnet test tests/Geode.Client.Tests/Geode.Client.Tests.csproj --no-build -c Release --logger trx --collect:"XPlat Code Coverage"
+
+      - name: Integration tests
+        # Testcontainers boots a real Geode container; runs on Linux runner with Docker.
+        run: dotnet test tests/Geode.Client.IntegrationTests/Geode.Client.IntegrationTests.csproj --no-build -c Release --logger trx
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: '**/*.trx'

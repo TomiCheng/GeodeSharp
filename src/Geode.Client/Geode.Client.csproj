@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Geode.Client</RootNamespace>
+    <AssemblyName>Geode.Client</AssemblyName>
+    <PackageId>Geode.Client</PackageId>
+
+    <!-- 這個專案是要打包成 NuGet 的 -->
+    <IsPackable>true</IsPackable>
+
+    <!-- MinVer：版本號從 git tag 推導 (例如 tag v0.1.0-alpha → 0.1.0-alpha) -->
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+    <MinVerDefaultPreReleaseIdentifiers>alpha.0</MinVerDefaultPreReleaseIdentifiers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+
+    <PackageReference Include="MinVer" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Geode.Client.Tests" />
+    <InternalsVisibleTo Include="Geode.Client.IntegrationTests" />
+  </ItemGroup>
+
+</Project>

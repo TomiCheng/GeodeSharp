@@ -1,0 +1,46 @@
+## .NET
+bin/
+obj/
+out/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+## NuGet output
+artifacts/
+*.nupkg
+*.snupkg
+
+## Test results
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+coverage*.json
+coverage*.xml
+coverage*.info
+
+## Rider / VS / VS Code
+.idea/
+.vs/
+.vscode/
+*.swp
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Claude Code (per-machine settings, transcripts, etc.)
+.claude/

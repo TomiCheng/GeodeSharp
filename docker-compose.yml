@@ -1,0 +1,22 @@
+services:
+  geode:
+    image: apachegeode/geode:latest
+    container_name: geode-dev
+    ports:
+      - "10334:10334"   # Locator
+      - "40404:40404"   # Cache server
+      - "1099:1099"     # JMX
+      - "7575:7575"     # gfsh
+    command:
+      - sh
+      - -c
+      - |
+        gfsh -e "start locator --name=loc --port=10334 --bind-address=0.0.0.0 --hostname-for-clients=localhost" \
+             -e "start server --name=srv --server-port=40404 --bind-address=0.0.0.0 --hostname-for-clients=localhost" \
+             -e "create region --name=test --type=REPLICATE" && \
+        tail -f /dev/null
+    healthcheck:
+      test: ["CMD", "sh", "-c", "echo > /dev/tcp/localhost/10334"]
+      interval: 5s
+      timeout: 3s
+      retries: 20

@@ -1,0 +1,47 @@
+<Project>
+  <PropertyGroup Label="TargetAndLanguage">
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+  </PropertyGroup>
+
+  <PropertyGroup Label="NuGetMetadata">
+    <Authors>Tomi</Authors>
+    <Company>Tomi</Company>
+    <Product>Geode .NET Client</Product>
+    <Description>A pure managed .NET 10 client for Apache Geode.</Description>
+    <Copyright>Copyright © Tomi $([System.DateTime]::Now.Year)</Copyright>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/CHANGE_ME/geode-dotnet</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/CHANGE_ME/geode-dotnet</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>geode;apache-geode;cache;distributed;dotnet;net10</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- IsPackable is set per-project (only the lib gets packed) -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <PropertyGroup Label="ReproducibleBuild">
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <PropertyGroup Label="SourceLinkAndSymbols">
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)README.md"
+          Pack="true"
+          PackagePath="\"
+          Condition="Exists('$(MSBuildThisFileDirectory)README.md') and '$(IsPackable)' == 'true'" />
+  </ItemGroup>
+</Project>

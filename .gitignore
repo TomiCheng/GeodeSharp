@@ -44,3 +44,6 @@ Thumbs.db
 
 ## Claude Code (per-machine settings, transcripts, etc.)
 .claude/
+
+## Visual Studio extension cache (per-user, e.g. CodeRush / similar)
+.cr/

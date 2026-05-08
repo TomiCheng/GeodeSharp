@@ -16,8 +16,8 @@
     <Description>A pure managed .NET 10 client for Apache Geode.</Description>
     <Copyright>Copyright © Tomi $([System.DateTime]::Now.Year)</Copyright>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/CHANGE_ME/geode-dotnet</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/CHANGE_ME/geode-dotnet</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/TomiCheng/GeodeSharp</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/TomiCheng/GeodeSharp</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>geode;apache-geode;cache;distributed;dotnet;net10</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>

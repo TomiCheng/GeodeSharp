@@ -1,0 +1,36 @@
+# Default: auto-detect text files; normalize line endings to LF in the repo.
+# Working-tree EOL is platform-native unless overridden below.
+* text=auto
+
+# Source code → LF everywhere (build tools, editors, and Git diff stay clean).
+*.cs        text eol=lf diff=csharp
+*.csproj    text eol=lf
+*.props     text eol=lf
+*.targets   text eol=lf
+*.json      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.md        text eol=lf
+*.editorconfig text eol=lf
+
+# Visual Studio / MSBuild prefers CRLF for these.
+*.sln       text eol=crlf
+*.cmd       text eol=crlf
+*.bat       text eol=crlf
+*.ps1       text eol=crlf
+
+# Binary — never normalize, never diff as text.
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.dll       binary
+*.exe       binary
+*.pdb       binary
+*.snk       binary
+*.nupkg     binary
+*.snupkg    binary
+
+# Linguist hints (so GitHub language stats reflect reality).
+*.cs        linguist-language=C#

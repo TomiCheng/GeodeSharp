@@ -1,66 +1,71 @@
 # Geode .NET Client — Project Context
 
-> 這份檔案是 Claude Code 的長期專案記憶。每次 session 啟動時讀過一次，
-> 確認當前 phase 後再開始工作。
+> This file is Claude Code's long-term project memory. Read it once at the
+> start of every session, confirm the current phase, then start work.
 
 ---
 
-## 一句話目標
+## One-line goal
 
-寫一個**純 managed、零外部相依、跨平台**的 Apache Geode client，
-target **.NET 10 (LTS)**，發到 NuGet。
+Build a **pure-managed, zero-dependency, cross-platform** Apache Geode
+client targeting **.NET 10 (LTS)** and ship it on NuGet.
 
-Repository 上游參考：<https://github.com/apache/geode-native>
-（C++/CLI 的 `clicache/` **不**移植；它的限制太多，且只能 Windows。）
-
----
-
-## 路線決策（已定，不要再翻案）
-
-### 為什麼不選其他路線
-
-- **A 路線（C++/CLI 移植到 .NET 10）**：放棄。MS 官方說 C++/CLI on .NET Core
-  只為相容性而支援、不會投資、僅 Windows、不能 AOT、不能 SDK-style project。
-- **B1 路線（保留 native cppcache + P/Invoke wrapper）**：放棄。要為每個 RID
-  維護 native binary，喪失 .NET 純 managed 的好處；C ABI shim 也是工作量。
-- **B2 路線（純 managed，自己講 wire protocol）**：✅ **採用**。
-
-### B2 的代價與對策
-
-Geode wire protocol **沒有官方規格文件**（Apache 自己 wiki 承認），
-只能從 `cppcache/src/` 與 Java `geode-core` 兩邊反推。
-
-對策：**功能範圍縮到 MVP**。只做 put/get/query/CRUD，
-CQ / function / transaction / HA / delta 全部不在 MVP 範圍。
+Upstream reference: <https://github.com/apache/geode-native>
+(We do **not** port the C++/CLI `clicache/` — too restricted, Windows-only.)
 
 ---
 
-## 相依策略
+## Architectural decisions (settled — do not relitigate)
 
-**零外部 NuGet 相依**（除了 test 工具）。
+### Why not the alternatives
 
-| cppcache 用的 | 我們的對策 |
-| --- | --- |
-| Boost.Asio | `System.Net.Sockets` + `System.IO.Pipelines` + `Channels` |
-| OpenSSL | `System.Net.Security.SslStream` |
-| Xerces-C (cache.xml) | **直接砍掉**，改用 `Microsoft.Extensions.Configuration` |
-| SQLite (overflow) | MVP 不做 |
-| Google Test / Benchmark | xUnit v3 / BenchmarkDotNet |
+- **Route A (port C++/CLI to .NET 10)**: rejected. Microsoft has stated
+  C++/CLI on .NET Core is supported for compatibility only, with no future
+  investment, Windows-only, no AOT, no SDK-style projects.
+- **Route B1 (keep native cppcache, add a P/Invoke wrapper)**: rejected.
+  Forces us to maintain native binaries per RID, loses the "pure managed"
+  benefit, and the C ABI shim is a project of its own.
+- **Route B2 (pure managed, speak the wire protocol ourselves)**:
+  ✅ **adopted**.
 
-設定走 .NET 慣例：`appsettings.json` + `IOptions<GeodeClientOptions>`。
-**不支援 cache.xml、不支援 .ini**。
+### B2's trade-offs and how we cope
+
+Geode's wire protocol has **no normative spec** (Apache's own wiki admits
+this). It has to be reverse-engineered from `cppcache/src/` and Java
+`geode-core`.
+
+Mitigation: **scope down hard to MVP.** Only Put / Get / Query / basic
+CRUD. CQ / function execution / transactions / HA / delta are explicitly
+out of MVP scope.
 
 ---
 
-## API 表面（DI-first）
+## Dependency policy
 
-使用者只看到一個 extension method 跟兩個介面：
+**Zero external runtime NuGet dependencies** (test tooling excepted).
+
+| What `cppcache` uses    | Our replacement                                                 |
+| ----------------------- | --------------------------------------------------------------- |
+| Boost.Asio              | `System.Net.Sockets` + `System.IO.Pipelines` + `Channels`       |
+| OpenSSL                 | `System.Net.Security.SslStream`                                 |
+| Xerces-C (cache.xml)    | **Cut entirely.** Use `Microsoft.Extensions.Configuration`.     |
+| SQLite (overflow)       | Out of MVP scope.                                               |
+| Google Test / Benchmark | xUnit v3 / BenchmarkDotNet                                      |
+
+Configuration follows .NET conventions: `appsettings.json` +
+`IOptions<GeodeClientOptions>`. **No `cache.xml`. No `.ini`.**
+
+---
+
+## API surface (DI-first)
+
+The user sees one extension method and two interfaces:
 
 ```csharp
-// 註冊
+// Registration
 builder.Services.AddGeodeClient(builder.Configuration.GetSection("Geode"));
 
-// 使用
+// Usage
 public class OrderService(IGeodeCache cache)
 {
     private readonly IRegion<string, Order> _orders = cache.GetRegion<string, Order>("orders");
@@ -68,7 +73,7 @@ public class OrderService(IGeodeCache cache)
 }
 ```
 
-主要介面：
+Main interfaces:
 
 ```csharp
 public interface IGeodeCache
@@ -91,7 +96,7 @@ public interface IQueryService { IQuery<T> NewQuery<T>(string oql); }
 public interface IQuery<T>      { Task<IReadOnlyList<T>> ExecuteAsync(CancellationToken ct = default); }
 ```
 
-設定 schema：
+Configuration schema:
 
 ```json
 {
@@ -105,26 +110,28 @@ public interface IQuery<T>      { Task<IReadOnlyList<T>> ExecuteAsync(Cancellati
 }
 ```
 
-**重要**：MVP 階段不需要支援 cache.xml / Region 建立。Region 由 DBA 用 gfsh
-建好（`gfsh create region --name=test --type=REPLICATE`），client 只是 proxy。
+**Important**: in MVP we do **not** support cache.xml or region creation.
+A DBA pre-creates regions with gfsh
+(`gfsh create region --name=test --type=REPLICATE`); the client only acts
+as a proxy.
 
 ---
 
-## Protocol 三層架構
+## Protocol layering
 
 ```
 ┌──────────────────────────────────────────────┐
-│ Operation 層: PutAsync, GetAsync, ...        │  C# public API
+│ Operation layer: PutAsync, GetAsync, ...     │  C# public API
 ├──────────────────────────────────────────────┤
-│ Message 層:  TcrMessage 編解碼               │  MessageType + Parts
+│ Message layer:   TcrMessage encode/decode    │  MessageType + Parts
 ├──────────────────────────────────────────────┤
-│ Frame 層:    header + part bytes             │  純 byte I/O
+│ Frame layer:     header + part bytes         │  pure byte I/O
 ├──────────────────────────────────────────────┤
-│ Transport:   TcpClient + SslStream           │  BCL
+│ Transport:       TcpClient + SslStream       │  BCL
 └──────────────────────────────────────────────┘
 ```
 
-### Frame 結構（all big-endian / network byte order）
+### Frame layout (all big-endian / network byte order)
 
 ```
 +------------------+------------------+------------------+------------------+
@@ -142,50 +149,52 @@ Part:
 +------------------+----------+--------+-------------+
 ```
 
-### Handshake（最容易踩雷的一段）
+### Handshake (the easiest place to get burned)
 
-**不**走標準 frame 格式，是 ad-hoc bytes。請逐 byte 對著
-`cppcache/src/TcrConnection.cpp::sendHandshakeForServer` 翻譯，**不要靠記憶**。
+The handshake does **not** use the standard frame format — it's an ad-hoc
+byte sequence. Translate it byte-for-byte from
+`cppcache/src/TcrConnection.cpp::sendHandshakeForServer`. **Do not work
+from memory.**
 
 ```
 client → server:
   ConnectionType u8       (100 = client-to-server)
-  ReplyOk         u8       (59)
+  ReplyOk         u8      (59)
   ProtocolVersion (major.minor.patch + ordinal)
-  ClientProxyMembershipID (serialised: host/PID/UUID/durable id)
+  ClientProxyMembershipID (serialised: host / PID / UUID / durable id)
   Credentials             (optional Properties)
 
 server → client:
-  AcceptanceCode  u8       (38 = OK)
+  AcceptanceCode    u8    (38 = OK)
   ServerQueueStatus u8
-  QueueSize       i32
-  ServerMember    (membership ID)
-  DeltaEnabled    u8
+  QueueSize         i32
+  ServerMember      (membership ID)
+  DeltaEnabled      u8
 ```
 
-### MVP MessageType 子集
+### MVP MessageType subset
 
-從 `cppcache/src/TcrMessage.hpp` 抓出：
+Pulled from `cppcache/src/TcrMessage.hpp`:
 
-| 值 | 名稱 | 用途 |
-|---|---|---|
-| 0 | Request | GET |
-| 1 | Response | GET reply |
-| 2 | Exception | server 錯誤 |
-| 5 | Ping | 健康檢查 |
-| 6 | Reply | ack |
-| 7 | Put | PUT |
-| 9 | Destroy | REMOVE 單 key |
-| 18 | CloseConnection | bye |
-| 34 | Query | OQL |
-| 38 | ContainsKey | |
-| 56 | PutAll | |
-| 99 | ServerToClientPing | server 主動 ping |
-| 100 | GetAll70 | |
+| Value | Name               | Purpose                |
+| ----- | ------------------ | ---------------------- |
+| 0     | Request            | GET                    |
+| 1     | Response           | GET reply              |
+| 2     | Exception          | server error           |
+| 5     | Ping               | health check           |
+| 6     | Reply              | ack                    |
+| 7     | Put                | PUT                    |
+| 9     | Destroy            | REMOVE single key      |
+| 18    | CloseConnection    | bye                    |
+| 34    | Query              | OQL                    |
+| 38    | ContainsKey        |                        |
+| 56    | PutAll             |                        |
+| 99    | ServerToClientPing | server-initiated ping  |
+| 100   | GetAll70           |                        |
 
-### 序列化（MVP）
+### Serialisation (MVP)
 
-只做以下 DSFID（對應 `cppcache/include/geode/internal/DSCode.hpp`）：
+Only these DSFIDs (per `cppcache/include/geode/internal/DSCode.hpp`):
 
 - String (DSFID 87)
 - Integer / Long
@@ -193,81 +202,102 @@ server → client:
 - Date
 - byte[] / null
 
-**PDX 不在 MVP**（Phase 11 才做）。
+**PDX is not in MVP** (it lands in Phase 11).
 
 ---
 
-## 開發順序（12 phases）
+## Roadmap (12 phases)
 
-每個 phase 都是「walking skeleton」，end-to-end 跑通才往下。
+Every phase is a "walking skeleton" — it must run end-to-end before the
+next one starts.
 
-| Phase | 內容 | 工時估 | 完成條件 |
-|---|---|---|---|
-| 0 | 環境與骨架（這份 zip）| 0.5w | solution build / Docker server up |
-| 1 | Frame codec 純編解碼 | 0.5w | 對 byte fixture 來回測試通過 |
-| 2 | **Slice 1: Ping 通**（含 handshake）| 1–2w | server 回 Reply(6) |
-| 3 | **Slice 2: Put/Get 通** | 1w | put `byte[]` 再 get 回來相等 |
-| 4 | 型別擴充（Int/Long/Bool/Date）| 1w | 各型別整合測試 |
-| 5 | API + DI 包裝 | 0.5w | `IGeodeCache` 可注入、可 demo |
-| — | **第一版 NuGet `0.1.0-alpha`** | | 可發佈 |
-| 6 | Connection Pool | 1w | 高併發 + server restart 自動恢復 |
-| 7 | Locator discovery | 0.5w | 只給 locator 也能連 |
-| 8 | TLS (`SslStream`) | 0.5w | 對 SSL server 能連 |
-| 9 | Authentication | 0.5w | username/password |
-| 10 | Query / OQL | 1w | `SELECT * FROM /r WHERE x>10` |
-| 11 | PDX 序列化 | 2w | 跟 Java client 互通 |
-| 12+ | CQ / Function / TX / HA / Delta | 之後 | 進階功能，視需求 |
-
----
-
-## 重要原則
-
-1. **先讀 cppcache，不要憑空設計 protocol**。`TcrMessage.cpp`、`TcrConnection.cpp`、
-   `HandShake.cpp`、`ThinClientPoolDM.cpp` 是規格。
-2. **Walking skeleton**：每個 phase 跑通端到端，不要做完整層才往上。
-3. **Frame codec 一定寫單元測試**，用 Wireshark 抓的 byte fixture 對照。
-4. **不要過度抽象**。底層程式碼先寫具體 class，到 Phase 5 要做 DI 才 extract interface。
-5. **Big-endian**（`BinaryPrimitives.WriteInt32BigEndian`）。Geode 是 Java，全網路位元序。
+| Phase | Content                                       | Estimate | Done when                                  |
+| ----- | --------------------------------------------- | -------- | ------------------------------------------ |
+| 0     | Environment & skeleton (this zip)             | 0.5w     | solution builds, Docker server up          |
+| 1     | Frame codec — pure encode/decode              | 0.5w     | byte-fixture round-trip tests pass         |
+| 2     | **Slice 1: Ping** (with handshake)            | 1–2w     | server replies with `Reply (6)`            |
+| 3     | **Slice 2: Put / Get**                        | 1w       | put `byte[]`, get back equal value         |
+| 4     | Type expansion (Int / Long / Bool / Date)     | 1w       | integration test per type                  |
+| 5     | API + DI wiring                               | 0.5w     | `IGeodeCache` injectable, demoable         |
+| —     | **First NuGet release `0.1.0-alpha`**         |          | publishable                                |
+| 6     | Connection pool                               | 1w       | high concurrency + auto-recover on restart |
+| 7     | Locator discovery                             | 0.5w     | locator-only config connects               |
+| 8     | TLS (`SslStream`)                             | 0.5w     | connects to TLS-enabled server             |
+| 9     | Authentication                                | 0.5w     | username / password                        |
+| 10    | Query / OQL                                   | 1w       | `SELECT * FROM /r WHERE x>10`              |
+| 11    | PDX serialisation                             | 2w       | interoperable with the Java client         |
+| 12+   | CQ / Function / TX / HA / Delta               | later    | advanced features, demand-driven           |
 
 ---
 
-## 工具鏈
+## Core principles
 
-- **.NET 10 SDK** (LTS, 2025-11 GA)
-- **xUnit v3** + FluentAssertions（assertion 風格）
-- **Testcontainers**：整合測試自動起 `apachegeode/geode` container
-- **GitHub Actions**：CI on PR/push、release on tag
-- **NuGet**：`MinVer` 從 git tag 取版本號
-- **Source Link** + `.snupkg`：使用者能 step into 原始碼
-- **Apache-2.0** 授權（與上游一致）
-
----
-
-## 內外網同步（Tomi 環境特化）
-
-開發者 Tomi 使用 dual-network 工作流：
-
-- 外網（internet）：主開發、GitHub、CI、發 NuGet
-- 內網（air-gapped）：CI/CD 測試，內網 GitLab/GitHub
-- 同步方式：USB bare repo
-- 分支：`main`（feature）、`ci/offline`（CI/CD config，**只活在內網**）
-- 規則：只有 reviewed/approved 的 `main` 才透過 USB 帶進內網
-
-**不要**在 main 直接 commit。所有變更走 PR + review。
+1. **Read `cppcache` before designing the protocol.** `TcrMessage.cpp`,
+   `TcrConnection.cpp`, `HandShake.cpp`, `ThinClientPoolDM.cpp` are the
+   spec.
+2. **Walking skeleton.** Get every phase to run end-to-end before stacking
+   the next layer.
+3. **Frame codec must have unit tests** backed by byte fixtures from
+   Wireshark or `cppcache` source.
+4. **Don't over-abstract.** Write concrete classes at the lower layers;
+   only extract interfaces in Phase 5 when DI lands.
+5. **Big-endian everywhere** (`BinaryPrimitives.WriteInt32BigEndian`).
+   Geode is Java; the wire is network byte order.
 
 ---
 
-## 下一步
+## Toolchain
 
-Phase 0 已經由本骨架提供（solution、csproj、workflow、docker-compose）。
-**從 Phase 1 開始**：實作 Frame codec。
+- **.NET 10 SDK** (LTS, GA 2025-11)
+- **xUnit v3** + FluentAssertions for assertions
+- **Testcontainers** — integration tests boot `apachegeode/geode`
+- **GitHub Actions** — `ci.yml` (currently **disabled** — see
+  `CONTRIBUTING.md` §5) and `release.yml` (tag-driven)
+- **NuGet** — `MinVer` derives the version from git tags
+- **Source Link** + `.snupkg` so users can step into our source
+- **Apache-2.0** licence (matches the upstream project)
 
-啟動指令範例：
+---
+
+## Dual-network sync (Tomi's setup)
+
+The maintainer (`Tomi`) develops on two networks:
+
+- **Internet side** — `origin` on GitHub, public CI, NuGet publish.
+- **Intranet side** — air-gapped enterprise GitLab / GitHub, internal CI.
+
+Sync is one-way: `main` on the internet → USB bare repo → intranet.
+
+Branching model (full rules in `CONTRIBUTING.md`):
+
+- `main` — protected, release-ready, the only branch that crosses the USB
+  boundary
+- `develop` — internet-side integration branch, day-to-day target for
+  feature PRs (does **not** cross USB)
+- `feat/*`, `fix/*`, `chore/*`, `docs/*`, ... — short-lived feature
+  branches, deleted after merge
+- `ci/offline` — intranet-only CI/CD configuration; **must never** be
+  pushed to `origin`
+
+**No direct commits to `main`.** All changes go through PR + review.
+See `CONTRIBUTING.md` for the full workflow.
+
+---
+
+## Next step
+
+Phase 0 was provided by the initial skeleton (solution, csproj, workflows,
+docker-compose). **Start at Phase 1**: implement the frame codec.
+
+Example kick-off prompt:
 
 ```
-讀 CLAUDE.md。我們從 Phase 1 開始：
-1) 在 src/Geode.Client/Protocol/ 建 BigEndianBinaryReader/Writer
-2) 建 TcrPart, TcrMessage record
-3) 在 tests/Geode.Client.Tests/Protocol/ 寫 frame round-trip 單元測試
-照 walking skeleton 原則做，先把最小路徑跑通。
+Read CLAUDE.md. We are starting Phase 1:
+1) Add BigEndianBinaryReader / BigEndianBinaryWriter in
+   src/Geode.Client/Protocol/.
+2) Add TcrPart, TcrMessage records.
+3) Add a frame round-trip unit test in
+   tests/Geode.Client.Tests/Protocol/.
+Follow the walking-skeleton principle — get the smallest path working
+first.
 ```

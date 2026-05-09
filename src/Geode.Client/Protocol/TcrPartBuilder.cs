@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Text;
 
 namespace Geode.Client.Protocol;
 
@@ -34,6 +35,11 @@ namespace Geode.Client.Protocol;
 /// </remarks>
 internal sealed class TcrPartBuilder
 {
+
+    public TcrPart RegionName(string regionName)
+    {
+        return RawBytes(Encoding.ASCII.GetBytes(regionName));
+    }
     /// <summary>
     /// Wrap raw bytes as a Part with <c>IsObject=0</c>. No DSCode, no
     /// length prefix in the payload — Part header alone supplies the

@@ -2,6 +2,11 @@
 
 > This file is Claude Code's long-term project memory. Read it once at the
 > start of every session, confirm where we are, then start work.
+>
+> Companion: **[`Scope.md`](Scope.md)** — audit of cppcache's 86 public
+> headers, in-scope vs deferred. Consult before introducing any new
+> public type so we don't drag in callbacks / CQ / function-execution
+> surface that MVP doesn't need.
 
 ---
 

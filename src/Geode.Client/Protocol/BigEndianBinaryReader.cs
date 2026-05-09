@@ -92,32 +92,65 @@ internal sealed class BigEndianBinaryReader
     // ======================================================================
 
     /// <summary>Read a signed 8-bit integer (i8).</summary>
-    public sbyte ReadSByte() =>
-        throw new NotImplementedException("Phase 2 handshake.");
+    /// <remarks>
+    /// Two's-complement reinterpretation of the next wire byte (e.g. <c>0xFF</c>
+    /// → <c>-1</c>), matching what Java's <c>DataInput::readByte</c> returns.
+    /// </remarks>
+    public sbyte ReadSByte() => (sbyte)ReadByte();
 
     /// <summary>Read a 16-bit signed integer in big-endian byte order.</summary>
-    public short ReadInt16() =>
-        throw new NotImplementedException("Phase 2 handshake / Phase 4 typed values.");
+    public short ReadInt16()
+    {
+        EnsureAvailable(sizeof(short));
+        var value = BinaryPrimitives.ReadInt16BigEndian(_buffer.Span.Slice(_position, sizeof(short)));
+        _position += sizeof(short);
+        return value;
+    }
 
     /// <summary>Read a 16-bit unsigned integer in big-endian byte order. Mirrors cppcache <c>readChar</c>.</summary>
-    public ushort ReadUInt16() =>
-        throw new NotImplementedException("Phase 4 typed values.");
+    public ushort ReadUInt16()
+    {
+        EnsureAvailable(sizeof(ushort));
+        var value = BinaryPrimitives.ReadUInt16BigEndian(_buffer.Span.Slice(_position, sizeof(ushort)));
+        _position += sizeof(ushort);
+        return value;
+    }
 
     /// <summary>Read a 32-bit unsigned integer in big-endian byte order.</summary>
-    public uint ReadUInt32() =>
-        throw new NotImplementedException("Phase 4 typed values.");
+    public uint ReadUInt32()
+    {
+        EnsureAvailable(sizeof(uint));
+        var value = BinaryPrimitives.ReadUInt32BigEndian(_buffer.Span.Slice(_position, sizeof(uint)));
+        _position += sizeof(uint);
+        return value;
+    }
 
     /// <summary>Read a 64-bit unsigned integer in big-endian byte order.</summary>
-    public ulong ReadUInt64() =>
-        throw new NotImplementedException("Phase 4 typed values.");
+    public ulong ReadUInt64()
+    {
+        EnsureAvailable(sizeof(ulong));
+        var value = BinaryPrimitives.ReadUInt64BigEndian(_buffer.Span.Slice(_position, sizeof(ulong)));
+        _position += sizeof(ulong);
+        return value;
+    }
 
     /// <summary>Read an IEEE 754 single-precision float in big-endian byte order.</summary>
-    public float ReadFloat() =>
-        throw new NotImplementedException("Phase 4 typed values.");
+    public float ReadFloat()
+    {
+        EnsureAvailable(sizeof(float));
+        var value = BinaryPrimitives.ReadSingleBigEndian(_buffer.Span.Slice(_position, sizeof(float)));
+        _position += sizeof(float);
+        return value;
+    }
 
     /// <summary>Read an IEEE 754 double-precision float in big-endian byte order.</summary>
-    public double ReadDouble() =>
-        throw new NotImplementedException("Phase 4 typed values.");
+    public double ReadDouble()
+    {
+        EnsureAvailable(sizeof(double));
+        var value = BinaryPrimitives.ReadDoubleBigEndian(_buffer.Span.Slice(_position, sizeof(double)));
+        _position += sizeof(double);
+        return value;
+    }
 
     /// <summary>
     /// Read a length-prefixed byte sequence: i32 length followed by the bytes.

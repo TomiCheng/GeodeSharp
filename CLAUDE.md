@@ -152,24 +152,41 @@ Part:
 ### Handshake (the easiest place to get burned)
 
 The handshake does **not** use the standard frame format — it's an ad-hoc
-byte sequence. Translate it byte-for-byte from
-`cppcache/src/TcrConnection.cpp::sendHandshakeForServer`. **Do not work
-from memory.**
+byte sequence. **Authoritative reference is the Java code, not cppcache** —
+when they disagree, the Java server wins:
+
+- client side: `geode-core/.../cache/client/internal/ClientSideHandshakeImpl.java::write`
+- server side: `geode-core/.../cache/tier/sockets/ServerSideHandshakeImpl.java`
+- shared    : `geode-core/.../cache/tier/sockets/Handshake.java` (constants, helpers)
+
+cppcache `TcrConnection.cpp::sendHandshakeForServer` is a parallel
+implementation with stale comments; cross-check before trusting it. **Do
+not work from memory.**
 
 ```
 client → server:
-  ConnectionType u8       (100 = client-to-server)
-  ReplyOk         u8      (59)
-  ProtocolVersion (major.minor.patch + ordinal)
-  ClientProxyMembershipID (serialised: host / PID / UUID / durable id)
-  Credentials             (optional Properties)
+  ConnectionType u8           (100 = CLIENT_TO_SERVER, 101/102 = notification)
+  ProtocolVersion             (ordinal only; 1 byte if ≤ 127, else sentinel + i16)
+  ReplyOk         u8          (59)
+  ReadTimeout     i32         (request/response only; notification writes port list instead)
+  ClientProxyMembershipID     (one DataSerializable object on the wire:
+                                 FixedIDByte u8 = 1
+                                 DSFid       u8 = 38
+                                 identity    varint length + bytes
+                                 uniqueId    i32)
+  Overrides[]   u8 × N        (currently always N = 1: conflation byte)
+  SecurityMode  u8            (0 = none, 1 = normal + creds body, 3 = multi-user notification)
+  [Credentials body]          (only when SecurityMode != none)
 
 server → client:
-  AcceptanceCode    u8    (38 = OK)
-  ServerQueueStatus u8
-  QueueSize         i32
-  ServerMember      (membership ID)
-  DeltaEnabled      u8
+  AcceptanceCode  u8          (59 = OK; 60 REFUSED / 61 INVALID / 66 AUTH_NOT_REQUIRED /
+                                67 SERVER_IS_LOCATOR / 21 SSL_REQUIRED on rejection)
+  EndpointType    u8          (subscription/queue role — drain in MVP)
+  QueueSize       i32         (subscription queue size — drain in MVP)
+  ServerMember                (DataSerializable membership ID — drain in MVP)
+  Message         (UTF-8 str) (server diagnostic / refusal text; empty on success,
+                                u16 length prefix)
+  DeltaEnabled    u8 (bool)   (delta propagation flag — drain in MVP)
 ```
 
 ### MVP MessageType subset

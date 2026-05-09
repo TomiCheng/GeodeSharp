@@ -24,15 +24,23 @@ public sealed class GeodeFixture : IAsyncLifetime
 
     public async ValueTask InitializeAsync()
     {
+        // The apachegeode/geode image's default entry runs `gfsh`, which
+        // exits as soon as the supplied -e scripts finish — taking the
+        // forked locator + server down with it. Wrap in `sh -c "...gfsh -e... &&
+        // tail -f $log"` so the container stays alive (and tails the server
+        // log to stdout for diagnostics).
         _container = new ContainerBuilder()
             .WithImage("apachegeode/geode:latest")
             .WithPortBinding(10334, true)
             .WithPortBinding(40404, true)
             .WithCommand(
-                "gfsh", "-e", "start locator --name=loc --port=10334",
-                "-e", "start server --name=srv --server-port=40404",
-                "-e", "create region --name=test --type=REPLICATE")
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilPortIsAvailable(10334))
+                "sh", "-c",
+                "gfsh "
+                    + "-e 'start locator --name=loc --port=10334' "
+                    + "-e 'start server --name=srv --server-port=40404' "
+                    + "-e 'create region --name=test --type=REPLICATE' "
+                    + "&& tail -f /srv/srv.log")
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilPortIsAvailable(40404))
             .Build();
 
         await _container.StartAsync();

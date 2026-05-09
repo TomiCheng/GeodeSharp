@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+
 namespace Geode.Client.Protocol.Operations;
 
 /// <summary>
@@ -23,44 +25,17 @@ internal static class PingExtensions
     /// <see cref="MessageType.Reply"/> (e.g. an Exception reply carrying
     /// error text in its parts).
     /// </exception>
-    /// <remarks>
-    /// Ping is a "meta" request with no transaction context, so we send
-    /// <c>TransactionId = -1</c> to match cppcache's <c>writeHeader</c>
-    /// behaviour when no <c>TxState</c> is present. We do not validate
-    /// the reply's <c>TransactionId</c> echo — a single connection only
-    /// has one in-flight request at a time, and the server's echo
-    /// semantics for meta ops are unspecified.
-    /// </remarks>
     public static async Task PingAsync(
         this TcrConnection connection,
         CancellationToken cancellationToken = default)
     {
-        var reply = await connection.SendRequestAsync(BuildPing(), cancellationToken).ConfigureAwait(false);
+        var messageBuilder = connection.ServiceProvider.GetRequiredService<TcrMessageBuilder>();
+        var reply = await connection.SendRequestAsync(messageBuilder.Ping(), cancellationToken).ConfigureAwait(false);
         if (reply.MessageType != MessageType.Reply)
         {
             throw new GeodeException(
                 $"Expected Reply ({(int)MessageType.Reply}) to Ping, got " +
                 $"{reply.MessageType} ({(int)reply.MessageType}).");
         }
-    }
-
-    /// <summary>
-    /// Build a <see cref="MessageType.Ping"/> request frame. Pure function;
-    /// no I/O. Exposed so callers (and tests) can inspect the bytes without
-    /// going through a connection.
-    /// </summary>
-    /// <remarks>
-    /// Ping is a "meta" request with no transaction context, so
-    /// <c>TransactionId = -1</c> matches cppcache's <c>writeHeader</c>
-    /// behaviour when no <c>TxState</c> is present.
-    /// </remarks>
-    public static TcrMessage BuildPing()
-    {
-        const int MetaTransactionId = -1;
-        return new TcrMessage(
-            MessageType: MessageType.Ping,
-            TransactionId: MetaTransactionId,
-            EarlyAck: 0,
-            Parts: []);
     }
 }

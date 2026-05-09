@@ -14,11 +14,14 @@ namespace Geode.Client.Protocol;
 /// Mirrors <c>cppcache/src/TcrConnection.cpp</c>.
 /// </summary>
 internal sealed class TcrConnection(
+    IServiceProvider serviceProvider,
     ILogger<TcrConnection> logger,
     IOptions<GeodeClientOptions> options,
     ClientProxyMembershipIdBuilder membershipIdBuilder)
     : IAsyncDisposable
 {
+
+    public IServiceProvider ServiceProvider { get; } = serviceProvider;
     readonly TcpClient _tcpClient = new();
     Stream? _stream;
 

@@ -56,6 +56,8 @@ public static class GeodeClientServiceCollectionExtensions
 
         services.AddOptions<GeodeClientOptions>().Bind(configuration);
         services.AddSingleton<ClientProxyMembershipIdBuilder>();
+        services.AddSingleton<TcrPartBuilder>();
+        services.AddSingleton<TcrMessageBuilder>();
         services.AddTransient<TcrConnection>();
 
         return services;

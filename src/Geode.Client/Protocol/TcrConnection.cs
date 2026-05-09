@@ -208,10 +208,9 @@ internal sealed class TcrConnection(
         //    TODO: extract DSCode / DSFid enums once Phase 3+ accumulates values.
         //    The 6c identity bytes are produced by ClientProxyMembershipIdBuilder
         //    (mirrors cppcache ClientProxyMembershipIDFactory + initObjectVars).
-        const byte FixedIdByte = 1;
         const byte ClientProxyMembershipIdDsfid = 38;
         const int FreshClientUniqueId = 1;
-        hello.WriteByte(FixedIdByte);                          // 6a
+        hello.WriteByte(DSCode.FixedIDByte);                   // 6a
         hello.WriteByte(ClientProxyMembershipIdDsfid);         // 6b
         hello.WriteBytes(membershipIdBuilder.Build());         // 6c (varint length + bytes)
         hello.WriteInt32(FreshClientUniqueId);                 // 6d

@@ -10,11 +10,6 @@ namespace Geode.Client.Protocol.Operations;
 /// </summary>
 internal static class PutExtensions
 {
-    // DSCode literals — to migrate to a shared Protocol/DSCode.cs once
-    // a few more land.
-    private const byte DSCodeNullObj = 41;          // 0x29
-    private const byte DSCodeCacheableBoolean = 53; // 0x35
-
     // EventId per-i64 type code. cppcache EventId::writeIdsData
     // (cppcache/src/EventId.hpp line 95) always emits 3 = "long".
     private const byte EventIdLongCode = 3;
@@ -48,7 +43,7 @@ internal static class PutExtensions
         // Part 2 — Operation = NullObj. DSCode 41 byte.
         var nullObjPart = new TcrPart(
             IsObject: 1,
-            Payload: new byte[] { DSCodeNullObj });
+            Payload: new byte[] { DSCode.NullObj });
 
         // Part 3 — Flags i32 = 0. Raw 4 bytes BE.
         var flagsPart = new TcrPart(
@@ -71,7 +66,7 @@ internal static class PutExtensions
         // Part 5 — isDelta as CacheableBoolean. DSCode 53 + 1 byte.
         var isDeltaPart = new TcrPart(
             IsObject: 1,
-            Payload: new byte[] { DSCodeCacheableBoolean, isDelta ? (byte)1 : (byte)0 });
+            Payload: new byte[] { DSCode.CacheableBoolean, isDelta ? (byte)1 : (byte)0 });
 
         // Part 6 — Value. Phase 3: byte[] only.
         // CacheableBytes special case (cppcache writeObjectPart, line 676):

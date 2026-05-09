@@ -230,13 +230,9 @@ internal sealed class BigEndianBinaryWriter(IBufferWriter<byte> output)
     /// </remarks>
     public void WriteString(string? value)
     {
-        const byte CacheableString = 42;
-        const byte CacheableNullString = 69;
-        const byte CacheableAsciiString = 87;
-
         if (value is null)
         {
-            WriteByte(CacheableNullString);
+            WriteByte(DSCode.CacheableNullString);
             return;
         }
 
@@ -255,7 +251,7 @@ internal sealed class BigEndianBinaryWriter(IBufferWriter<byte> output)
             // CacheableString: leading byte + u16 byte-length + modified UTF-8.
             // WriteJavaModifiedUtf8 already emits the u16 prefix + body, so
             // we just stamp the DSCode in front and delegate.
-            WriteByte(CacheableString);
+            WriteByte(DSCode.CacheableString);
             WriteJavaModifiedUtf8(value);
             return;
         }
@@ -267,7 +263,7 @@ internal sealed class BigEndianBinaryWriter(IBufferWriter<byte> output)
                 "is not implemented; add when a real wire field needs it.");
         }
 
-        WriteByte(CacheableAsciiString);
+        WriteByte(DSCode.CacheableASCIIString);
         WriteUInt16((ushort)value.Length);
 
         // ASCII bulk write: ask the underlying writer for one span big

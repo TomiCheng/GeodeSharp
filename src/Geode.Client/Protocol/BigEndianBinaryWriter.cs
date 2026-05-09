@@ -183,6 +183,78 @@ internal sealed class BigEndianBinaryWriter
     /// surrogate written as a 3-byte sequence (so a single supplementary
     /// codepoint takes 6 bytes, not 4 as in standard UTF-8).
     /// </remarks>
+    /// <summary>
+    /// Write a Geode-tagged string: <c>[DSCode byte][body]</c>. Mirrors
+    /// cppcache <c>DataOutput::writeString</c>; the matching reader on the
+    /// server is <c>StaticSerialization.readString</c>, which switches on
+    /// the leading DSCode byte.
+    /// </summary>
+    /// <remarks>
+    /// Branches:
+    /// <list type="bullet">
+    ///   <item><c>null</c> → 1 byte: <c>CacheableNullString (69)</c>.</item>
+    ///   <item>
+    ///     All ASCII (no NUL, all chars ≤ 0x7F), length ≤ 0xFFFF →
+    ///     <c>CacheableASCIIString (87)</c> + <c>u16</c> length + ASCII bytes.
+    ///   </item>
+    ///   <item>
+    ///     Has non-ASCII chars, modified-UTF-8 byte length ≤ 0xFFFF →
+    ///     <c>CacheableString (42)</c> + <c>u16</c> byte-length + modified-UTF-8 bytes.
+    ///   </item>
+    ///   <item>
+    ///     Lengths exceeding <c>0xFFFF</c> map to the <c>*Huge</c> DSCode
+    ///     variants (88 / 89). Not implemented yet — throws; fill in when a
+    ///     wire field with a huge string actually appears.
+    ///   </item>
+    /// </list>
+    /// </remarks>
+    public void WriteString(string? value)
+    {
+        const byte CacheableString = 42;
+        const byte CacheableNullString = 69;
+        const byte CacheableAsciiString = 87;
+
+        if (value is null)
+        {
+            WriteByte(CacheableNullString);
+            return;
+        }
+
+        var hasNonAscii = false;
+        foreach (var c in value)
+        {
+            if (c == 0 || c > 0x007F)
+            {
+                hasNonAscii = true;
+                break;
+            }
+        }
+
+        if (hasNonAscii)
+        {
+            // CacheableString: leading byte + u16 byte-length + modified UTF-8.
+            // WriteJavaModifiedUtf8 already emits the u16 prefix + body, so
+            // we just stamp the DSCode in front and delegate.
+            WriteByte(CacheableString);
+            WriteJavaModifiedUtf8(value);
+            return;
+        }
+
+        if (value.Length > 0xFFFF)
+        {
+            throw new NotImplementedException(
+                $"CacheableASCIIStringHuge encoding (string length {value.Length} > 65535) " +
+                "is not implemented; add when a real wire field needs it.");
+        }
+
+        WriteByte(CacheableAsciiString);
+        WriteUInt16((ushort)value.Length);
+        foreach (var c in value)
+        {
+            _buffer.WriteByte((byte)c);
+        }
+    }
+
     public void WriteJavaModifiedUtf8(string? value)
     {
         var s = value ?? string.Empty;

@@ -75,8 +75,9 @@ internal sealed class ClientProxyMembershipIdBuilder(IOptions<GeodeClientOptions
         // SyncCounter — reconnect counter; fresh process = 0.
         w.WriteInt32(0);
 
-        // Hostname (Java modified UTF-8, u16 length + bytes).
-        w.WriteJavaModifiedUtf8(Dns.GetHostName());
+        // Hostname — DSCode-tagged string (server reads via
+        // StaticSerialization.readString).
+        w.WriteString(Dns.GetHostName());
 
         // SplitBrainFlag — false. cppcache hardcodes 0 in the relevant ctor.
         w.WriteSByte(0);
@@ -90,27 +91,27 @@ internal sealed class ClientProxyMembershipIdBuilder(IOptions<GeodeClientOptions
         // vmKind = LONER (13) — we are not a Geode peer / locator / admin.
         w.WriteSByte(VmKindLoner);
 
-        // RoleArrayLength — no roles. Varint encoding.
+        // RoleArrayLength — no roles. Varint encoding (matches server's
+        // StaticSerialization.readStringArray length sentinel for empty/null).
         w.WriteArrayLen(0);
 
         // dsName — distributed system name; usually "" for clients.
-        w.WriteJavaModifiedUtf8(_options.Name);
+        w.WriteString(_options.Name);
 
         // uniqueTag — randomly generated per process.
-        w.WriteJavaModifiedUtf8(s_uniqueTag);
+        w.WriteString(s_uniqueTag);
 
-        // Durable subscription metadata (only when both id and timeout set).
-        // cppcache wraps the timeout via CacheableInt32::toData (a
-        // DSCode-tagged int32). We don't need it in MVP — assert and defer
-        // to Phase 12+.
+        // Durable subscription metadata. Server's MemberIdentifierImpl.toData
+        // / fromDataPre_GFE_9_0_0_0 reads BOTH unconditionally, so we must
+        // write them every time:
+        //   - empty string + 300 (server's documented default) for non-durable
+        //   - configured values for durable
+        // The previous "if (durable) throw; else skip" path corrupted the
+        // wire because the server then read the trailing Version bytes as
+        // string contents, hitting "Unknown header byte 0".
         var sub = _options.Subscription;
-        if (!string.IsNullOrEmpty(sub.DurableClientId)
-            && sub.DurableTimeout > TimeSpan.Zero)
-        {
-            throw new NotImplementedException(
-                "Durable subscription metadata in the membership ID requires " +
-                "CacheableInt32::toData — lands with subscriptions in Phase 12+.");
-        }
+        w.WriteString(sub.DurableClientId);
+        w.WriteInt32((int)sub.DurableTimeout.TotalSeconds);
 
         // Trailing protocol-version stamp (compressed ordinal).
         ProtocolVersion.Current.WriteTo(w);

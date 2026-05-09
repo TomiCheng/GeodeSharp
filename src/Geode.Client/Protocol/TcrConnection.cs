@@ -492,6 +492,31 @@ internal sealed class TcrConnection(
         return frame;
     }
 
+    /// <summary>
+    /// Send a <see cref="TcrMessage"/> request and read the next framed
+    /// message from the wire as the reply. The message-level building
+    /// block on top of <see cref="SendAsync"/> / <see cref="ReceiveAsync"/>;
+    /// every operation (Ping, Put, Get, …) ultimately composes through
+    /// here. Mirrors cppcache <c>TcrConnection::sendRequest</c>.
+    /// </summary>
+    /// <remarks>
+    /// Pure request-response: assumes one in-flight request per
+    /// connection. Doesn't interpret the reply — callers branch on
+    /// <see cref="TcrMessage.MessageType"/> themselves (e.g. Reply vs
+    /// Exception). Phase 6 connection-pool dispatch will lift this to be
+    /// the only public entry point used by the operation layer.
+    /// </remarks>
+    public async Task<TcrMessage> SendRequestAsync(
+        TcrMessage request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        await SendAsync(request.Encode(), cancellationToken).ConfigureAwait(false);
+        var replyBytes = await ReceiveAsync(cancellationToken).ConfigureAwait(false);
+        return TcrMessage.Decode(replyBytes);
+    }
+
     private bool _disposed;
 
     public async ValueTask DisposeAsync()

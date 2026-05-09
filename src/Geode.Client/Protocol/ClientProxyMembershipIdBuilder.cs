@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using Geode.Client.Options;
 using Microsoft.Extensions.Options;
@@ -152,7 +153,7 @@ internal sealed class ClientProxyMembershipIdBuilder(IOptions<GeodeClientOptions
         sb.Append("Native_");
         for (int i = 0; i < 10; i++)
         {
-            sb.Append(alphabet[Random.Shared.Next(alphabet.Length)]);
+            sb.Append(alphabet[RandomNumberGenerator.GetInt32(alphabet.Length)]);
         }
         sb.Append(Environment.ProcessId);
         return sb.ToString();

@@ -35,22 +35,32 @@ internal static class PingExtensions
         this TcrConnection connection,
         CancellationToken cancellationToken = default)
     {
-        // cppcache MetaTransactionId — used for any request that isn't
-        // part of a Geode transaction.
-        const int MetaTransactionId = -1;
-
-        var ping = new TcrMessage(
-            MessageType: MessageType.Ping,
-            TransactionId: MetaTransactionId,
-            EarlyAck: 0,
-            Parts: []);
-
-        var reply = await connection.SendRequestAsync(ping, cancellationToken).ConfigureAwait(false);
+        var reply = await connection.SendRequestAsync(BuildPing(), cancellationToken).ConfigureAwait(false);
         if (reply.MessageType != MessageType.Reply)
         {
             throw new GeodeException(
                 $"Expected Reply ({(int)MessageType.Reply}) to Ping, got " +
                 $"{reply.MessageType} ({(int)reply.MessageType}).");
         }
+    }
+
+    /// <summary>
+    /// Build a <see cref="MessageType.Ping"/> request frame. Pure function;
+    /// no I/O. Exposed so callers (and tests) can inspect the bytes without
+    /// going through a connection.
+    /// </summary>
+    /// <remarks>
+    /// Ping is a "meta" request with no transaction context, so
+    /// <c>TransactionId = -1</c> matches cppcache's <c>writeHeader</c>
+    /// behaviour when no <c>TxState</c> is present.
+    /// </remarks>
+    public static TcrMessage BuildPing()
+    {
+        const int MetaTransactionId = -1;
+        return new TcrMessage(
+            MessageType: MessageType.Ping,
+            TransactionId: MetaTransactionId,
+            EarlyAck: 0,
+            Parts: []);
     }
 }

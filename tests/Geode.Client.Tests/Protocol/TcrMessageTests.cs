@@ -33,7 +33,7 @@ public class TcrMessageTests
             EarlyAck: 0,
             Parts: new[]
             {
-                new TcrPart(IsObject: false, Payload: new byte[] { 0xAB }),
+                new TcrPart(IsObject: 0, Payload: new byte[] { 0xAB }),
             });
 
         var bytes = original.Encode();
@@ -51,9 +51,9 @@ public class TcrMessageTests
             EarlyAck: 0x02,
             Parts: new[]
             {
-                new TcrPart(IsObject: false, Payload: new byte[] { 0x01, 0x02 }),
-                new TcrPart(IsObject: true,  Payload: new byte[] { 0x57, 0x05, 0xAA, 0xBB }),
-                new TcrPart(IsObject: false, Payload: ReadOnlyMemory<byte>.Empty),
+                new TcrPart(IsObject: 0, Payload: new byte[] { 0x01, 0x02 }),
+                new TcrPart(IsObject: 1,  Payload: new byte[] { 0x57, 0x05, 0xAA, 0xBB }),
+                new TcrPart(IsObject: 0, Payload: ReadOnlyMemory<byte>.Empty),
             });
 
         var decoded = TcrMessage.Decode(original.Encode());
@@ -147,7 +147,7 @@ public class TcrMessageTests
             EarlyAck: 0,
             Parts: new[]
             {
-                new TcrPart(IsObject: false, Payload: new byte[] { 0xAB }),
+                new TcrPart(IsObject: 0, Payload: new byte[] { 0xAB }),
             });
 
         Assert.Equal(PutWithBytePartFixture, msg.Encode());
@@ -161,7 +161,7 @@ public class TcrMessageTests
         Assert.Equal(MessageType.Put, decoded.MessageType);
         Assert.Equal(99, decoded.TransactionId);
         Assert.Single(decoded.Parts);
-        Assert.False(decoded.Parts[0].IsObject);
+        Assert.Equal((byte)0, decoded.Parts[0].IsObject);
         Assert.Equal(new byte[] { 0xAB }, decoded.Parts[0].Payload.ToArray());
     }
 
@@ -207,11 +207,11 @@ public class TcrMessageTests
     {
         var a = new TcrMessage(MessageType.Put, 1, 0, new[]
         {
-            new TcrPart(false, new byte[] { 0xAA }),
+            new TcrPart(0, new byte[] { 0xAA }),
         });
         var b = new TcrMessage(MessageType.Put, 1, 0, new[]
         {
-            new TcrPart(false, new byte[] { 0xAA }),
+            new TcrPart(0, new byte[] { 0xAA }),
         });
 
         Assert.Equal(b, a);

@@ -33,9 +33,7 @@ namespace Geode.Client.Protocol;
 /// </remarks>
 internal sealed class BigEndianBinaryWriter(IBufferWriter<byte> output)
 {
-    private readonly IBufferWriter<byte> _output = output;
     private int _length;
-
 
     /// <summary>Bytes written so far through this writer.</summary>
     public int Length => _length;
@@ -47,9 +45,9 @@ internal sealed class BigEndianBinaryWriter(IBufferWriter<byte> output)
     /// <summary>Write a single unsigned byte (u8).</summary>
     public void WriteByte(byte value)
     {
-        var span = _output.GetSpan(1);
+        var span = output.GetSpan(1);
         span[0] = value;
-        _output.Advance(1);
+        output.Advance(1);
         _length++;
     }
 
@@ -59,18 +57,18 @@ internal sealed class BigEndianBinaryWriter(IBufferWriter<byte> output)
     /// <summary>Write a 32-bit signed integer in big-endian byte order.</summary>
     public void WriteInt32(int value)
     {
-        var span = _output.GetSpan(sizeof(int));
+        var span = output.GetSpan(sizeof(int));
         BinaryPrimitives.WriteInt32BigEndian(span, value);
-        _output.Advance(sizeof(int));
+        output.Advance(sizeof(int));
         _length += sizeof(int);
     }
 
     /// <summary>Write a 64-bit signed integer in big-endian byte order.</summary>
     public void WriteInt64(long value)
     {
-        var span = _output.GetSpan(sizeof(long));
+        var span = output.GetSpan(sizeof(long));
         BinaryPrimitives.WriteInt64BigEndian(span, value);
-        _output.Advance(sizeof(long));
+        output.Advance(sizeof(long));
         _length += sizeof(long);
     }
 
@@ -81,9 +79,9 @@ internal sealed class BigEndianBinaryWriter(IBufferWriter<byte> output)
     public void WriteBytesOnly(ReadOnlySpan<byte> bytes)
     {
         if (bytes.IsEmpty) return;
-        var span = _output.GetSpan(bytes.Length);
+        var span = output.GetSpan(bytes.Length);
         bytes.CopyTo(span);
-        _output.Advance(bytes.Length);
+        output.Advance(bytes.Length);
         _length += bytes.Length;
     }
 
@@ -102,54 +100,54 @@ internal sealed class BigEndianBinaryWriter(IBufferWriter<byte> output)
     /// <summary>Write a 16-bit signed integer in big-endian byte order.</summary>
     public void WriteInt16(short value)
     {
-        var span = _output.GetSpan(sizeof(short));
+        var span = output.GetSpan(sizeof(short));
         BinaryPrimitives.WriteInt16BigEndian(span, value);
-        _output.Advance(sizeof(short));
+        output.Advance(sizeof(short));
         _length += sizeof(short);
     }
 
     /// <summary>Write a 16-bit unsigned integer in big-endian byte order. Mirrors cppcache <c>writeChar</c>.</summary>
     public void WriteUInt16(ushort value)
     {
-        var span = _output.GetSpan(sizeof(ushort));
+        var span = output.GetSpan(sizeof(ushort));
         BinaryPrimitives.WriteUInt16BigEndian(span, value);
-        _output.Advance(sizeof(ushort));
+        output.Advance(sizeof(ushort));
         _length += sizeof(ushort);
     }
 
     /// <summary>Write a 32-bit unsigned integer in big-endian byte order.</summary>
     public void WriteUInt32(uint value)
     {
-        var span = _output.GetSpan(sizeof(uint));
+        var span = output.GetSpan(sizeof(uint));
         BinaryPrimitives.WriteUInt32BigEndian(span, value);
-        _output.Advance(sizeof(uint));
+        output.Advance(sizeof(uint));
         _length += sizeof(uint);
     }
 
     /// <summary>Write a 64-bit unsigned integer in big-endian byte order.</summary>
     public void WriteUInt64(ulong value)
     {
-        var span = _output.GetSpan(sizeof(ulong));
+        var span = output.GetSpan(sizeof(ulong));
         BinaryPrimitives.WriteUInt64BigEndian(span, value);
-        _output.Advance(sizeof(ulong));
+        output.Advance(sizeof(ulong));
         _length += sizeof(ulong);
     }
 
     /// <summary>Write an IEEE 754 single-precision float in big-endian byte order.</summary>
     public void WriteFloat(float value)
     {
-        var span = _output.GetSpan(sizeof(float));
+        var span = output.GetSpan(sizeof(float));
         BinaryPrimitives.WriteSingleBigEndian(span, value);
-        _output.Advance(sizeof(float));
+        output.Advance(sizeof(float));
         _length += sizeof(float);
     }
 
     /// <summary>Write an IEEE 754 double-precision float in big-endian byte order.</summary>
     public void WriteDouble(double value)
     {
-        var span = _output.GetSpan(sizeof(double));
+        var span = output.GetSpan(sizeof(double));
         BinaryPrimitives.WriteDoubleBigEndian(span, value);
-        _output.Advance(sizeof(double));
+        output.Advance(sizeof(double));
         _length += sizeof(double);
     }
 
@@ -274,12 +272,12 @@ internal sealed class BigEndianBinaryWriter(IBufferWriter<byte> output)
 
         // ASCII bulk write: ask the underlying writer for one span big
         // enough to hold the whole body, fill it, advance once.
-        var body = _output.GetSpan(value.Length);
+        var body = output.GetSpan(value.Length);
         for (var i = 0; i < value.Length; i++)
         {
             body[i] = (byte)value[i];
         }
-        _output.Advance(value.Length);
+        output.Advance(value.Length);
         _length += value.Length;
     }
 
@@ -320,7 +318,7 @@ internal sealed class BigEndianBinaryWriter(IBufferWriter<byte> output)
         if (byteLen == 0) return;
 
         // Pass 2: emit the bytes as one bulk span write.
-        var body = _output.GetSpan(byteLen);
+        var body = output.GetSpan(byteLen);
         var pos = 0;
         foreach (var c in s)
         {
@@ -340,7 +338,7 @@ internal sealed class BigEndianBinaryWriter(IBufferWriter<byte> output)
                 body[pos++] = (byte)(0x80 | (c & 0x3F));
             }
         }
-        _output.Advance(byteLen);
+        output.Advance(byteLen);
         _length += byteLen;
     }
 

@@ -9,7 +9,7 @@ public class TcrPartTests
     [Fact]
     public void Round_trip_with_simple_payload()
     {
-        var original = new TcrPart(IsObject: false, Payload: new byte[] { 0xDE, 0xAD });
+        var original = new TcrPart(IsObject: 0, Payload: new byte[] { 0xDE, 0xAD });
 
         var buffer = new ArrayBufferWriter<byte>();
         var w = new BigEndianBinaryWriter(buffer);
@@ -22,7 +22,7 @@ public class TcrPartTests
     [Fact]
     public void Round_trip_with_empty_payload()
     {
-        var original = new TcrPart(IsObject: false, Payload: ReadOnlyMemory<byte>.Empty);
+        var original = new TcrPart(IsObject: 0, Payload: ReadOnlyMemory<byte>.Empty);
 
         var buffer = new ArrayBufferWriter<byte>();
         var w = new BigEndianBinaryWriter(buffer);
@@ -37,14 +37,14 @@ public class TcrPartTests
     [Fact]
     public void Round_trip_with_isObject_true()
     {
-        var original = new TcrPart(IsObject: true, Payload: new byte[] { 0x57 /* DSCode for String */, 0x42 });
+        var original = new TcrPart(IsObject: 1, Payload: new byte[] { 0x57 /* DSCode for String */, 0x42 });
 
         var buffer = new ArrayBufferWriter<byte>();
         var w = new BigEndianBinaryWriter(buffer);
         original.Encode(w);
         var decoded = TcrPart.Decode(new BigEndianBinaryReader(buffer.WrittenSpan.ToArray()));
 
-        Assert.True(decoded.IsObject);
+        Assert.Equal((byte)1, decoded.IsObject);
         Assert.Equal(original, decoded);
     }
 
@@ -70,8 +70,8 @@ public class TcrPartTests
     public void Equality_is_content_based_not_reference_based()
     {
         // Two parts with identical content but distinct backing arrays must compare equal.
-        var a = new TcrPart(IsObject: false, Payload: new byte[] { 0x01, 0x02, 0x03 });
-        var b = new TcrPart(IsObject: false, Payload: new byte[] { 0x01, 0x02, 0x03 });
+        var a = new TcrPart(IsObject: 0, Payload: new byte[] { 0x01, 0x02, 0x03 });
+        var b = new TcrPart(IsObject: 0, Payload: new byte[] { 0x01, 0x02, 0x03 });
 
         Assert.Equal(b, a);
         Assert.Equal(b.GetHashCode(), a.GetHashCode());
@@ -80,8 +80,8 @@ public class TcrPartTests
     [Fact]
     public void Different_payload_compares_not_equal()
     {
-        var a = new TcrPart(IsObject: false, Payload: new byte[] { 0x01 });
-        var b = new TcrPart(IsObject: false, Payload: new byte[] { 0x02 });
+        var a = new TcrPart(IsObject: 0, Payload: new byte[] { 0x01 });
+        var b = new TcrPart(IsObject: 0, Payload: new byte[] { 0x02 });
 
         Assert.NotEqual(b, a);
     }

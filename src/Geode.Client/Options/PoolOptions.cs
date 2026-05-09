@@ -53,4 +53,13 @@ public class PoolOptions
     /// is <c>true</c>.
     /// </summary>
     public bool ShuffleEndpoints { get; set; } = true;
+
+    /// <summary>
+    /// How long a partitioned-region operation waits for a primary
+    /// bucket to become available before failing. Mirrors cppcache
+    /// <c>bucket-wait-timeout</c>; default <see cref="TimeSpan.Zero"/>
+    /// (= no extra wait). Out of MVP scope; included for parity during
+    /// the cppcache audit window.
+    /// </summary>
+    public TimeSpan BucketWaitTimeout { get; set; } = TimeSpan.Zero;
 }

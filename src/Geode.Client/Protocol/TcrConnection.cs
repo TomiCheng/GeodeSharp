@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.IO;
 using System.Net.Sockets;
@@ -13,11 +14,14 @@ namespace Geode.Client.Protocol;
 /// Mirrors <c>cppcache/src/TcrConnection.cpp</c>.
 /// </summary>
 internal sealed class TcrConnection(
+    IServiceProvider serviceProvider,
     ILogger<TcrConnection> logger,
     IOptions<GeodeClientOptions> options,
     ClientProxyMembershipIdBuilder membershipIdBuilder)
     : IAsyncDisposable
 {
+
+    public IServiceProvider ServiceProvider { get; } = serviceProvider;
     readonly TcpClient _tcpClient = new();
     Stream? _stream;
 
@@ -122,7 +126,8 @@ internal sealed class TcrConnection(
         // Build the whole client-hello in memory; flushed in one SendAsync
         // at the end of the client→server section so the bytes hit the wire
         // as a single TCP segment.
-        var hello = new BigEndianBinaryWriter();
+        var helloBuffer = new ArrayBufferWriter<byte>();
+        var hello = new BigEndianBinaryWriter(helloBuffer);
 
         // === Client → Server ====================================================
         //
@@ -206,10 +211,9 @@ internal sealed class TcrConnection(
         //    TODO: extract DSCode / DSFid enums once Phase 3+ accumulates values.
         //    The 6c identity bytes are produced by ClientProxyMembershipIdBuilder
         //    (mirrors cppcache ClientProxyMembershipIDFactory + initObjectVars).
-        const byte FixedIdByte = 1;
         const byte ClientProxyMembershipIdDsfid = 38;
         const int FreshClientUniqueId = 1;
-        hello.WriteByte(FixedIdByte);                          // 6a
+        hello.WriteByte(DSCode.FixedIDByte);                   // 6a
         hello.WriteByte(ClientProxyMembershipIdDsfid);         // 6b
         hello.WriteBytes(membershipIdBuilder.Build());         // 6c (varint length + bytes)
         hello.WriteInt32(FreshClientUniqueId);                 // 6d
@@ -239,7 +243,7 @@ internal sealed class TcrConnection(
         // Flush the whole client-hello in one SendAsync. NoDelay is on
         // (set in ConnectAsync), so this lands as a single TCP segment;
         // the server reads it as one contiguous handshake.
-        var clientHello = hello.ToArray();
+        var clientHello = helloBuffer.WrittenSpan.ToArray();
         logger.LogTrace("TcrConnection sending client-hello ({byteCount} bytes)", clientHello.Length);
         await SendAsync(clientHello, cancellationToken).ConfigureAwait(false);
 

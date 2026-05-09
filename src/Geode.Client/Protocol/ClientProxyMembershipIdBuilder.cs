@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -32,7 +33,6 @@ namespace Geode.Client.Protocol;
 internal sealed class ClientProxyMembershipIdBuilder(IOptions<GeodeClientOptions> options)
 {
     // === cppcache hardcoded values (ClientProxyMembershipID.cpp:31-33) ======
-    private const byte FixedIdByte = 1;
     private const byte InternalDistributedMemberDsfid = 92;
     private const sbyte VmKindLoner = 13;
     private const int DcPort = 12334;
@@ -63,10 +63,11 @@ internal sealed class ClientProxyMembershipIdBuilder(IOptions<GeodeClientOptions
             return _identity;
         }
 
-        var w = new BigEndianBinaryWriter();
+        var buffer = new ArrayBufferWriter<byte>();
+        var w = new BigEndianBinaryWriter(buffer);
 
         // Outer framing: this is a serialised InternalDistributedMember.
-        w.WriteByte(FixedIdByte);
+        w.WriteByte(DSCode.FixedIDByte);
         w.WriteByte(InternalDistributedMemberDsfid);
 
         // Host address: raw IP bytes (4 for IPv4, 16 for IPv6) prefixed
@@ -117,7 +118,7 @@ internal sealed class ClientProxyMembershipIdBuilder(IOptions<GeodeClientOptions
         // Trailing protocol-version stamp (compressed ordinal).
         ProtocolVersion.Current.WriteTo(w);
 
-        _identity = w.ToArray();
+        _identity = buffer.WrittenSpan.ToArray();
         return _identity;
     }
 

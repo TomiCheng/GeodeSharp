@@ -1,64 +1,89 @@
+using System.Buffers;
 using System.Buffers.Binary;
 
 namespace Geode.Client.Protocol;
 
 /// <summary>
-/// Sequential big-endian writer over an in-memory buffer.
+/// Sequential big-endian writer over an external <see cref="IBufferWriter{Byte}"/>.
 /// C# counterpart of cppcache <c>DataOutput</c> / <c>java.io.DataOutput</c>:
 /// every multi-byte primitive is written in network byte order so the bytes
 /// match what a Geode server expects.
 /// </summary>
 /// <remarks>
-/// Not thread-safe. Single producer, write-only. Call <see cref="ToArray"/>
-/// once you are done to get the encoded payload.
-///
-/// BCL's <c>System.IO.BinaryWriter</c> is little-endian, hence the explicit
-/// "BigEndian" prefix on this type — do not confuse the two.
-///
-/// Methods marked "prototype" throw <see cref="NotImplementedException"/>
+/// <para>
+/// Buffer ownership lives outside this class. Caller supplies any
+/// <see cref="IBufferWriter{Byte}"/> — typically:
+/// </para>
+/// <list type="bullet">
+///   <item><see cref="ArrayBufferWriter{Byte}"/> for in-memory encoding,</item>
+///   <item><c>System.IO.Pipelines.PipeWriter</c> for direct-to-socket
+///         writing in the Phase 6+ transport layer,</item>
+///   <item>a custom pooled / capturing writer for tests or buffer reuse.</item>
+/// </list>
+/// <para>
+/// The encoder is purely synchronous and write-only: flushing, lifetime,
+/// and "give me the bytes" are the buffer owner's concerns.
+/// </para>
+/// <para>
+/// Not thread-safe. BCL's <c>System.IO.BinaryWriter</c> is little-endian,
+/// hence the explicit "BigEndian" prefix on this type — do not confuse the
+/// two. Methods marked "prototype" throw <see cref="NotImplementedException"/>
 /// and will be filled in as later phases need them.
+/// </para>
 /// </remarks>
-internal sealed class BigEndianBinaryWriter
+internal sealed class BigEndianBinaryWriter(IBufferWriter<byte> output)
 {
-    private readonly MemoryStream _buffer = new();
+    private int _length;
 
-    /// <summary>Bytes written so far.</summary>
-    public int Length => (int)_buffer.Length;
+    /// <summary>Bytes written so far through this writer.</summary>
+    public int Length => _length;
 
     // ======================================================================
     //  Implemented (Phase 1 — frame codec)
     // ======================================================================
 
     /// <summary>Write a single unsigned byte (u8).</summary>
-    public void WriteByte(byte value) => _buffer.WriteByte(value);
+    public void WriteByte(byte value)
+    {
+        var span = output.GetSpan(1);
+        span[0] = value;
+        output.Advance(1);
+        _length++;
+    }
 
     /// <summary>Write a boolean as a single byte (1 = true, 0 = false).</summary>
-    public void WriteBool(bool value) => _buffer.WriteByte(value ? (byte)1 : (byte)0);
+    public void WriteBool(bool value) => WriteByte(value ? (byte)1 : (byte)0);
 
     /// <summary>Write a 32-bit signed integer in big-endian byte order.</summary>
     public void WriteInt32(int value)
     {
-        Span<byte> tmp = stackalloc byte[sizeof(int)];
-        BinaryPrimitives.WriteInt32BigEndian(tmp, value);
-        _buffer.Write(tmp);
+        var span = output.GetSpan(sizeof(int));
+        BinaryPrimitives.WriteInt32BigEndian(span, value);
+        output.Advance(sizeof(int));
+        _length += sizeof(int);
     }
 
     /// <summary>Write a 64-bit signed integer in big-endian byte order.</summary>
     public void WriteInt64(long value)
     {
-        Span<byte> tmp = stackalloc byte[sizeof(long)];
-        BinaryPrimitives.WriteInt64BigEndian(tmp, value);
-        _buffer.Write(tmp);
+        var span = output.GetSpan(sizeof(long));
+        BinaryPrimitives.WriteInt64BigEndian(span, value);
+        output.Advance(sizeof(long));
+        _length += sizeof(long);
     }
 
     /// <summary>
     /// Write a raw byte sequence verbatim (no length prefix, no transformation).
     /// Mirrors cppcache <c>DataOutput::writeBytesOnly</c>.
     /// </summary>
-    public void WriteBytesOnly(ReadOnlySpan<byte> bytes) => _buffer.Write(bytes);
-
-    /// <summary>Return a copy of all bytes written so far.</summary>
-    public byte[] ToArray() => _buffer.ToArray();
+    public void WriteBytesOnly(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.IsEmpty) return;
+        var span = output.GetSpan(bytes.Length);
+        bytes.CopyTo(span);
+        output.Advance(bytes.Length);
+        _length += bytes.Length;
+    }
 
     // ======================================================================
     //  Prototype — additional primitives, fill in when first needed
@@ -70,54 +95,60 @@ internal sealed class BigEndianBinaryWriter
     /// bit pattern that Java's <c>DataOutput::writeByte</c> writes for an
     /// <c>int8_t</c> (e.g. <c>-1</c> → <c>0xFF</c>).
     /// </remarks>
-    public void WriteSByte(sbyte value) => _buffer.WriteByte((byte)value);
+    public void WriteSByte(sbyte value) => WriteByte((byte)value);
 
     /// <summary>Write a 16-bit signed integer in big-endian byte order.</summary>
     public void WriteInt16(short value)
     {
-        Span<byte> tmp = stackalloc byte[sizeof(short)];
-        BinaryPrimitives.WriteInt16BigEndian(tmp, value);
-        _buffer.Write(tmp);
+        var span = output.GetSpan(sizeof(short));
+        BinaryPrimitives.WriteInt16BigEndian(span, value);
+        output.Advance(sizeof(short));
+        _length += sizeof(short);
     }
 
     /// <summary>Write a 16-bit unsigned integer in big-endian byte order. Mirrors cppcache <c>writeChar</c>.</summary>
     public void WriteUInt16(ushort value)
     {
-        Span<byte> tmp = stackalloc byte[sizeof(ushort)];
-        BinaryPrimitives.WriteUInt16BigEndian(tmp, value);
-        _buffer.Write(tmp);
+        var span = output.GetSpan(sizeof(ushort));
+        BinaryPrimitives.WriteUInt16BigEndian(span, value);
+        output.Advance(sizeof(ushort));
+        _length += sizeof(ushort);
     }
 
     /// <summary>Write a 32-bit unsigned integer in big-endian byte order.</summary>
     public void WriteUInt32(uint value)
     {
-        Span<byte> tmp = stackalloc byte[sizeof(uint)];
-        BinaryPrimitives.WriteUInt32BigEndian(tmp, value);
-        _buffer.Write(tmp);
+        var span = output.GetSpan(sizeof(uint));
+        BinaryPrimitives.WriteUInt32BigEndian(span, value);
+        output.Advance(sizeof(uint));
+        _length += sizeof(uint);
     }
 
     /// <summary>Write a 64-bit unsigned integer in big-endian byte order.</summary>
     public void WriteUInt64(ulong value)
     {
-        Span<byte> tmp = stackalloc byte[sizeof(ulong)];
-        BinaryPrimitives.WriteUInt64BigEndian(tmp, value);
-        _buffer.Write(tmp);
+        var span = output.GetSpan(sizeof(ulong));
+        BinaryPrimitives.WriteUInt64BigEndian(span, value);
+        output.Advance(sizeof(ulong));
+        _length += sizeof(ulong);
     }
 
     /// <summary>Write an IEEE 754 single-precision float in big-endian byte order.</summary>
     public void WriteFloat(float value)
     {
-        Span<byte> tmp = stackalloc byte[sizeof(float)];
-        BinaryPrimitives.WriteSingleBigEndian(tmp, value);
-        _buffer.Write(tmp);
+        var span = output.GetSpan(sizeof(float));
+        BinaryPrimitives.WriteSingleBigEndian(span, value);
+        output.Advance(sizeof(float));
+        _length += sizeof(float);
     }
 
     /// <summary>Write an IEEE 754 double-precision float in big-endian byte order.</summary>
     public void WriteDouble(double value)
     {
-        Span<byte> tmp = stackalloc byte[sizeof(double)];
-        BinaryPrimitives.WriteDoubleBigEndian(tmp, value);
-        _buffer.Write(tmp);
+        var span = output.GetSpan(sizeof(double));
+        BinaryPrimitives.WriteDoubleBigEndian(span, value);
+        output.Advance(sizeof(double));
+        _length += sizeof(double);
     }
 
     /// <summary>
@@ -134,7 +165,7 @@ internal sealed class BigEndianBinaryWriter
             return;
         }
         WriteArrayLen(bytes.Length);
-        _buffer.Write(bytes);
+        WriteBytesOnly(bytes);
     }
 
     /// <summary>
@@ -173,17 +204,6 @@ internal sealed class BigEndianBinaryWriter
     }
 
     /// <summary>
-    /// Write a string in Java modified UTF-8 with a u16 byte-length prefix.
-    /// Mirrors cppcache <c>DataOutput::writeUTF</c> / <c>writeJavaModifiedUtf8</c>.
-    /// </summary>
-    /// <remarks>
-    /// Modified UTF-8 differs from standard UTF-8 in two places: <c>\0</c> is
-    /// encoded as the two bytes <c>0xC0 0x80</c> (never a single zero byte),
-    /// and characters above U+FFFF are encoded as a surrogate pair, each
-    /// surrogate written as a 3-byte sequence (so a single supplementary
-    /// codepoint takes 6 bytes, not 4 as in standard UTF-8).
-    /// </remarks>
-    /// <summary>
     /// Write a Geode-tagged string: <c>[DSCode byte][body]</c>. Mirrors
     /// cppcache <c>DataOutput::writeString</c>; the matching reader on the
     /// server is <c>StaticSerialization.readString</c>, which switches on
@@ -210,13 +230,9 @@ internal sealed class BigEndianBinaryWriter
     /// </remarks>
     public void WriteString(string? value)
     {
-        const byte CacheableString = 42;
-        const byte CacheableNullString = 69;
-        const byte CacheableAsciiString = 87;
-
         if (value is null)
         {
-            WriteByte(CacheableNullString);
+            WriteByte(DSCode.CacheableNullString);
             return;
         }
 
@@ -235,7 +251,7 @@ internal sealed class BigEndianBinaryWriter
             // CacheableString: leading byte + u16 byte-length + modified UTF-8.
             // WriteJavaModifiedUtf8 already emits the u16 prefix + body, so
             // we just stamp the DSCode in front and delegate.
-            WriteByte(CacheableString);
+            WriteByte(DSCode.CacheableString);
             WriteJavaModifiedUtf8(value);
             return;
         }
@@ -247,12 +263,18 @@ internal sealed class BigEndianBinaryWriter
                 "is not implemented; add when a real wire field needs it.");
         }
 
-        WriteByte(CacheableAsciiString);
+        WriteByte(DSCode.CacheableASCIIString);
         WriteUInt16((ushort)value.Length);
-        foreach (var c in value)
+
+        // ASCII bulk write: ask the underlying writer for one span big
+        // enough to hold the whole body, fill it, advance once.
+        var body = output.GetSpan(value.Length);
+        for (var i = 0; i < value.Length; i++)
         {
-            _buffer.WriteByte((byte)c);
+            body[i] = (byte)value[i];
         }
+        output.Advance(value.Length);
+        _length += value.Length;
     }
 
     public void WriteJavaModifiedUtf8(string? value)
@@ -289,28 +311,31 @@ internal sealed class BigEndianBinaryWriter
 
         WriteUInt16((ushort)byteLen);
 
-        // Pass 2: emit the bytes.
-        Span<byte> buf = stackalloc byte[3];
+        if (byteLen == 0) return;
+
+        // Pass 2: emit the bytes as one bulk span write.
+        var body = output.GetSpan(byteLen);
+        var pos = 0;
         foreach (var c in s)
         {
             if (c >= 0x0001 && c <= 0x007F)
             {
-                _buffer.WriteByte((byte)c);
+                body[pos++] = (byte)c;
             }
             else if (c == 0 || (c >= 0x0080 && c <= 0x07FF))
             {
-                buf[0] = (byte)(0xC0 | (c >> 6));
-                buf[1] = (byte)(0x80 | (c & 0x3F));
-                _buffer.Write(buf[..2]);
+                body[pos++] = (byte)(0xC0 | (c >> 6));
+                body[pos++] = (byte)(0x80 | (c & 0x3F));
             }
             else
             {
-                buf[0] = (byte)(0xE0 | (c >> 12));
-                buf[1] = (byte)(0x80 | ((c >> 6) & 0x3F));
-                buf[2] = (byte)(0x80 | (c & 0x3F));
-                _buffer.Write(buf);
+                body[pos++] = (byte)(0xE0 | (c >> 12));
+                body[pos++] = (byte)(0x80 | ((c >> 6) & 0x3F));
+                body[pos++] = (byte)(0x80 | (c & 0x3F));
             }
         }
+        output.Advance(byteLen);
+        _length += byteLen;
     }
 
     /// <summary>

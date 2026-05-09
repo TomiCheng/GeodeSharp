@@ -19,24 +19,18 @@ namespace Geode.Client.Protocol;
 /// Methods marked "prototype" throw <see cref="NotImplementedException"/>
 /// and will be filled in as later phases need them.
 /// </remarks>
-internal sealed class BigEndianBinaryReader
+internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
 {
-    private readonly ReadOnlyMemory<byte> _buffer;
     private int _position;
-
-    public BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
-    {
-        _buffer = buffer;
-    }
 
     /// <summary>Current byte offset within the buffer.</summary>
     public int Position => _position;
 
     /// <summary>Total length of the underlying buffer.</summary>
-    public int Length => _buffer.Length;
+    public int Length => buffer.Length;
 
     /// <summary>Bytes left to read from the current <see cref="Position"/>.</summary>
-    public int Remaining => _buffer.Length - _position;
+    public int Remaining => buffer.Length - _position;
 
     // ======================================================================
     //  Implemented (Phase 1 — frame codec)
@@ -46,7 +40,7 @@ internal sealed class BigEndianBinaryReader
     public byte ReadByte()
     {
         EnsureAvailable(sizeof(byte));
-        var value = _buffer.Span[_position];
+        var value = buffer.Span[_position];
         _position += sizeof(byte);
         return value;
     }
@@ -58,7 +52,7 @@ internal sealed class BigEndianBinaryReader
     public int ReadInt32()
     {
         EnsureAvailable(sizeof(int));
-        var value = BinaryPrimitives.ReadInt32BigEndian(_buffer.Span.Slice(_position, sizeof(int)));
+        var value = BinaryPrimitives.ReadInt32BigEndian(buffer.Span.Slice(_position, sizeof(int)));
         _position += sizeof(int);
         return value;
     }
@@ -67,7 +61,7 @@ internal sealed class BigEndianBinaryReader
     public long ReadInt64()
     {
         EnsureAvailable(sizeof(long));
-        var value = BinaryPrimitives.ReadInt64BigEndian(_buffer.Span.Slice(_position, sizeof(long)));
+        var value = BinaryPrimitives.ReadInt64BigEndian(buffer.Span.Slice(_position, sizeof(long)));
         _position += sizeof(long);
         return value;
     }
@@ -82,7 +76,7 @@ internal sealed class BigEndianBinaryReader
         if (count < 0)
             throw new ArgumentOutOfRangeException(nameof(count), count, "Length must be non-negative.");
         EnsureAvailable(count);
-        var slice = _buffer.Slice(_position, count);
+        var slice = buffer.Slice(_position, count);
         _position += count;
         return slice;
     }
@@ -102,7 +96,7 @@ internal sealed class BigEndianBinaryReader
     public short ReadInt16()
     {
         EnsureAvailable(sizeof(short));
-        var value = BinaryPrimitives.ReadInt16BigEndian(_buffer.Span.Slice(_position, sizeof(short)));
+        var value = BinaryPrimitives.ReadInt16BigEndian(buffer.Span.Slice(_position, sizeof(short)));
         _position += sizeof(short);
         return value;
     }
@@ -111,7 +105,7 @@ internal sealed class BigEndianBinaryReader
     public ushort ReadUInt16()
     {
         EnsureAvailable(sizeof(ushort));
-        var value = BinaryPrimitives.ReadUInt16BigEndian(_buffer.Span.Slice(_position, sizeof(ushort)));
+        var value = BinaryPrimitives.ReadUInt16BigEndian(buffer.Span.Slice(_position, sizeof(ushort)));
         _position += sizeof(ushort);
         return value;
     }
@@ -120,7 +114,7 @@ internal sealed class BigEndianBinaryReader
     public uint ReadUInt32()
     {
         EnsureAvailable(sizeof(uint));
-        var value = BinaryPrimitives.ReadUInt32BigEndian(_buffer.Span.Slice(_position, sizeof(uint)));
+        var value = BinaryPrimitives.ReadUInt32BigEndian(buffer.Span.Slice(_position, sizeof(uint)));
         _position += sizeof(uint);
         return value;
     }
@@ -129,7 +123,7 @@ internal sealed class BigEndianBinaryReader
     public ulong ReadUInt64()
     {
         EnsureAvailable(sizeof(ulong));
-        var value = BinaryPrimitives.ReadUInt64BigEndian(_buffer.Span.Slice(_position, sizeof(ulong)));
+        var value = BinaryPrimitives.ReadUInt64BigEndian(buffer.Span.Slice(_position, sizeof(ulong)));
         _position += sizeof(ulong);
         return value;
     }
@@ -138,7 +132,7 @@ internal sealed class BigEndianBinaryReader
     public float ReadFloat()
     {
         EnsureAvailable(sizeof(float));
-        var value = BinaryPrimitives.ReadSingleBigEndian(_buffer.Span.Slice(_position, sizeof(float)));
+        var value = BinaryPrimitives.ReadSingleBigEndian(buffer.Span.Slice(_position, sizeof(float)));
         _position += sizeof(float);
         return value;
     }
@@ -147,25 +141,49 @@ internal sealed class BigEndianBinaryReader
     public double ReadDouble()
     {
         EnsureAvailable(sizeof(double));
-        var value = BinaryPrimitives.ReadDoubleBigEndian(_buffer.Span.Slice(_position, sizeof(double)));
+        var value = BinaryPrimitives.ReadDoubleBigEndian(buffer.Span.Slice(_position, sizeof(double)));
         _position += sizeof(double);
         return value;
     }
 
     /// <summary>
-    /// Read a length-prefixed byte sequence: i32 length followed by the bytes.
-    /// Returns <c>null</c> if the length sentinel is <c>-1</c>.
-    /// Mirrors cppcache <c>DataInput::readBytes</c>.
+    /// Read a length-prefixed byte sequence: <see cref="ReadArrayLen"/>
+    /// length (varint) followed by the bytes, or <c>null</c> if the
+    /// sentinel is <c>-1</c>. Inverse of
+    /// <see cref="BigEndianBinaryWriter.WriteBytes"/>; mirrors cppcache
+    /// <c>DataInput::readBytes</c>.
     /// </summary>
-    public byte[]? ReadBytes() =>
-        throw new NotImplementedException("Phase 3 Put/Get value parts.");
+    public byte[]? ReadBytes()
+    {
+        var length = ReadArrayLen();
+        if (length == -1) return null;
+        return ReadBytesOnly(length).ToArray();
+    }
 
     /// <summary>
-    /// Read Geode's variable-length array length encoding (1, 2, or 4 bytes).
-    /// Mirrors cppcache <c>DataInput::readArrayLen</c>.
+    /// Read Geode's variable-length array length encoding (1, 3, or 5
+    /// bytes). Inverse of <see cref="BigEndianBinaryWriter.WriteArrayLen"/>;
+    /// mirrors cppcache <c>DataInput::readArrayLen</c>.
     /// </summary>
-    public int ReadArrayLen() =>
-        throw new NotImplementedException("Phase 4 collection-bearing parts.");
+    /// <remarks>
+    /// <list type="bullet">
+    ///   <item>First byte = <c>0xFF</c>            → returns <c>-1</c> (null sentinel).</item>
+    ///   <item>First byte = <c>0xFE</c>            → next u16 BE is the length.</item>
+    ///   <item>First byte = <c>0xFD</c>            → next i32 BE is the length.</item>
+    ///   <item>First byte ≤ <c>252</c> (0xFC)      → that byte is the length.</item>
+    /// </list>
+    /// </remarks>
+    public int ReadArrayLen()
+    {
+        var first = ReadSByte();
+        return first switch
+        {
+            -1 => -1,            // 0xFF — null sentinel
+            -2 => ReadUInt16(),  // 0xFE — u16 follows
+            -3 => ReadInt32(),   // 0xFD — i32 follows
+            _ => first,          // 0–252 — literal length
+        };
+    }
 
     /// <summary>
     /// Read a Java modified UTF-8 string with a u16 byte-length prefix.
@@ -193,10 +211,10 @@ internal sealed class BigEndianBinaryReader
 
     private void EnsureAvailable(int needed)
     {
-        if (_position + needed > _buffer.Length)
+        if (_position + needed > buffer.Length)
         {
             throw new EndOfStreamException(
-                $"Tried to read {needed} byte(s) at position {_position}, but only {_buffer.Length - _position} remain.");
+                $"Tried to read {needed} byte(s) at position {_position}, but only {buffer.Length - _position} remain.");
         }
     }
 }

@@ -5,7 +5,13 @@
 > we explicitly defer, and where each one lives upstream so the next
 > session knows what's been triaged.
 
-Source root: `D:\github\geode-native\cppcache\include\geode\`.
+Source roots:
+- **cppcache** (the C++ client we mirror at the wire level) —
+  `D:\github\geode-native\cppcache\include\geode\`
+- **clicache** (the C++/CLI managed wrapper, **reference only** for
+  .NET API shape — we do not port it) —
+  `D:\github\geode-native\clicache\src\` (~186 files, look for
+  `IRegion.hpp`, `IRegionService.hpp`, `Cache.hpp`, `CacheFactory.hpp`).
 
 ---
 

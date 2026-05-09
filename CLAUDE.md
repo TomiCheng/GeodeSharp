@@ -16,7 +16,10 @@ Build a **pure-managed, zero-dependency, cross-platform** Apache Geode
 client targeting **.NET 10 (LTS)** and ship it on NuGet.
 
 Upstream reference: <https://github.com/apache/geode-native>
-(We do **not** port the C++/CLI `clicache/` — too restricted, Windows-only.)
+(We do **not** port the C++/CLI `clicache/` — too restricted,
+Windows-only — but `clicache/src/*.hpp` is a useful reference for the
+.NET API *shape* we are designing in pure C#. See
+`clicache-source-location.md` in `~/.claude` memory.)
 
 ---
 

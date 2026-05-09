@@ -1,7 +1,7 @@
 # Geode .NET Client — Project Context
 
 > This file is Claude Code's long-term project memory. Read it once at the
-> start of every session, confirm the current phase, then start work.
+> start of every session, confirm where we are, then start work.
 
 ---
 
@@ -219,31 +219,7 @@ Only these DSFIDs (per `cppcache/include/geode/internal/DSCode.hpp`):
 - Date
 - byte[] / null
 
-**PDX is not in MVP** (it lands in Phase 11).
-
----
-
-## Roadmap (12 phases)
-
-Every phase is a "walking skeleton" — it must run end-to-end before the
-next one starts.
-
-| Phase | Content                                       | Estimate | Done when                                  |
-| ----- | --------------------------------------------- | -------- | ------------------------------------------ |
-| 0     | Environment & skeleton (this zip)             | 0.5w     | solution builds, Docker server up          |
-| 1     | Frame codec — pure encode/decode              | 0.5w     | byte-fixture round-trip tests pass         |
-| 2     | **Slice 1: Ping** (with handshake)            | 1–2w     | server replies with `Reply (6)`            |
-| 3     | **Slice 2: Put / Get**                        | 1w       | put `byte[]`, get back equal value         |
-| 4     | Type expansion (Int / Long / Bool / Date)     | 1w       | integration test per type                  |
-| 5     | API + DI wiring                               | 0.5w     | `IGeodeCache` injectable, demoable         |
-| —     | **First NuGet release `0.1.0-alpha`**         |          | publishable                                |
-| 6     | Connection pool                               | 1w       | high concurrency + auto-recover on restart |
-| 7     | Locator discovery                             | 0.5w     | locator-only config connects               |
-| 8     | TLS (`SslStream`)                             | 0.5w     | connects to TLS-enabled server             |
-| 9     | Authentication                                | 0.5w     | username / password                        |
-| 10    | Query / OQL                                   | 1w       | `SELECT * FROM /r WHERE x>10`              |
-| 11    | PDX serialisation                             | 2w       | interoperable with the Java client         |
-| 12+   | CQ / Function / TX / HA / Delta               | later    | advanced features, demand-driven           |
+**PDX is not in MVP**.
 
 ---
 
@@ -252,13 +228,22 @@ next one starts.
 1. **Read `cppcache` before designing the protocol.** `TcrMessage.cpp`,
    `TcrConnection.cpp`, `HandShake.cpp`, `ThinClientPoolDM.cpp` are the
    spec.
-2. **Walking skeleton.** Get every phase to run end-to-end before stacking
+2. **Walking skeleton.** Get every slice to run end-to-end before stacking
    the next layer.
-3. **Frame codec must have unit tests** backed by byte fixtures from
+3. **Top-down, outside-in.** Build the skeleton first: declare the public
+   API, the types it returns, and the call graph all the way down — but
+   leave bodies as `throw new NotImplementedException("TODO: …")` (or
+   the equivalent stub). Then pick **one** TODO at the top and fill it
+   in, which surfaces the next TODO down the stack. **Never** finish a
+   whole bottom layer (frame codec, serialiser, pool) before any top
+   layer (`PutAsync`, `GetAsync`) compiles end-to-end. The point is to
+   discover what the lower layers actually need from the call site
+   instead of guessing.
+4. **Frame codec must have unit tests** backed by byte fixtures from
    Wireshark or `cppcache` source.
-4. **Don't over-abstract.** Write concrete classes at the lower layers;
-   only extract interfaces in Phase 5 when DI lands.
-5. **Big-endian everywhere** (`BinaryPrimitives.WriteInt32BigEndian`).
+5. **Don't over-abstract.** Write concrete classes at the lower layers;
+   only extract interfaces when DI wiring lands.
+6. **Big-endian everywhere** (`BinaryPrimitives.WriteInt32BigEndian`).
    Geode is Java; the wire is network byte order.
 
 ---
@@ -301,20 +286,3 @@ See `CONTRIBUTING.md` for the full workflow.
 
 ---
 
-## Next step
-
-Phase 0 was provided by the initial skeleton (solution, csproj, workflows,
-docker-compose). **Start at Phase 1**: implement the frame codec.
-
-Example kick-off prompt:
-
-```
-Read CLAUDE.md. We are starting Phase 1:
-1) Add BigEndianBinaryReader / BigEndianBinaryWriter in
-   src/Geode.Client/Protocol/.
-2) Add TcrPart, TcrMessage records.
-3) Add a frame round-trip unit test in
-   tests/Geode.Client.Tests/Protocol/.
-Follow the walking-skeleton principle — get the smallest path working
-first.
-```

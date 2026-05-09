@@ -61,15 +61,12 @@ public class SubscriptionOptions
 
     /// <summary>
     /// Per-client event-conflation override sent in the handshake's
-    /// "overrides" byte. Mirrors cppcache <c>conflate-events</c>:
-    /// <list type="bullet">
-    ///   <item><c>"server"</c> (default) — defer to server-side setting.</item>
-    ///   <item><c>"true"</c>  — force conflation on for this client.</item>
-    ///   <item><c>"false"</c> — force conflation off for this client.</item>
-    /// </list>
-    /// MVP hard-codes the override byte to 0 (= "server") in
-    /// <see cref="Geode.Client.Protocol.TcrConnection"/>; this property
-    /// will be wired in once the handshake reads it.
+    /// "overrides" byte. Tristate: <c>null</c> (default) defers to the
+    /// server-side setting, <c>true</c> forces conflation on for this
+    /// client, <c>false</c> forces it off. Mirrors cppcache
+    /// <c>conflate-events</c>'s string values <c>"server"</c> /
+    /// <c>"true"</c> / <c>"false"</c>, but <c>bool?</c> is the type-safe
+    /// way to express the same three states in C#.
     /// </summary>
-    public string ConflateEvents { get; set; } = "server";
+    public bool? ConflateEvents { get; set; }
 }

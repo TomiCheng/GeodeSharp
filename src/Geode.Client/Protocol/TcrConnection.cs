@@ -22,9 +22,9 @@ internal sealed class TcrConnection(
     Stream? _stream;
 
     // Hold the IOptions handle (not .Value) so callers can re-resolve via
-    // IOptionsMonitor patterns later if needed. No properties to consume
-    // yet — referenced here purely to satisfy CS9113 until Phase 6+ pool /
-    // TLS / auth code starts reading from it.
+    // IOptionsMonitor patterns later if needed. Currently consumed by
+    // HandshakeAsync step 7 (Subscription.ConflateEvents); Phase 6+ pool /
+    // TLS / auth code will read further fields.
     private readonly IOptions<GeodeClientOptions> _options = options;
 
     /// <summary>
@@ -218,14 +218,13 @@ internal sealed class TcrConnection(
         // 7. Overrides (byte[] on the Java side, but always length 1 so far).
         //    Java: `for (byte b : getOverrides()) hdos.writeByte(b)`.
         //    Server reads ONE byte: `setOverrides(new byte[] { readByte() })`.
-        //    Currently only conflation override is encoded here:
-        //       0 = use server default
-        //       1 = force conflation on
-        //       2 = force conflation off
-        //    MVP has no conflation system property → 0.
+        //    Currently only conflation override is encoded here, sourced
+        //    from GeodeClientOptions.Subscription.ConflateEvents:
+        //       null  → 0 (use server default)
+        //       true  → 1 (force conflation on)
+        //       false → 2 (force conflation off)
         //    TODO: keep an eye on Java geode-core widening this array.
-        const byte ConflationOverridesDefault = 0;
-        hello.WriteByte(ConflationOverridesDefault);
+        hello.WriteByte(MapConflateEvents());
 
         //
         // 8. Security mode + optional credentials body.
@@ -308,12 +307,10 @@ internal sealed class TcrConnection(
         logger.LogTrace("TcrConnection handshake serverMember = {byteCount} bytes", _serverMember.Length);
         //
         // 13. Message — Java writeUTF format (u16 byte-length + modified UTF-8).
-        //     Server-side diagnostic / refusal text; empty on the success path.
-        //     We capture it here for trace-logging only — the throw on bad
-        //     AcceptanceCode in step 9 already fired before we got this far,
-        //     so on the rejection path we never see this message. To surface
-        //     it in the GeodeException, defer the step-9 throw until after
-        //     this read (TODO).
+        //     Server's diagnostic / refusal text; empty on the success path,
+        //     populated on REFUSED / INVALID / AUTH_NOT_REQUIRED / etc.
+        //     Captured into serverMessage and folded into the GeodeException
+        //     thrown after step 14 when AcceptanceCode != REPLY_OK.
         //     Modified-UTF-8 vs standard UTF-8 only differs at U+0000 and
         //     supplementary code points; English diagnostic text decodes
         //     identically with Encoding.UTF8.
@@ -351,6 +348,18 @@ internal sealed class TcrConnection(
         // off _stream with ReadHandshakeDataAsync + BinaryPrimitives, and
         // validate / drain as listed above.
     }
+
+    /// <summary>
+    /// Map the tristate <see cref="SubscriptionOptions.ConflateEvents"/>
+    /// to the wire byte used in the handshake "overrides" field. Mirrors
+    /// cppcache <c>TcrConnection::getOverrides</c>.
+    /// </summary>
+    private byte MapConflateEvents() => _options.Value.Subscription.ConflateEvents switch
+    {
+        null  => 0,   // CONFLATION_DEFAULT — let the server decide
+        true  => 1,   // CONFLATION_ON
+        false => 2,   // CONFLATION_OFF
+    };
 
     /// <summary>
     /// Read exactly <paramref name="byteCount"/> bytes from the underlying

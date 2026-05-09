@@ -20,6 +20,7 @@
     <PackageVersion Include="xunit.v3" Version="3.2.2" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <PackageVersion Include="coverlet.collector" Version="10.0.0" />
+    <PackageVersion Include="Xunit.DependencyInjection" Version="11.2.1" />
   </ItemGroup>
   <ItemGroup Label="IntegrationTest">
     <PackageVersion Include="Testcontainers" Version="4.0.0" />

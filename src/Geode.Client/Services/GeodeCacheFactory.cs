@@ -10,20 +10,26 @@ namespace Geode.Client.Services;
 /// <see cref="GeodeCache"/> per registered name and caches it.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Registered as a singleton by <c>AddGeodeClient</c>. Construction
 /// uses <see cref="IOptionsMonitor{TOptions}.Get(string)"/> so the
 /// caller's named options bindings light up automatically.
+/// </para>
+/// <para>
+/// <b>No hot reload.</b> We deliberately do not subscribe to
+/// <c>IOptionsMonitor&lt;T&gt;.OnChange</c>. A built
+/// <see cref="GeodeCache"/> owns an open TCP/TLS connection, handshake
+/// state, membership id, and (eventually) a connection pool — those
+/// cannot be swapped under live <c>IRegion&lt;K, V&gt;</c> references
+/// without breaking in-flight ops. <see cref="IOptionsMonitor{T}"/> is
+/// chosen only for its <c>Get(name)</c> + singleton-lifetime support;
+/// the change-notification half is intentionally unused.
+/// </para>
 /// </remarks>
-internal sealed class GeodeCacheFactory : IGeodeCacheFactory
+internal sealed class GeodeCacheFactory(IOptionsMonitor<GeodeClientOptions> optionsMonitor)
+    : IGeodeCacheFactory
 {
-    private readonly IOptionsMonitor<GeodeClientOptions> _optionsMonitor;
     private readonly ConcurrentDictionary<string, IGeodeCache> _caches = new(StringComparer.Ordinal);
-
-    public GeodeCacheFactory(IOptionsMonitor<GeodeClientOptions> optionsMonitor)
-    {
-        ArgumentNullException.ThrowIfNull(optionsMonitor);
-        _optionsMonitor = optionsMonitor;
-    }
 
     public IGeodeCache Get() => Get(MsOptions.DefaultName);
 
@@ -31,16 +37,14 @@ internal sealed class GeodeCacheFactory : IGeodeCacheFactory
     {
         ArgumentNullException.ThrowIfNull(name);
 
+        // Sync, no I/O: just snapshot the named options and wrap them.
+        // The cache itself initialises lazily — the first wire-touching
+        // op (region get/put, ping, query) awaits
+        // GeodeCache.EnsureInitializedAsync.
         return _caches.GetOrAdd(name, static (n, monitor) =>
         {
             var options = monitor.Get(n);
-            var cache = new GeodeCache(n, options);
-            // TODO: kick off cache.InitializeAsync — needs design call
-            //       on whether Get() blocks (sync init), Get() is async
-            //       (rename to GetAsync), or init is lazy (first op
-            //       triggers connect). Default-name path stays
-            //       resolvable from DI either way.
-            return cache;
-        }, _optionsMonitor);
+            return (IGeodeCache)new GeodeCache(n, options);
+        }, optionsMonitor);
     }
 }

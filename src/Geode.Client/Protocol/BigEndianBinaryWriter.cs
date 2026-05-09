@@ -121,19 +121,56 @@ internal sealed class BigEndianBinaryWriter
     }
 
     /// <summary>
-    /// Write a length-prefixed byte sequence: i32 length followed by the bytes,
-    /// or i32 -1 if <paramref name="bytes"/> is <c>null</c>.
+    /// Write a length-prefixed byte sequence: <see cref="WriteArrayLen"/>
+    /// length (varint) followed by the bytes, or a single <c>-1</c> sentinel
+    /// byte if <paramref name="bytes"/> is <c>null</c>.
     /// Mirrors cppcache <c>DataOutput::writeBytes</c>.
     /// </summary>
-    public void WriteBytes(byte[]? bytes) =>
-        throw new NotImplementedException("Phase 3 Put/Get value parts.");
+    public void WriteBytes(byte[]? bytes)
+    {
+        if (bytes is null)
+        {
+            WriteArrayLen(-1);
+            return;
+        }
+        WriteArrayLen(bytes.Length);
+        _buffer.Write(bytes);
+    }
 
     /// <summary>
-    /// Write Geode's variable-length array length encoding (1, 2, or 4 bytes
-    /// depending on magnitude). Mirrors cppcache <c>DataOutput::writeArrayLen</c>.
+    /// Write Geode's variable-length array-length encoding (1, 3, or 5 bytes
+    /// total). Mirrors cppcache <c>DataOutput::writeArrayLen</c>.
     /// </summary>
-    public void WriteArrayLen(int length) =>
-        throw new NotImplementedException("Phase 4 collection-bearing parts.");
+    /// <remarks>
+    /// Encoding (matches Java collection-length convention):
+    /// <list type="bullet">
+    ///   <item><c>length == -1</c>          → 1 byte: <c>0xFF</c> (null sentinel).</item>
+    ///   <item><c>length ≤ 252</c>          → 1 byte: the length itself.</item>
+    ///   <item><c>length ≤ 0xFFFF</c>       → 3 bytes: <c>0xFE</c> + u16 length.</item>
+    ///   <item>otherwise (up to int.MaxValue) → 5 bytes: <c>0xFD</c> + i32 length.</item>
+    /// </list>
+    /// </remarks>
+    public void WriteArrayLen(int length)
+    {
+        if (length == -1)
+        {
+            WriteSByte(-1);
+        }
+        else if (length <= 252)
+        {
+            WriteByte((byte)length);
+        }
+        else if (length <= 0xFFFF)
+        {
+            WriteSByte(-2);
+            WriteUInt16((ushort)length);
+        }
+        else
+        {
+            WriteSByte(-3);
+            WriteInt32(length);
+        }
+    }
 
     /// <summary>
     /// Write a string in Java modified UTF-8 with a u16 byte-length prefix.
@@ -146,8 +183,63 @@ internal sealed class BigEndianBinaryWriter
     /// surrogate written as a 3-byte sequence (so a single supplementary
     /// codepoint takes 6 bytes, not 4 as in standard UTF-8).
     /// </remarks>
-    public void WriteJavaModifiedUtf8(string? value) =>
-        throw new NotImplementedException("Phase 4 string values.");
+    public void WriteJavaModifiedUtf8(string? value)
+    {
+        var s = value ?? string.Empty;
+
+        // Pass 1: compute the modified-UTF-8 byte length so we can write the
+        // u16 length prefix in one shot. We walk per UTF-16 code unit (char);
+        // surrogate halves naturally fall into the 3-byte branch and a
+        // supplementary code point ends up as 6 bytes — exactly what Java
+        // modified UTF-8 calls for.
+        int byteLen = 0;
+        foreach (var c in s)
+        {
+            if (c >= 0x0001 && c <= 0x007F)
+            {
+                byteLen += 1;
+            }
+            else if (c == 0 || (c >= 0x0080 && c <= 0x07FF))
+            {
+                byteLen += 2;
+            }
+            else
+            {
+                byteLen += 3;
+            }
+        }
+
+        if (byteLen > 0xFFFF)
+        {
+            throw new FormatException(
+                $"String too long for Java modified UTF-8: {byteLen} bytes (max 65535).");
+        }
+
+        WriteUInt16((ushort)byteLen);
+
+        // Pass 2: emit the bytes.
+        Span<byte> buf = stackalloc byte[3];
+        foreach (var c in s)
+        {
+            if (c >= 0x0001 && c <= 0x007F)
+            {
+                _buffer.WriteByte((byte)c);
+            }
+            else if (c == 0 || (c >= 0x0080 && c <= 0x07FF))
+            {
+                buf[0] = (byte)(0xC0 | (c >> 6));
+                buf[1] = (byte)(0x80 | (c & 0x3F));
+                _buffer.Write(buf[..2]);
+            }
+            else
+            {
+                buf[0] = (byte)(0xE0 | (c >> 12));
+                buf[1] = (byte)(0x80 | ((c >> 6) & 0x3F));
+                buf[2] = (byte)(0x80 | (c & 0x3F));
+                _buffer.Write(buf);
+            }
+        }
+    }
 
     /// <summary>
     /// Write a string as UTF-16 big-endian with an i32 byte-length prefix.

@@ -93,4 +93,15 @@ public class GeodeClientOptions
 
     /// <summary>PDX-serialisation settings. See <see cref="PdxOptions"/>.</summary>
     public PdxOptions Pdx { get; } = new();
+
+    /// <summary>
+    /// Declarative <c>cache.xml</c> contents — named pools, region
+    /// trees, PDX defaults. See <see cref="CacheXmlOptions"/>.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="CacheXmlFile"/> (which is the path to
+    /// the file). Whole subtree is on the deletion shortlist; CLAUDE.md
+    /// cuts cache.xml entirely.
+    /// </remarks>
+    public CacheXmlOptions CacheXml { get; } = new();
 }

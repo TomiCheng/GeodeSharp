@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.IO;
 using System.Net.Sockets;
@@ -122,7 +123,8 @@ internal sealed class TcrConnection(
         // Build the whole client-hello in memory; flushed in one SendAsync
         // at the end of the client→server section so the bytes hit the wire
         // as a single TCP segment.
-        var hello = new BigEndianBinaryWriter();
+        var helloBuffer = new ArrayBufferWriter<byte>();
+        var hello = new BigEndianBinaryWriter(helloBuffer);
 
         // === Client → Server ====================================================
         //
@@ -239,7 +241,7 @@ internal sealed class TcrConnection(
         // Flush the whole client-hello in one SendAsync. NoDelay is on
         // (set in ConnectAsync), so this lands as a single TCP segment;
         // the server reads it as one contiguous handshake.
-        var clientHello = hello.ToArray();
+        var clientHello = helloBuffer.WrittenSpan.ToArray();
         logger.LogTrace("TcrConnection sending client-hello ({byteCount} bytes)", clientHello.Length);
         await SendAsync(clientHello, cancellationToken).ConfigureAwait(false);
 

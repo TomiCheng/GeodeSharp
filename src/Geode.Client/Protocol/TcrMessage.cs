@@ -1,3 +1,5 @@
+using System.Buffers;
+
 namespace Geode.Client.Protocol;
 
 /// <summary>
@@ -40,22 +42,24 @@ internal sealed record TcrMessage(
     public byte[] Encode()
     {
         // Pass 1: encode parts to learn their total byte length.
-        var partsWriter = new BigEndianBinaryWriter();
+        var partsBuffer = new ArrayBufferWriter<byte>();
+        var partsWriter = new BigEndianBinaryWriter(partsBuffer);
         foreach (var part in Parts)
         {
             part.Encode(partsWriter);
         }
-        var partsBytes = partsWriter.ToArray();
+        var partsBytes = partsBuffer.WrittenSpan;
 
         // Pass 2: write header followed by the parts payload.
-        var w = new BigEndianBinaryWriter();
+        var buffer = new ArrayBufferWriter<byte>(HeaderLength + partsBytes.Length);
+        var w = new BigEndianBinaryWriter(buffer);
         w.WriteInt32((int)MessageType);
         w.WriteInt32(partsBytes.Length);   // MessageLength = bytes occupied by Parts
         w.WriteInt32(Parts.Count);
         w.WriteInt32(TransactionId);
         w.WriteByte(EarlyAck);
         w.WriteBytesOnly(partsBytes);
-        return w.ToArray();
+        return buffer.WrittenSpan.ToArray();
     }
 
     /// <summary>Decode one message from <paramref name="bytes"/>.</summary>

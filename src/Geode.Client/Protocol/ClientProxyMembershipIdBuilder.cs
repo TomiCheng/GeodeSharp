@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -63,7 +64,8 @@ internal sealed class ClientProxyMembershipIdBuilder(IOptions<GeodeClientOptions
             return _identity;
         }
 
-        var w = new BigEndianBinaryWriter();
+        var buffer = new ArrayBufferWriter<byte>();
+        var w = new BigEndianBinaryWriter(buffer);
 
         // Outer framing: this is a serialised InternalDistributedMember.
         w.WriteByte(FixedIdByte);
@@ -117,7 +119,7 @@ internal sealed class ClientProxyMembershipIdBuilder(IOptions<GeodeClientOptions
         // Trailing protocol-version stamp (compressed ordinal).
         ProtocolVersion.Current.WriteTo(w);
 
-        _identity = w.ToArray();
+        _identity = buffer.WrittenSpan.ToArray();
         return _identity;
     }
 

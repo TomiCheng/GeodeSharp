@@ -1,3 +1,4 @@
+using System.Buffers;
 using Geode.Client.Protocol;
 using Xunit;
 
@@ -10,9 +11,10 @@ public class TcrPartTests
     {
         var original = new TcrPart(IsObject: false, Payload: new byte[] { 0xDE, 0xAD });
 
-        var w = new BigEndianBinaryWriter();
+        var buffer = new ArrayBufferWriter<byte>();
+        var w = new BigEndianBinaryWriter(buffer);
         original.Encode(w);
-        var decoded = TcrPart.Decode(new BigEndianBinaryReader(w.ToArray()));
+        var decoded = TcrPart.Decode(new BigEndianBinaryReader(buffer.WrittenSpan.ToArray()));
 
         Assert.Equal(original, decoded);
     }
@@ -22,12 +24,13 @@ public class TcrPartTests
     {
         var original = new TcrPart(IsObject: false, Payload: ReadOnlyMemory<byte>.Empty);
 
-        var w = new BigEndianBinaryWriter();
+        var buffer = new ArrayBufferWriter<byte>();
+        var w = new BigEndianBinaryWriter(buffer);
         original.Encode(w);
         // Encoded bytes: 4 (length=0) + 1 (isObject=0) = 5 bytes.
-        Assert.Equal(5, w.ToArray().Length);
+        Assert.Equal(5, buffer.WrittenSpan.ToArray().Length);
 
-        var decoded = TcrPart.Decode(new BigEndianBinaryReader(w.ToArray()));
+        var decoded = TcrPart.Decode(new BigEndianBinaryReader(buffer.WrittenSpan.ToArray()));
         Assert.Equal(original, decoded);
     }
 
@@ -36,9 +39,10 @@ public class TcrPartTests
     {
         var original = new TcrPart(IsObject: true, Payload: new byte[] { 0x57 /* DSCode for String */, 0x42 });
 
-        var w = new BigEndianBinaryWriter();
+        var buffer = new ArrayBufferWriter<byte>();
+        var w = new BigEndianBinaryWriter(buffer);
         original.Encode(w);
-        var decoded = TcrPart.Decode(new BigEndianBinaryReader(w.ToArray()));
+        var decoded = TcrPart.Decode(new BigEndianBinaryReader(buffer.WrittenSpan.ToArray()));
 
         Assert.True(decoded.IsObject);
         Assert.Equal(original, decoded);

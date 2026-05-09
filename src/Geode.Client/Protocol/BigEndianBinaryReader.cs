@@ -147,19 +147,43 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
     }
 
     /// <summary>
-    /// Read a length-prefixed byte sequence: i32 length followed by the bytes.
-    /// Returns <c>null</c> if the length sentinel is <c>-1</c>.
-    /// Mirrors cppcache <c>DataInput::readBytes</c>.
+    /// Read a length-prefixed byte sequence: <see cref="ReadArrayLen"/>
+    /// length (varint) followed by the bytes, or <c>null</c> if the
+    /// sentinel is <c>-1</c>. Inverse of
+    /// <see cref="BigEndianBinaryWriter.WriteBytes"/>; mirrors cppcache
+    /// <c>DataInput::readBytes</c>.
     /// </summary>
-    public byte[]? ReadBytes() =>
-        throw new NotImplementedException("Phase 3 Put/Get value parts.");
+    public byte[]? ReadBytes()
+    {
+        var length = ReadArrayLen();
+        if (length == -1) return null;
+        return ReadBytesOnly(length).ToArray();
+    }
 
     /// <summary>
-    /// Read Geode's variable-length array length encoding (1, 2, or 4 bytes).
-    /// Mirrors cppcache <c>DataInput::readArrayLen</c>.
+    /// Read Geode's variable-length array length encoding (1, 3, or 5
+    /// bytes). Inverse of <see cref="BigEndianBinaryWriter.WriteArrayLen"/>;
+    /// mirrors cppcache <c>DataInput::readArrayLen</c>.
     /// </summary>
-    public int ReadArrayLen() =>
-        throw new NotImplementedException("Phase 4 collection-bearing parts.");
+    /// <remarks>
+    /// <list type="bullet">
+    ///   <item>First byte = <c>0xFF</c>            → returns <c>-1</c> (null sentinel).</item>
+    ///   <item>First byte = <c>0xFE</c>            → next u16 BE is the length.</item>
+    ///   <item>First byte = <c>0xFD</c>            → next i32 BE is the length.</item>
+    ///   <item>First byte ≤ <c>252</c> (0xFC)      → that byte is the length.</item>
+    /// </list>
+    /// </remarks>
+    public int ReadArrayLen()
+    {
+        var first = ReadSByte();
+        return first switch
+        {
+            -1 => -1,            // 0xFF — null sentinel
+            -2 => ReadUInt16(),  // 0xFE — u16 follows
+            -3 => ReadInt32(),   // 0xFD — i32 follows
+            _ => first,          // 0–252 — literal length
+        };
+    }
 
     /// <summary>
     /// Read a Java modified UTF-8 string with a u16 byte-length prefix.

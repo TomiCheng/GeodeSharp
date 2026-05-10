@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Services;
 
@@ -33,20 +34,29 @@ namespace Geode.Client.Services;
 /// </remarks>
 ///
 
-#pragma warning disable CS0169, CS0414, CS9113 // placeholder fields mirroring CacheImpl; wired up phase by phase
-internal sealed class Cache(
-    string name,
-    GeodeClientOptions options,
-    ClientProxyMembershipIdBuilder membershipIdBuilder,
-    PoolManager poolManager) : IGeodeCache
+internal sealed class Cache : IGeodeCache
 {
+    private readonly GeodeClientOptions _options;
+    private readonly ClientProxyMembershipIdBuilder _membershipIdBuilder;
+    private readonly PoolManager _poolManager;
+    private readonly TcrConnectionManager _tcrConnectionManager;
 
+    /// <summary>
+    /// First-caller-wins async init: every concurrent call awaits the
+    /// same <see cref="Task"/>. cppcache equivalent is the
+    /// <c>m_initDone</c> + <c>m_initDoneLock</c> guard inside
+    /// <c>CacheImpl::createRegion</c> / <c>getQueryService</c>;
+    /// <see cref="LazyThreadSafetyMode.ExecutionAndPublication"/> is
+    /// the .NET idiom that collapses that flag + mutex into one type.
+    /// </summary>
+    private readonly Lazy<Task> _initialization;
 
+#pragma warning disable CS0169, CS0414 // placeholder fields mirroring CacheImpl; wired up phase by phase
 
     // ── Lifecycle (CacheImpl.hpp:359-374) ──
     // m_closed       → IsClosed property (already exposed)
-    // m_initialized  → TODO: re-add when init logic lands
-    // m_initDoneLock → bucket 1, will use Lazy<Task>(ExecutionAndPublication) when init returns
+    // m_initialized  → captured by _initialization (Lazy<Task>)
+    // m_initDoneLock → bucket 1, replaced by Lazy<Task>(ExecutionAndPublication)
     // m_destroyCacheMutex → bucket 1, replaced by System.Threading.Lock
     private int _destroyPending;          // m_destroyPending (Interlocked 0/1)
     private bool _keepAlive;              // m_keepAlive
@@ -57,9 +67,8 @@ internal sealed class Cache(
 
     // ── Connection / Pool (CacheImpl.hpp:330, 362-363, 369) ──
     private object? _distributedSystem;   // m_distributedSystem
-    private object? _tcrConnectionManager;// m_tcrConnectionManager
-    // m_poolManager                       → injected via DI below
-    // m_clientProxyMembershipIDFactory    → injected via DI below
+    // m_tcrConnectionManager / m_poolManager / m_clientProxyMembershipIDFactory
+    //                                  → fields above (DI / Cache-owned)
 
     // ── Query (CacheImpl.hpp:370) ──
     private object? _remoteQueryService;  // m_remoteQueryServicePtr
@@ -87,18 +96,85 @@ internal sealed class Cache(
 
 #pragma warning restore CS0169, CS0414
 
-    public string Name { get; } = name;
+    public Cache(
+        IServiceProvider serviceProvider,
+        string name,
+        GeodeClientOptions options,
+        ClientProxyMembershipIdBuilder membershipIdBuilder,
+        PoolManager poolManager)
+    {
+        ArgumentNullException.ThrowIfNull(serviceProvider);
+        ArgumentNullException.ThrowIfNull(name);
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(membershipIdBuilder);
+        ArgumentNullException.ThrowIfNull(poolManager);
+
+        Name = name;
+        _options = options;
+        _membershipIdBuilder = membershipIdBuilder;
+        _poolManager = poolManager;
+        _tcrConnectionManager =
+            ActivatorUtilities.CreateInstance<TcrConnectionManager>(serviceProvider, options);
+        _initialization = new Lazy<Task>(
+            InitializeCoreAsync,
+            LazyThreadSafetyMode.ExecutionAndPublication);
+    }
+
+    public string Name { get; }
 
     public bool IsClosed { get; private set; }
 
     public Task EnsureInitializedAsync(CancellationToken ct = default)
     {
-        // TODO: open TcrConnection(s) per Pool options, run handshake,
-        //       store membership id, register pools with PoolManager.
-        //       Re-introduce Lazy<Task>(ExecutionAndPublication) for
-        //       idempotent first-caller-wins semantics when this body
-        //       gets real work to do.
-        throw new NotImplementedException("TODO: Cache.EnsureInitializedAsync");
+        // TODO: ct is currently ignored. Lazy<Task>'s factory takes no
+        // arguments, so we can't pipe the caller's ct in. When the
+        // init body does real work, choose:
+        //   (a) capture first-caller's ct into a field; later callers
+        //       share it. Simple, but their ct can't cancel anything.
+        //   (b) move off Lazy<Task> to a TaskCompletionSource pattern
+        //       so each caller's ct cancels their own await without
+        //       cancelling the init itself.
+        _ = ct;
+        return _initialization.Value;
+    }
+
+    /// <summary>
+    /// Runs once via <see cref="_initialization"/>. Two config sources
+    /// converge on the same in-memory pool / region registry. cppcache
+    /// splits them by sync timing (<c>CacheFactory::create</c> body);
+    /// we unify under one async method so ctor never blocks on I/O.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Path (b)</b>: caller used <see cref="PoolOptions"/> /
+    /// <c>Action&lt;GeodeClientOptions&gt;</c> — equivalent to
+    /// cppcache programmatic API. <c>_options.CacheXml is null</c>.
+    /// </para>
+    /// <para>
+    /// <b>Path (a)</b>: caller supplied declarative cache.xml-style
+    /// config — equivalent to cppcache
+    /// <c>initializeDeclarativeCache()</c>.
+    /// <c>_options.CacheXml is not null</c>.
+    /// </para>
+    /// </remarks>
+    private Task InitializeCoreAsync()
+    {
+        if (_options.CacheXml is null)
+        {
+            // path (b) — Options-based
+            // TODO: foreach configured pool in options
+            //       → new ThinClientPoolDM(...) + _poolManager.AddPool(name, pool)
+        }
+        else
+        {
+            // path (a) — declarative xml-style
+            // TODO: walk _options.CacheXml.Pools / .Regions / .Pdx
+            //       and build the same pool / region objects.
+        }
+        // After either path:
+        //   • TODO: _tcrConnectionManager.InitAsync(isPool: true, ct)
+        //   • TODO: each pool's InitAsync triggers handshake / TCP open.
+        throw new NotImplementedException("TODO: Cache.InitializeCoreAsync");
     }
 
     public Task CloseAsync(CancellationToken ct = default)
@@ -114,5 +190,10 @@ internal sealed class Cache(
     {
         // Forward to CloseAsync; idempotent until connection logic lands.
         await CloseAsync().ConfigureAwait(false);
+
+        // TCCM is Cache-owned (not DI-managed) — release its semaphores
+        // / CTS so we don't leak OS handles. PoolManager is DI-Scoped so
+        // the AsyncServiceScope disposes it for us.
+        await _tcrConnectionManager.DisposeAsync().ConfigureAwait(false);
     }
 }

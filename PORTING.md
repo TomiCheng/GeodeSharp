@@ -85,9 +85,9 @@ mirror cppcache file-for-file unless explicitly noted, per the
 
 | cppcache | C# | Bucket | Status | Phase | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `ThinClientBaseDM` | `Geode.Client.Internal.Dm.ThinClientBaseDM` | 2 | ⏳ | 1.5 | Abstract base; chunk queue + lifecycle + auth hooks |
-| `ThinClientDistributionManager` | `Geode.Client.Internal.Dm.ThinClientDistributionManager` | 2 | ⏳ | 1.5 | Simple single-endpoint; used by locator path |
-| `ThinClientPoolDM` | `Geode.Client.Internal.Dm.ThinClientPoolDM` | 2 | ⏳ | 1.5 | Pool variant; multi-inheritance flattened to composition |
+| `ThinClientBaseDM` | `Geode.Client.Internal.ThinClientBaseDM` | 2 | 🔨 | 1.5 | Abstract base shell: lifecycle, chunk Channel, security hooks (default empty), pure-abstract `SendSyncRequestAsync` / `SendRequestToEndpointAsync` |
+| `ThinClientDistributionManager` | `Geode.Client.Internal.ThinClientDistributionManager` | 2 | ⏳ | 1.5 | Simple single-endpoint; used by locator path |
+| `ThinClientPoolDM` | `Geode.Client.Internal.ThinClientPoolDM` | 2 | ⏳ | 1.5 | Pool variant; multi-inheritance flattened to composition |
 | `ThinClientStickyManager` | `Geode.Client.Internal.Dm.ThinClientStickyManager` | 2 | ⏳ | 6 | `AsyncLocal<T>` instead of TSS |
 
 ### Connection / endpoint
@@ -98,7 +98,7 @@ mirror cppcache file-for-file unless explicitly noted, per the
 | `Pool` (cppcache `include/geode/Pool.hpp`, public abstract) | `Geode.Client.Internal.IPool` | 2 | 🔨 | 1.5 | Held internal — no MVP consumer use case; lift to public later if monitoring / advanced lifecycle hooks need it. Sole implementor will be `ThinClientPoolDM` |
 | `PoolManager` + `PoolManagerImpl` (cppcache abstract + Pimpl body) | `Geode.Client.Internal.PoolManager` | 2 | 🔨 | 1.5 | Pimpl collapsed; no separate `IPoolManager` interface — only one implementor, internal use only |
 | `TcrConnectionManager` | `Geode.Client.Internal.TcrConnectionManager` | 2 | 🔨 | 1.5 | Empty shell with TODO + cppcache member notes; will own 3 background tasks + ping `PeriodicTimer` |
-| `TcrEndpoint` | `Geode.Client.Internal.TcrEndpoint` | 2 | ⏳ | 1.5 | per-server state |
+| `TcrEndpoint` | `Geode.Client.Internal.TcrEndpoint` | 2 | 🔨 | 1.5 | Per-server state shell: per-endpoint conn pool, health flags, auth token, subscription receiver placeholders. Method prototypes throw NotImplementedException |
 | `TcrPoolEndPoint` | `Geode.Client.Internal.TcrPoolEndPoint` | 2 | ⏳ | 1.5 | endpoint variant for pool mode |
 | `ConnectionQueue<T>` | (wrapper over `Channel<T>`) | 3 | ⏳ | 1.5 | thin wrapper that adds timed-get-or-create |
 | `ThinClientLocatorHelper` | `Geode.Client.Internal.ThinClientLocatorHelper` | 2 | ⏳ | 1.5 | locator wire protocol |

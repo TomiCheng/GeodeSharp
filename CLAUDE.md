@@ -319,27 +319,41 @@ acts as a proxy.
 Split into 5 sub-phases by dependency order. Each sub-phase is its own
 walking skeleton.
 
-### Phase 1.1 — Connection foundation + serialisation
+### Phase 1.1 — Establish a single server connection
 
-Single socket, handshake, built-in type codec. The plumbing works,
-nothing yet visible to the user.
+End-to-end: the consumer-visible `Cache` opens one TCP/TLS connection
+to one server, runs the handshake, and closes it cleanly. No pool, no
+multi-endpoint, no failover. The user can call
+`EnsureInitializedAsync` / `CloseAsync` and have it Just Work against
+a real Geode cluster.
 
-- Frame codec (big-endian, TcrPart, TcrMessage)
-- Handshake (against
-  `cppcache/src/TcrConnection.cpp::sendHandshakeForServer`)
-- A single `TcrConnection` with reader / writer loops
-- Built-in DSFID codec (string, byte[], bool, int, long, short, byte,
-  float, double, DateTime, null, List, Dictionary, arrays, HashSet)
-- Ping / Reply verification
+- Frame codec (big-endian, TcrPart, TcrMessage) — already done
+- Handshake bytes — already done; refer to
+  `cppcache/src/TcrConnection.cpp::sendHandshakeForServer`
+- A single `TcrConnection` with reader / writer loops — already done
+- Ping / Reply verification — already done
+- **`TcrEndpoint.CreateNewConnectionAsync`**: open socket + handshake,
+  return a usable `TcrConnection`
+- **`Cache.InitializeCoreAsync`**: build a single `TcrEndpoint` from
+  options, await `CreateNewConnectionAsync`
+- **`Cache.CloseAsync`**: send `MessageType.CloseConnection` (18),
+  drain in-flight, dispose the endpoint
 
 ### Phase 1.2 — Single-key CRUD
 
 The first demo-able milestone.
 
+- Built-in DSFID codec (string, byte[], bool, int, long, short, byte,
+  float, double, DateTime, null, List, Dictionary, arrays, HashSet)
+  — moved from 1.1 since serialization is only needed once
+  Put/Get arrive
 - Put(7) / Request(0) / Destroy(9) / ContainsKey(38) messages
 - Exception(2) reply handling
 - `IGeodeCache` / `IRegion<TKey,TValue>` public API
 - DI registration (`AddGeodeClient`)
+- Resolve `PutGetIntegrationTests` / `GetDiagnosticTests` skipped
+  cases (the `RegionDestroyedException` / per-connection state
+  thread)
 - Integration tests: put / get / remove / contains
 
 ### Phase 1.3 — Bulk + management operations

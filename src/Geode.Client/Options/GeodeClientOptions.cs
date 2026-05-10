@@ -99,9 +99,18 @@ public class GeodeClientOptions
     /// trees, PDX defaults. See <see cref="CacheXmlOptions"/>.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>Null when the caller did not supply cache.xml-style config</b>
+    /// (the normal case &#x2014; we go through the programmatic /
+    /// <see cref="PoolOptions"/> path equivalent to cppcache's path
+    /// (b)). Non-null when a caller explicitly mirrors cppcache path
+    /// (a) and provides declarative pool / region / PDX defaults.
+    /// </para>
+    /// <para>
     /// Distinct from <see cref="CacheXmlFile"/> (which is the path to
-    /// the file). Whole subtree is on the deletion shortlist; CLAUDE.md
-    /// cuts cache.xml entirely.
+    /// the file). Both are deletion candidates if the path-(a) loader
+    /// is never built.
+    /// </para>
     /// </remarks>
-    public CacheXmlOptions CacheXml { get; } = new();
+    public CacheXmlOptions? CacheXml { get; set; }
 }

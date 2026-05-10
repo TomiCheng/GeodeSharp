@@ -27,19 +27,35 @@
 
 ---
 
-## Phase 1.1 — Frame codec + handshake + Ping（進行中）
+## Phase 1.1 — 建立單一伺服器連線（進行中）
+
+**目標**：透過 `Cache` 公開 API（`EnsureInitializedAsync` / `CloseAsync`）端到端開一條 server connection、跑 handshake、能送 Ping、優雅關閉。**不**做 pool、**不**做多 endpoint、**不**做 failover。
+
+### Foundation（已完成 — protocol layer）
 
 - [x] `BigEndianBinaryReader` / `BigEndianBinaryWriter`（unit tested）
 - [x] `TcrPart` / `TcrMessage` / `TcrPartBuilder` / `TcrMessageBuilder`（unit tested）
 - [x] `ClientProxyMembershipIdBuilder`（unit tested）
-- [x] `MessageType` enum（含 MVP 子集 + 上游空缺保留）
+- [x] `MessageType` enum
 - [x] `TcrConnection` 框架 + handshake bytes
 - [x] `PingIntegrationTests` 對 `apachegeode/geode` 真機通過
-- [ ] `GeodeCache.InitializeCoreAsync` 串起 handshake（**現在 throw NotImplementedException — 下一步入口**）
-- [ ] `GeodeCache.CloseAsync` 送 `CloseConnection(18)` 並 drain in-flight
-- [ ] 解開 `PutGetIntegrationTests` / `GetDiagnosticTests` 五個 Skip（`RegionDestroyedException` per-connection state 議題）
 
-**下一步入口**：[src/Geode.Client/Services/GeodeCache.cs](src/Geode.Client/Services/GeodeCache.cs) 的 `InitializeCoreAsync`（檔案約 line 44 附近）。
+### 接到 Cache（剩餘工作）
+
+- [ ] `TcrEndpoint.CreateNewConnectionAsync` 實作 — 開 socket、跑 handshake、回 `TcrConnection`
+- [ ] `Cache.InitializeCoreAsync` 實作 path (b)：從 options 拿單一 host:port → 建 `TcrEndpoint` → 呼叫 `CreateNewConnectionAsync`
+- [ ] `Cache.CloseAsync` 送 `CloseConnection(18)` 並釋放連線（`TcrEndpoint.DisposeAsync`）
+- [ ] 確保 `EnsureInitializedAsync` 之後 `Cache` 上的 ping / 簡易往返能跑
+
+**下一步入口**：[src/Geode.Client/Internal/TcrEndpoint.cs](src/Geode.Client/Internal/TcrEndpoint.cs) 的 `CreateNewConnectionAsync`。
+
+### 後移到別的 phase
+
+| 原 Phase 1.1 項目 | 移到 |
+|---|---|
+| Built-in DSFID 型別 codec（string / byte[] / 各 primitive / collection） | **Phase 1.2** — Put/Get 才實際需要序列化 |
+| `PutGetIntegrationTests` / `GetDiagnosticTests` 五個 Skip | **Phase 1.2** — 是 Put/Get 的整合測試 |
+| 多 endpoint / failover / pool | **Phase 1.5** |
 
 ---
 
@@ -48,9 +64,11 @@
 依 [CLAUDE.md](CLAUDE.md) Phase 1.2 計畫展開：
 
 - [ ] `IRegion<TKey,TValue>` 介面方法殼：`PutAsync` / `GetAsync` / `RemoveAsync` / `ContainsKeyAsync`
+- [ ] Built-in DSFID 型別 codec（string / byte[] / int / long / short / byte / bool / float / double / DateTime / null / List / Dictionary / array / HashSet）— 從原 Phase 1.1 移過來
 - [ ] `Put(7)` / `Request(0)` / `Destroy(9)` / `ContainsKey(38)` 訊息建構
 - [ ] `Response(1)` / `Exception(2)` 回覆解析
 - [ ] `IGeodeCache.GetRegion<TKey,TValue>(name)` 公開 API
+- [ ] 解開 `PutGetIntegrationTests` / `GetDiagnosticTests` 五個 Skip
 - [ ] 整合測試：put / get / remove / contains
 
 ---

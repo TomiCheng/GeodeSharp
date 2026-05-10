@@ -1,3 +1,7 @@
+using System.Collections.Concurrent;
+using System.Threading.Channels;
+using Geode.Client.Options;
+
 namespace Geode.Client.Internal;
 
 /// <summary>
@@ -9,77 +13,203 @@ namespace Geode.Client.Internal;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Heaviest member of <see cref="Geode.Client.Services.Cache"/>: the
-/// only one that spawns its own threads. Phase 1.5 main work.
+/// Heaviest member of <see cref="Geode.Client.Services.Cache"/>:
+/// the only one that spawns its own threads. cppcache gates the
+/// three background workers (failover / cleanup / redundancy) and
+/// the ping schedule by <c>if (!isPool)</c> &#x2014; pool-mode
+/// caches push that work into <c>ThinClientPoolDM</c> instead. Our
+/// MVP runs pool-only, so most fields below stay null until a
+/// non-pool / HA / CQ phase.
 /// </para>
 /// <para>
-/// cppcache members to mirror (per CLAUDE.md "mirror then prune"):
+/// Member fields mirror cppcache <c>TcrConnectionManager.hpp</c>
+/// 1:1 per CLAUDE.md "mirror then prune". Owning types not built
+/// yet are typed as <c>object?</c> placeholders &#x2014; replace
+/// with the real type when its phase ships, or delete if never
+/// used. The cppcache back-pointer <c>m_cache</c> is omitted
+/// (Pimpl collapsed; this class lives as a field on
+/// <c>Cache</c> and gets options through DI).
 /// </para>
-/// <list type="bullet">
-///   <item><c>m_endpoints</c> &#x2014;
-///         <c>synchronized_map&lt;string, shared_ptr&lt;TcrEndpoint&gt;&gt;</c>;
-///         all live server connections, keyed by <c>host:port</c>.</item>
-///   <item><c>m_distMngrs</c> &#x2014;
-///         <c>list&lt;ThinClientBaseDM*&gt;</c> + <c>recursive_mutex</c>;
-///         registered distribution managers (one per pool / per static
-///         region).</item>
-///   <item><c>m_failoverTask</c> / <c>m_cleanupTask</c> /
-///         <c>m_redundancyTask</c> &#x2014; three
-///         <c>unique_ptr&lt;Task&gt;</c> background workers; each
-///         signalled by its own <c>binary_semaphore</c>.</item>
-///   <item><c>ping_task_id_</c> &#x2014;
-///         <c>ExpiryTask::id_t</c> handle for the periodic
-///         <c>ping_endpoints()</c> task scheduled in
-///         <c>ExpiryTaskManager</c> (bucket 1: replaced by
-///         <c>PeriodicTimer</c>).</item>
-///   <item><c>m_redundancyManager</c> &#x2014;
-///         <c>unique_ptr&lt;ThinClientRedundancyManager&gt;</c>; HA
-///         subscription + dual-server tracking + dedup.</item>
-///   <item><c>m_isDurable</c> / <c>m_isNetDown</c> &#x2014; runtime
-///         flags from <c>SystemProperties</c>.</item>
-///   <item><c>m_receiverReleaseList</c> /
-///         <c>m_connectionReleaseList</c> /
-///         <c>notify_cleanup_semaphore_list_</c> &#x2014; deferred
-///         cleanup queues so locks aren't held during teardown.</item>
-///   <item><c>m_cache</c> &#x2014; raw <c>CacheImpl*</c> back-pointer
-///         (collapsed in the .NET port; this class will live as a
-///         field on <see cref="Geode.Client.Services.Cache"/>).</item>
-/// </list>
-/// <para>
-/// cppcache public surface to mirror:
-/// </para>
-/// <list type="bullet">
-///   <item><c>init(isPool)</c> &#x2014; start ping task + the three
-///         background threads; pulls durable flag from
-///         <c>SystemProperties</c>.</item>
-///   <item><c>connect(distMng, endpoints, endpointStrs)</c> &#x2014;
-///         register endpoints with this manager.</item>
-///   <item><c>disconnect(distMng, endpoints, keepEndpoints)</c>.</item>
-///   <item><c>ping_endpoints()</c> &#x2014; periodic keep-alive.</item>
-///   <item><c>close()</c> &#x2014; stop threads, cancel ping task,
-///         release pending cleanup.</item>
-///   <item><c>getGlobalEndpoints()</c> &#x2192; the endpoint map.</item>
-///   <item><c>isDurable()</c> / <c>haEnabled()</c>.</item>
-/// </list>
 /// </remarks>
-internal sealed class TcrConnectionManager
+internal sealed class TcrConnectionManager(GeodeClientOptions options) : IAsyncDisposable
 {
-    // TODO: ConcurrentDictionary<string, TcrEndpoint> _endpoints
-    // TODO: List<ThinClientBaseDM> _distributionManagers + ReaderWriterLockSlim
-    // TODO: ThinClientRedundancyManager _redundancyManager
-    // TODO: PeriodicTimer _pingTimer + Task _pingLoop
-    // TODO: Task _failoverLoop + SemaphoreSlim _failoverSignal
-    // TODO: Task _cleanupLoop + SemaphoreSlim _cleanupSignal
-    // TODO: Task _redundancyLoop + SemaphoreSlim _redundancySignal
-    // TODO: Channel<TcrConnection> _connectionReleaseQueue
-    // TODO: Channel<EventReceiver> _receiverReleaseQueue
-    // TODO: bool _isDurable, bool _isNetDown
-    //
-    // TODO: Task InitAsync(bool isPool, CancellationToken ct)
-    // TODO: Task ConnectAsync(IDistributionManager dm, IReadOnlyList<TcrEndpoint> endpoints, ...)
-    // TODO: Task DisconnectAsync(IDistributionManager dm, IReadOnlyList<TcrEndpoint> endpoints, bool keepEndpoints)
-    // TODO: Task PingEndpointsAsync(CancellationToken ct)
-    // TODO: Task CloseAsync(CancellationToken ct)
-    // TODO: bool IsDurable { get; }
-    // TODO: bool IsHaEnabled { get; }
+    private readonly GeodeClientOptions _options = options;
+
+#pragma warning disable CS0169, CS0414, CS0649, CS9113 // placeholder fields mirroring TcrConnectionManager; wired up phase by phase
+
+    // ── Endpoint registry (TcrConnectionManager.hpp m_endpoints) ──
+    private readonly ConcurrentDictionary<string, object?> _endpoints =
+        new(StringComparer.Ordinal);                // m_endpoints (value: TcrEndpoint)
+
+    // ── Distribution-manager registry (m_distMngrs) ──
+    private readonly List<object?> _distributionManagers = new(); // m_distMngrs (value: ThinClientBaseDM)
+    private readonly ReaderWriterLockSlim _distributionManagersLock = new();
+
+    // ── Background workers (m_failoverTask / m_cleanupTask / m_redundancyTask) ──
+    // cppcache: three unique_ptr<Task> + binary_semaphore each.
+    // .NET: Task + SemaphoreSlim. All null until InitAsync(isPool: false).
+    private Task? _failoverTask;                    // m_failoverTask
+    private Task? _cleanupTask;                     // m_cleanupTask
+    private Task? _redundancyTask;                  // m_redundancyTask
+    private readonly SemaphoreSlim _failoverSignal = new(0, int.MaxValue);     // failover_semaphore_
+    private readonly SemaphoreSlim _cleanupSignal = new(0, int.MaxValue);      // cleanup_semaphore_
+    private readonly SemaphoreSlim _redundancySignal = new(0, int.MaxValue);   // redundancy_semaphore_
+    private readonly CancellationTokenSource _backgroundCts = new();           // unify shutdown
+
+    // ── Periodic ping (cppcache ping_task_id_ via ExpiryTaskManager) ──
+    private PeriodicTimer? _pingTimer;              // bucket-1 replacement
+    private Task? _pingLoop;
+
+    // ── HA subscription / redundancy (m_redundancyManager) ──
+    private object? _redundancyManager;             // ThinClientRedundancyManager (Phase 2+)
+
+    // ── Runtime flags (m_isDurable / m_isNetDown) ──
+    private bool _isDurable;                        // m_isDurable
+    private int _isNetDown;                         // m_isNetDown (Interlocked 0/1)
+
+    // ── Deferred cleanup queues ──
+    // cppcache: Queue<TcrConnection*>, Queue<EventReceiver*>, Queue<binary_semaphore*>
+    private Channel<object?>? _connectionReleaseQueue;     // m_connectionReleaseList
+    private Channel<object?>? _receiverReleaseQueue;       // m_receiverReleaseList
+    private Channel<SemaphoreSlim>? _notifyCleanupSemaphoreQueue; // notify_cleanup_semaphore_list_
+
+    // ── Disposal flag ──
+    private int _disposed;
+
+#pragma warning restore CS0169, CS0414, CS0649
+
+    public bool IsDurable => _isDurable;
+
+    public bool IsHaEnabled => _redundancyManager is not null;
+
+    public bool IsNetDown => Volatile.Read(ref _isNetDown) != 0;
+
+    /// <summary>
+    /// Snapshot of registered endpoints. Mirrors cppcache
+    /// <c>TcrConnectionManager::getGlobalEndpoints()</c>.
+    /// </summary>
+    public IReadOnlyDictionary<string, object?> GetGlobalEndpoints() => _endpoints;
+
+    /// <summary>
+    /// Start background workers. Mirrors cppcache
+    /// <c>TcrConnectionManager::init(isPool)</c>.
+    /// </summary>
+    /// <remarks>
+    /// When <paramref name="isPool"/> is <c>false</c>: start the
+    /// failover / cleanup / redundancy loops and the
+    /// <see cref="PeriodicTimer"/> ping task. When <c>true</c>: leave
+    /// background fields null; pool-mode keepalive is owned by
+    /// <c>ThinClientPoolDM</c>. Idempotent (cppcache uses
+    /// <c>m_initGuard</c>).
+    /// </remarks>
+    public Task InitAsync(bool isPool, CancellationToken ct = default)
+    {
+        // TODO: pull durable flag from _options.Subscription.DurableClientId.
+        // TODO: if (!isPool) launch _failoverTask / _cleanupTask /
+        //       _redundancyTask + PeriodicTimer-driven _pingLoop.
+        throw new NotImplementedException("TODO: TcrConnectionManager.InitAsync");
+    }
+
+    /// <summary>
+    /// Register a distribution manager with a set of endpoints.
+    /// Mirrors cppcache
+    /// <c>TcrConnectionManager::connect(dm, endpoints, endpointStrs)</c>.
+    /// </summary>
+    /// <param name="distributionManager">
+    /// Owning distribution manager — typed as <c>object</c> until
+    /// <c>ThinClientBaseDM</c> lands.
+    /// </param>
+    /// <param name="endpoints">
+    /// Resolved endpoint instances — typed as <c>object</c> until
+    /// <c>TcrEndpoint</c> lands.
+    /// </param>
+    public Task ConnectAsync(
+        object distributionManager,
+        IReadOnlyList<object> endpoints,
+        IReadOnlyList<string> endpointStrs,
+        CancellationToken ct = default)
+    {
+        // TODO: lookup or create TcrEndpoint per endpointStr in _endpoints;
+        //       register dm into _distributionManagers under the rwlock.
+        throw new NotImplementedException("TODO: TcrConnectionManager.ConnectAsync");
+    }
+
+    /// <summary>
+    /// Unregister a distribution manager. Mirrors cppcache
+    /// <c>TcrConnectionManager::disconnect(dm, endpoints, keepEndpoints)</c>.
+    /// </summary>
+    public Task DisconnectAsync(
+        object distributionManager,
+        IReadOnlyList<object> endpoints,
+        bool keepEndpoints,
+        CancellationToken ct = default)
+    {
+        // TODO: drop dm from _distributionManagers; for each endpoint with
+        //       no remaining users and !keepEndpoints, remove from
+        //       _endpoints and queue for cleanup.
+        throw new NotImplementedException("TODO: TcrConnectionManager.DisconnectAsync");
+    }
+
+    /// <summary>
+    /// Ping every connected endpoint once. Driven by the
+    /// <see cref="PeriodicTimer"/> in non-pool mode; mirrors cppcache
+    /// <c>TcrConnectionManager::ping_endpoints()</c>.
+    /// </summary>
+    public Task PingEndpointsAsync(CancellationToken ct = default)
+    {
+        // TODO: foreach endpoint in _endpoints → endpoint.SendPingAsync(ct).
+        throw new NotImplementedException("TODO: TcrConnectionManager.PingEndpointsAsync");
+    }
+
+    /// <summary>
+    /// Stop background workers and cancel pending tasks. Mirrors
+    /// cppcache <c>TcrConnectionManager::close()</c>. Does **not**
+    /// release endpoint objects &#x2014;
+    /// <see cref="DisposeAsync"/> handles final teardown.
+    /// </summary>
+    public Task CloseAsync(CancellationToken ct = default)
+    {
+        // TODO: dispose _pingTimer, signal _backgroundCts, await
+        //       _failoverTask / _cleanupTask / _redundancyTask /
+        //       _pingLoop, drain release queues.
+        throw new NotImplementedException("TODO: TcrConnectionManager.CloseAsync");
+    }
+
+    /// <summary>
+    /// Test hook: simulate a network outage. Mirrors cppcache
+    /// <c>TcrConnectionManager::netDown()</c>.
+    /// </summary>
+    public void NetDown()
+    {
+        // TODO: Interlocked.Exchange(ref _isNetDown, 1) +
+        //       force-disconnect every endpoint.
+        throw new NotImplementedException("TODO: TcrConnectionManager.NetDown");
+    }
+
+    /// <summary>
+    /// Test hook: revive after <see cref="NetDown"/>. Mirrors cppcache
+    /// <c>TcrConnectionManager::revive()</c>.
+    /// </summary>
+    public void Revive()
+    {
+        // TODO: Interlocked.Exchange(ref _isNetDown, 0) + signal
+        //       _failoverSignal so endpoints reconnect.
+        throw new NotImplementedException("TODO: TcrConnectionManager.Revive");
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return ValueTask.CompletedTask;
+
+        _backgroundCts.Cancel();
+        _pingTimer?.Dispose();
+        _failoverSignal.Dispose();
+        _cleanupSignal.Dispose();
+        _redundancySignal.Dispose();
+        _backgroundCts.Dispose();
+        _distributionManagersLock.Dispose();
+
+        // TODO: await loop tasks before returning; drain queues; dispose endpoints.
+        return ValueTask.CompletedTask;
+    }
 }

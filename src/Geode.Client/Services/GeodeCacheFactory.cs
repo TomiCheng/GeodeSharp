@@ -9,7 +9,7 @@ namespace Geode.Client.Services;
 
 /// <summary>
 /// Default <see cref="IGeodeCacheFactory"/>. Lazily constructs one
-/// <see cref="GeodeCache"/> per registered name and caches it.
+/// <see cref="Cache"/> per registered name and caches it.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -18,7 +18,7 @@ namespace Geode.Client.Services;
 /// caller's named options bindings light up automatically.
 /// </para>
 /// <para>
-/// <b>One DI scope per named cache.</b> Each <see cref="GeodeCache"/>
+/// <b>One DI scope per named cache.</b> Each <see cref="Cache"/>
 /// is built inside its own <see cref="AsyncServiceScope"/> so that
 /// per-cache <c>Scoped</c> services (eventually: pool / connection /
 /// metrics) don't alias across clusters. The scope's lifetime is
@@ -29,7 +29,7 @@ namespace Geode.Client.Services;
 /// <para>
 /// <b>No hot reload.</b> We deliberately do not subscribe to
 /// <c>IOptionsMonitor&lt;T&gt;.OnChange</c>. A built
-/// <see cref="GeodeCache"/> owns an open TCP/TLS connection, handshake
+/// <see cref="Cache"/> owns an open TCP/TLS connection, handshake
 /// state, membership id, and (eventually) a connection pool — those
 /// cannot be swapped under live <c>IRegion&lt;K, V&gt;</c> references
 /// without breaking in-flight ops. <see cref="IOptionsMonitor{T}"/> is
@@ -65,7 +65,7 @@ internal sealed class GeodeCacheFactory(
     }
 
     /// <summary>
-    /// Build a <see cref="GeodeCache"/> inside its own
+    /// Build a <see cref="Cache"/> inside its own
     /// <see cref="AsyncServiceScope"/>. Sync, no wire I/O — the cache
     /// itself initialises lazily on the first wire-touching op.
     /// </summary>
@@ -78,7 +78,7 @@ internal sealed class GeodeCacheFactory(
             // ActivatorUtilities needs a concrete type; T = IGeodeCache
             // would throw "Instances of abstract classes cannot be
             // created." Implicit upcast back to IGeodeCache on return.
-            var cache = (IGeodeCache)ActivatorUtilities.CreateInstance<GeodeCache>(
+            var cache = (IGeodeCache)ActivatorUtilities.CreateInstance<Cache>(
                 scope.ServiceProvider, name, options);
             return new ScopedCacheEntry(cache, scope);
         }

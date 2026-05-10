@@ -6,12 +6,21 @@ namespace Geode.Client.Services;
 /// Default <see cref="IGeodeCache"/> implementation. One instance per
 /// registered name (cached by <see cref="GeodeCacheFactory"/>).
 /// </summary>
-internal sealed class GeodeCache : IGeodeCache
+/// <remarks>
+/// Mirrors cppcache <c>Cache</c>
+/// (<c>cppcache/include/geode/Cache.hpp</c>) — the concrete bottom of
+/// the upstream <c>RegionService</c> &#x2192; <c>GeodeCache</c>
+/// &#x2192; <c>Cache</c> hierarchy. cppcache's Pimpl split
+/// (<c>Cache</c> façade + <c>CacheImpl</c> body) is collapsed here:
+/// .NET doesn't need the binary-compatibility shim, so this single
+/// class plays both roles.
+/// </remarks>
+internal sealed class Cache : IGeodeCache
 {
     private readonly GeodeClientOptions _options;
     private readonly Lazy<Task> _initialization;
 
-    public GeodeCache(string name, GeodeClientOptions options)
+    public Cache(string name, GeodeClientOptions options)
     {
         ArgumentNullException.ThrowIfNull(name);
         ArgumentNullException.ThrowIfNull(options);
@@ -41,7 +50,7 @@ internal sealed class GeodeCache : IGeodeCache
         // TODO: open TcrConnection(s) per Pool options, run handshake,
         //       store membership id, register with the connection pool
         //       once the pool layer lands.
-        throw new NotImplementedException("TODO: GeodeCache.InitializeCoreAsync");
+        throw new NotImplementedException("TODO: Cache.InitializeCoreAsync");
     }
 
     public Task CloseAsync(CancellationToken ct = default)

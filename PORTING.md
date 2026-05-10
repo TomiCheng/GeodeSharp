@@ -37,15 +37,33 @@ exists; they are translated, not ported.
 
 | cppcache (clicache) | C# | Status | Phase | Notes |
 | --- | --- | --- | --- | --- |
-| `Apache::Geode::Client::IGeodeCache` | `Geode.Client.IGeodeCache` | ✅ | 0 | Async + `IAsyncDisposable` |
+| `RegionService` (top abstract) | `Geode.Client.IRegionService` | 🔨 | 0 | Lifecycle surface only today (`IsClosed` / `CloseAsync` / `IAsyncDisposable`); region/query/PDX methods land in 1.2 / 1.4 / 2 |
+| `GeodeCache` (mid abstract) | `Geode.Client.IGeodeCache : IRegionService` | 🔨 | 0 | Adds `Name` + `EnsureInitializedAsync`; PDX config accessors land in Phase 2 |
+| `Cache` (concrete) | _no separate public interface_; `Geode.Client.Services.Cache` is the impl (see §2) | 🔨 | 1.x | cppcache `Cache` adds `createRegionFactory` / `getCacheTransactionManager` / `getPoolManager` / `createAuthenticatedView` etc. — most live on `IGeodeCache` directly when their phase ships; revisit splitting into a separate "ICache" interface only if multi-user (Phase 3) requires it |
 | `Apache::Geode::Client::IRegion<TKey,TValue>` | `Geode.Client.IRegion<TKey,TValue>` | 🔨 | 1.2 | Empty marker; methods land in 1.2 |
 | `Apache::Geode::Client::IQueryService` | `Geode.Client.IQueryService` | 🔨 | 1.4 | Empty marker; `NewQuery<T>` in 1.4 |
 | `Apache::Geode::Client::IQuery<T>` | `Geode.Client.IQuery<T>` | 🔨 | 1.4 | Empty marker; `ExecuteAsync` in 1.4 |
-| `Apache::Geode::Client::CacheFactory` (static factory) | `Geode.Client.IGeodeCacheFactory` + `AddGeodeClient` DI ext | ✅ | 0 | Replaced static factory with DI |
+| `Apache::Geode::Client::CacheFactory` | `Geode.Client.IGeodeCacheFactory` | ✅ | 0 | Same role (gateway to `Cache` instances), not the same mechanics — see *CacheFactory ↔ IGeodeCacheFactory* note below |
 | `Apache::Geode::Client::GeodeException` | `Geode.Client.GeodeException` | ✅ | 0 | |
-| `Apache::Geode::Client::Cache` (concrete) | (no public concrete) | 🚫 | — | Hidden behind `IGeodeCache` |
 | `cache.xml` configuration | `Geode.Client.Options.GeodeClientOptions` + sub-options | ✅ | 0 | mirror-then-prune; see `Options/` folder |
 | _additional clicache types to be enumerated as we encounter them_ | | ⏳ | | TODO: full sweep of `D:\github\geode-native\clicache\src\` |
+
+### Note: `CacheFactory` ↔ `IGeodeCacheFactory`
+
+Same role (the public entry point that produces / hands out `Cache`
+instances) but the mechanics differ — this is a "translate +
+modernise" mapping (per CLAUDE.md), not a literal port.
+
+| Aspect | cppcache `CacheFactory` | C# `IGeodeCacheFactory` |
+| --- | --- | --- |
+| **Pattern** | Fluent builder | DI-resolved factory |
+| **Construction** | `CacheFactory()` / `CacheFactory(props)` + chained `set(k, v)` | `services.AddGeodeClient(...)` at composition root |
+| **Resolution** | `factory.create()` returns a fresh `Cache` | `factory.Get(name)` looks up the cache registered under that name |
+| **Lifetime** | Caller owns the returned `Cache` | DI container owns; resolved instances are singletons-per-name |
+| **Number of caches** | One per `create()` call; no built-in registry | Multiple named caches in one process; registry keyed by name |
+| **Configuration source** | `Properties` bag (typically loaded from `.ini`) | `IConfiguration` / `IOptions<GeodeClientOptions>` |
+
+cppcache supports multiple `Cache` instances ([CacheFactory.cpp:65](https://github.com/apache/geode-native/blob/develop/cppcache/src/CacheFactory.cpp) constructs a fresh one per call; nothing is `static`). It just doesn't ship a registry — callers track instances themselves. The C# port adds the registry layer because DI named-options is the .NET-idiomatic way to expose multiple cluster connections from one app.
 
 ## 2. Internal implementation 🔒 (corresponds to cppcache `cppcache/src/`)
 
@@ -57,7 +75,7 @@ mirror cppcache file-for-file unless explicitly noted, per the
 
 | cppcache | C# | Bucket | Status | Phase | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `CacheImpl` | `Geode.Client.Services.GeodeCache` | 2 | 🔨 | 1.1 | `InitializeCoreAsync` is the next entry point |
+| `Cache` (façade) + `CacheImpl` (Pimpl body) | `Geode.Client.Services.Cache` (single class, implements public `IGeodeCache`) | 2 | 🔨 | 1.1 | cppcache's Pimpl split (`Cache` → `m_cacheImpl`) is collapsed — .NET doesn't need the binary-compatibility shim. `InitializeCoreAsync` is the next entry point |
 | (DI factory layer) | `Geode.Client.Services.GeodeCacheFactory` | — | ✅ | 0 | New, no cppcache analogue |
 | `ThinClientRegion` | `Geode.Client.Services.ThinClientRegion<TKey,TValue>` | 2 | ⏳ | 1.2 | |
 | `Region` (base) | merged into `IRegion<TKey,TValue>` | 2 | ⏳ | 1.2 | C# unifies abstract base + interface |

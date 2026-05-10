@@ -6,21 +6,30 @@ namespace Geode.Client;
 /// resolved directly from DI).
 /// </summary>
 /// <remarks>
-/// Mirrors the cppcache <c>Cache</c> / <c>GeodeCache</c> /
-/// <c>RegionService</c> chain, collapsed into a single .NET-shaped
-/// interface — the cppcache split exists to support multi-user
-/// authenticated views, which MVP does not.
+/// <para>
+/// Mirrors cppcache <c>GeodeCache</c>
+/// (<c>cppcache/include/geode/GeodeCache.hpp</c>), the middle tier of
+/// the upstream <c>RegionService</c> &#x2192; <c>GeodeCache</c>
+/// &#x2192; <c>Cache</c> hierarchy. Lifecycle and lookup methods live
+/// on the base <see cref="IRegionService"/>; this interface adds
+/// cache-instance-scoped surface (name, eager init, future PDX
+/// configuration accessors).
+/// </para>
+/// <para>
+/// We do not currently expose a separate "concrete cache" interface
+/// equivalent to cppcache's <c>Cache</c> class &#x2014; methods that
+/// live on <c>Cache</c> in cppcache (transaction manager, pool
+/// manager, authenticated views, etc.) will be added either to this
+/// interface or to a derived one as their phases ship.
+/// </para>
 /// </remarks>
-public interface IGeodeCache : IAsyncDisposable
+public interface IGeodeCache : IRegionService
 {
     /// <summary>
     /// Logical name this cache was registered under. Empty string for
     /// the unnamed default.
     /// </summary>
     string Name { get; }
-
-    /// <summary>Whether <see cref="CloseAsync"/> has been called.</summary>
-    bool IsClosed { get; }
 
     /// <summary>
     /// Open the connection and run the handshake if it has not been
@@ -38,15 +47,12 @@ public interface IGeodeCache : IAsyncDisposable
     /// <para>
     /// Concurrent first-callers all await the same in-flight init.
     /// The <paramref name="ct"/> of the <i>first</i> caller dictates
-    /// cancellation for everyone awaiting that init — pass a token
-    /// you control if you care.
+    /// cancellation for everyone awaiting that init &#x2014; pass a
+    /// token you control if you care.
     /// </para>
     /// </remarks>
     Task EnsureInitializedAsync(CancellationToken ct = default);
 
-    /// <summary>
-    /// Gracefully close the underlying connection(s). Subsequent calls
-    /// are a no-op.
-    /// </summary>
-    Task CloseAsync(CancellationToken ct = default);
+    // Phase 2: bool PdxIgnoreUnreadFields { get; }
+    // Phase 2: bool PdxReadSerialized   { get; }
 }

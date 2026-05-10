@@ -70,6 +70,19 @@ naming, and semantics. Our work is "translate + modernise", not
   QueryService).
 - **Modernise:** sync → async, `gcnew` → record/class, cache.xml →
   `IOptions<T>`, static factory → DI.
+- **Public surface uses C# `interface`, never `abstract class`.**
+  cppcache types in `cppcache/include/geode/` (e.g. `Cache`, `Region`,
+  `RegionService`) that we choose to expose go out as **C#
+  `interface`** (`IGeodeCache`, `IRegion<TKey,TValue>`,
+  `IRegionService`); concrete types live `internal sealed`.
+  Visibility map: `cppcache/include/geode/Foo.hpp` → C# `IFoo`
+  (visibility decided per-class, not auto-public — cppcache puts
+  things in `include/` because C++ has no `internal`; .NET does, so
+  default to internal unless a real consumer use case demands
+  public, then upgrade);
+  `cppcache/src/FooImpl.hpp` (Pimpl body) → internal `Foo` (Pimpl
+  collapsed); `cppcache/src/Bar.hpp` (no public abstract) →
+  internal.
 
 ### Three-bucket porting rule
 

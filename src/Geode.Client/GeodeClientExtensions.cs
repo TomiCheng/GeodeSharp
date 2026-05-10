@@ -1,3 +1,4 @@
+using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
 using Geode.Client.Services;
@@ -144,9 +145,21 @@ public static class GeodeClientExtensions
     /// <remarks>
     /// <list type="bullet">
     ///   <item>
-    ///     <see cref="ClientProxyMembershipIdBuilder"/> as a
-    ///     <b>singleton</b> — process-scoped uniqueTag and
-    ///     identity-bytes cache must be shared across all caches.
+    ///     <see cref="ClientProxyMembershipIdBuilder"/> as
+    ///     <b>scoped</b> — each cache lives in its own
+    ///     <see cref="AsyncServiceScope"/> (created by
+    ///     <see cref="GeodeCacheFactory"/>), so a Scoped registration
+    ///     gives each cache its own builder. cppcache equivalent
+    ///     (<c>ClientProxyMembershipIDFactory</c>) is a per-<c>CacheImpl</c>
+    ///     value member, which Scoped here mirrors.
+    ///   </item>
+    ///   <item>
+    ///     <see cref="PoolManager"/> as <b>scoped</b> — same reasoning
+    ///     as <see cref="ClientProxyMembershipIdBuilder"/>; each cache
+    ///     owns its own pool registry. cppcache equivalent
+    ///     (<c>PoolManagerImpl</c>) is held as
+    ///     <c>unique_ptr&lt;PoolManager&gt;</c> in <c>CacheImpl</c>,
+    ///     which Scoped mirrors.
     ///   </item>
     ///   <item>
     ///     <see cref="IGeodeCacheFactory"/> as a <b>singleton</b> so
@@ -174,7 +187,8 @@ public static class GeodeClientExtensions
     {
         var key = name ?? MsOptions.DefaultName;
 
-        services.TryAddSingleton<ClientProxyMembershipIdBuilder>();
+        services.TryAddScoped<ClientProxyMembershipIdBuilder>();
+        services.TryAddScoped<PoolManager>();
         services.TryAddSingleton<TcrPartBuilder>();
         services.TryAddSingleton<TcrMessageBuilder>();
         services.AddTransient<TcrConnection>();

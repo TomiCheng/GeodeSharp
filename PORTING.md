@@ -43,6 +43,7 @@ exists; they are translated, not ported.
 | `Apache::Geode::Client::IRegion<TKey,TValue>` | `Geode.Client.IRegion<TKey,TValue>` | 🔨 | 1.2 | Empty marker; methods land in 1.2 |
 | `Apache::Geode::Client::IQueryService` | `Geode.Client.IQueryService` | 🔨 | 1.4 | Empty marker; `NewQuery<T>` in 1.4 |
 | `Apache::Geode::Client::IQuery<T>` | `Geode.Client.IQuery<T>` | 🔨 | 1.4 | Empty marker; `ExecuteAsync` in 1.4 |
+| `PoolFactory` | _undecided_ | ⏳ | 1.5 | Decided: `PoolManager.createFactory()` is **not** ported — pools are not built off the manager. Undecided: whether a separate `PoolFactory` type is needed at all. Pool construction may go through DI / `AddGeodeClient`, but final shape pending. |
 | `Apache::Geode::Client::CacheFactory` | `Geode.Client.IGeodeCacheFactory` | ✅ | 0 | Same role (gateway to `Cache` instances), not the same mechanics — see *CacheFactory ↔ IGeodeCacheFactory* note below |
 | `Apache::Geode::Client::GeodeException` | `Geode.Client.GeodeException` | ✅ | 0 | |
 | `cache.xml` configuration | `Geode.Client.Options.GeodeClientOptions` + sub-options | ✅ | 0 | mirror-then-prune; see `Options/` folder |
@@ -94,7 +95,9 @@ mirror cppcache file-for-file unless explicitly noted, per the
 | cppcache | C# | Bucket | Status | Phase | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `TcrConnection` | `Geode.Client.Protocol.TcrConnection` | 2 | 🔨 | 1.1 | Frame I/O works; handshake bytes done; `InitializeCoreAsync` not wired yet |
-| `TcrConnectionManager` | `Geode.Client.Internal.TcrConnectionManager` | 2 | ⏳ | 1.5 | |
+| `Pool` (cppcache `include/geode/Pool.hpp`, public abstract) | `Geode.Client.Internal.IPool` | 2 | 🔨 | 1.5 | Held internal — no MVP consumer use case; lift to public later if monitoring / advanced lifecycle hooks need it. Sole implementor will be `ThinClientPoolDM` |
+| `PoolManager` + `PoolManagerImpl` (cppcache abstract + Pimpl body) | `Geode.Client.Internal.PoolManager` | 2 | 🔨 | 1.5 | Pimpl collapsed; no separate `IPoolManager` interface — only one implementor, internal use only |
+| `TcrConnectionManager` | `Geode.Client.Internal.TcrConnectionManager` | 2 | 🔨 | 1.5 | Empty shell with TODO + cppcache member notes; will own 3 background tasks + ping `PeriodicTimer` |
 | `TcrEndpoint` | `Geode.Client.Internal.TcrEndpoint` | 2 | ⏳ | 1.5 | per-server state |
 | `TcrPoolEndPoint` | `Geode.Client.Internal.TcrPoolEndPoint` | 2 | ⏳ | 1.5 | endpoint variant for pool mode |
 | `ConnectionQueue<T>` | (wrapper over `Channel<T>`) | 3 | ⏳ | 1.5 | thin wrapper that adds timed-get-or-create |

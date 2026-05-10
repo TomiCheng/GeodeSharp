@@ -1,25 +1,37 @@
-# Geode .NET Client — Project Context
+# GeodeSharp — Project Context
 
-> This file is Claude Code's long-term project memory. Read it once at the
-> start of every session, confirm where we are, then start work.
+> This file is Claude Code's long-term project memory. Read it once at
+> the start of every session, confirm the current phase, then start
+> work.
 >
-> Companion: **[`Scope.md`](Scope.md)** — audit of cppcache's 86 public
-> headers, in-scope vs deferred. Consult before introducing any new
-> public type so we don't drag in callbacks / CQ / function-execution
-> surface that MVP doesn't need.
+> **This is a living document.** Update it at the end of each phase
+> with what was learned; phase boundaries are deliberately fuzzy and
+> may be adjusted as needed.
 
 ---
 
 ## One-line goal
 
-Build a **pure-managed, zero-dependency, cross-platform** Apache Geode
-client targeting **.NET 10 (LTS)** and ship it on NuGet.
+Build a **pure-managed, zero-runtime-dependency, cross-platform** Apache
+Geode client targeting **.NET 10 (LTS)** and ship it on NuGet.
 
 Upstream reference: <https://github.com/apache/geode-native>
-(We do **not** port the C++/CLI `clicache/` — too restricted,
-Windows-only — but `clicache/src/*.hpp` is a useful reference for the
-.NET API *shape* we are designing in pure C#. See
-`clicache-source-location.md` in `~/.claude` memory.)
+(We do **not** port the C++/CLI `clicache/` — too restricted and
+Windows-only.)
+
+Project naming (two layers, deliberately separate):
+- GitHub repo / local folder: `GeodeSharp` (https://github.com/TomiCheng/GeodeSharp)
+- Solution: `geode-dotnet.sln`
+- NuGet PackageId / Root namespace / AssemblyName: `Geode.Client`
+- Source folder: `src/Geode.Client/`; tests `tests/Geode.Client.Tests/`
+  and `tests/Geode.Client.IntegrationTests/`; sample
+  `samples/Geode.Client.Sample/`
+
+"GeodeSharp" is the project / repo name (the human-facing identifier);
+the assembly layer uses `Geode.Client` (consistent with industry
+convention: the .NET client for Apache Geode). Code, `using`
+directives, and `<PackageReference>` entries always use `Geode.Client`;
+GeodeSharp is reserved for talking about the project itself.
 
 ---
 
@@ -27,47 +39,95 @@ Windows-only — but `clicache/src/*.hpp` is a useful reference for the
 
 ### Why not the alternatives
 
-- **Route A (port C++/CLI to .NET 10)**: rejected. Microsoft has stated
-  C++/CLI on .NET Core is supported for compatibility only, with no future
-  investment, Windows-only, no AOT, no SDK-style projects.
-- **Route B1 (keep native cppcache, add a P/Invoke wrapper)**: rejected.
-  Forces us to maintain native binaries per RID, loses the "pure managed"
-  benefit, and the C ABI shim is a project of its own.
-- **Route B2 (pure managed, speak the wire protocol ourselves)**:
-  ✅ **adopted**.
+- **Route A (port C++/CLI to .NET 10):** rejected. Microsoft has stated
+  C++/CLI on .NET Core is supported for compatibility only, with no
+  future investment, Windows-only, no AOT, no SDK-style projects.
+- **Route B1 (keep native cppcache, add a P/Invoke wrapper):** rejected.
+  Forces us to maintain native binaries per RID, loses the "pure
+  managed" benefit, and the C ABI shim is a project of its own.
+- **Route B2 (pure managed, speak the wire protocol ourselves):**
+  ✅ **adopted.**
 
 ### B2's trade-offs and how we cope
 
-Geode's wire protocol has **no normative spec** (Apache's own wiki admits
-this). It has to be reverse-engineered from `cppcache/src/` and Java
-`geode-core`.
+The Geode wire protocol has **no normative spec** (Apache's own wiki
+admits this). It has to be reverse-engineered from `cppcache/src/` and
+Java `geode-core`.
 
-Mitigation: **scope down hard to MVP.** Only Put / Get / Query / basic
-CRUD. CQ / function execution / transactions / HA / delta are explicitly
-out of MVP scope.
+**Mitigation 1:** treat cppcache as the "executable spec" — read it
+rather than designing the protocol from scratch.
+**Mitigation 2:** scope features in phases. Ship the MVP first, then
+fill out the rest incrementally.
+
+### Port + modernise
+
+cppcache `clicache/` has already validated all the interface shapes,
+naming, and semantics. Our work is "translate + modernise", not
+"design from scratch":
+
+- **Keep:** type names (`IRegion`, `IGeodeCache`, `IQueryService`),
+  method names (Put / Get / Remove), core concepts (Region, Pool,
+  QueryService).
+- **Modernise:** sync → async, `gcnew` → record/class, cache.xml →
+  `IOptions<T>`, static factory → DI.
+
+---
+
+## Overall principles
+
+1. **Async-first.** All I/O operations expose only an async API; no
+   synchronous variants.
+2. **Options pattern.** Configuration flows through `IOptions<T>`
+   bound to `appsettings.json`.
+3. **DI-first.** Registration via `services.AddGeodeClient(...)`; no
+   static singletons.
+4. **Zero external runtime dependencies.** Everything sits on the BCL;
+   the only references are the `Microsoft.Extensions.*` abstraction
+   packages.
+5. **API-first / interface-first.** Declare interface shells first
+   (`NotImplementedException` bodies), then fill in implementations;
+   interfaces are translated from cppcache `clicache/`.
+6. **Walking skeleton.** Each sub-phase delivers an end-to-end minimum;
+   never finish a whole layer before any layer above it works.
+7. **Living document.** This file evolves alongside development.
 
 ---
 
 ## Dependency policy
 
-**Zero external runtime NuGet dependencies** (test tooling excepted).
-
-| What `cppcache` uses    | Our replacement                                                 |
-| ----------------------- | --------------------------------------------------------------- |
-| Boost.Asio              | `System.Net.Sockets` + `System.IO.Pipelines` + `Channels`       |
-| OpenSSL                 | `System.Net.Security.SslStream`                                 |
-| Xerces-C (cache.xml)    | **Cut entirely.** Use `Microsoft.Extensions.Configuration`.     |
-| SQLite (overflow)       | Out of MVP scope.                                               |
-| Google Test / Benchmark | xUnit v3 / BenchmarkDotNet                                      |
-
-Configuration follows .NET conventions: `appsettings.json` +
-`IOptions<GeodeClientOptions>`. **No `cache.xml`. No `.ini`.**
+| What cppcache uses    | Our replacement                                                 |
+| --------------------- | --------------------------------------------------------------- |
+| Boost.Asio            | `System.Net.Sockets` + `System.IO.Pipelines` + `Channels`       |
+| OpenSSL               | `System.Net.Security.SslStream`                                 |
+| Xerces-C (cache.xml)  | **Cut entirely.** Use `Microsoft.Extensions.Configuration`.     |
+| SQLite (overflow)     | Not implemented.                                                |
+| Google Test / Benchmark | xUnit v3 / BenchmarkDotNet                                    |
 
 ---
 
-## API surface (DI-first)
+## Configuration schema
 
-The user sees one extension method and two interfaces:
+```json
+{
+  "Geode": {
+    "Locators": ["host1:10334", "host2:10334"],
+    "Servers":  ["host1:40404"],
+    "Pool": {
+      "MinConnections": 1,
+      "MaxConnections": 10,
+      "ReadTimeout": "00:00:10"
+    },
+    "Tls":  { "Enabled": false },
+    "Auth": { "Username": null, "Password": null }
+  }
+}
+```
+
+Bound to a `GeodeClientOptions` record. **No `cache.xml`. No `.ini`.**
+
+---
+
+## Public API sketch (DI-first)
 
 ```csharp
 // Registration
@@ -76,8 +136,9 @@ builder.Services.AddGeodeClient(builder.Configuration.GetSection("Geode"));
 // Usage
 public class OrderService(IGeodeCache cache)
 {
-    private readonly IRegion<string, Order> _orders = cache.GetRegion<string, Order>("orders");
-    public Task<Order?> GetAsync(string id) => _orders.GetAsync(id);
+    private readonly IRegion<string, byte[]> _orders = cache.GetRegion<string, byte[]>("orders");
+    public Task SaveAsync(string id, byte[] payload, CancellationToken ct)
+        => _orders.PutAsync(id, payload, ct);
 }
 ```
 
@@ -96,50 +157,126 @@ public interface IRegion<TKey, TValue>
     Task PutAsync(TKey key, TValue value, CancellationToken ct = default);
     Task<TValue?> GetAsync(TKey key, CancellationToken ct = default);
     Task<bool> RemoveAsync(TKey key, CancellationToken ct = default);
-    Task<IDictionary<TKey, TValue>> GetAllAsync(IEnumerable<TKey> keys, CancellationToken ct = default);
-    Task PutAllAsync(IDictionary<TKey, TValue> entries, CancellationToken ct = default);
+    Task<bool> ContainsKeyAsync(TKey key, CancellationToken ct = default);
+    // ... bulk / Clear / Invalidate / convenience queries land in Phase 1.3 / 1.4
 }
 
 public interface IQueryService { IQuery<T> NewQuery<T>(string oql); }
 public interface IQuery<T>      { Task<IReadOnlyList<T>> ExecuteAsync(CancellationToken ct = default); }
 ```
 
-Configuration schema:
-
-```json
-{
-  "Geode": {
-    "Locators": ["host1:10334", "host2:10334"],
-    "Servers":  ["host1:40404"],
-    "Pool": { "MinConnections": 1, "MaxConnections": 10, "ReadTimeout": "00:00:10" },
-    "Tls":  { "Enabled": false },
-    "Auth": { "Username": null, "Password": null }
-  }
-}
-```
-
-**Important**: in MVP we do **not** support cache.xml or region creation.
-A DBA pre-creates regions with gfsh
-(`gfsh create region --name=test --type=REPLICATE`); the client only acts
-as a proxy.
+**Important:** in MVP we do not support cache.xml or region creation.
+A DBA pre-creates the region with gfsh
+(`gfsh create region --name=test --type=REPLICATE`); the client only
+acts as a proxy.
 
 ---
 
-## Protocol layering
+## Feature phases
 
-```
-┌──────────────────────────────────────────────┐
-│ Operation layer: PutAsync, GetAsync, ...     │  C# public API
-├──────────────────────────────────────────────┤
-│ Message layer:   TcrMessage encode/decode    │  MessageType + Parts
-├──────────────────────────────────────────────┤
-│ Frame layer:     header + part bytes         │  pure byte I/O
-├──────────────────────────────────────────────┤
-│ Transport:       TcpClient + SslStream       │  BCL
-└──────────────────────────────────────────────┘
-```
+### Phase 1 (MVP — a production-ready client)
 
-### Frame layout (all big-endian / network byte order)
+- Connect
+- Single-key CRUD (Put / Get / Remove / ContainsKey)
+- Bulk operations (PutAll / GetAll / RemoveAll)
+- Clear
+- Invalidate
+- Region convenience queries (ExistsValue / SelectValue)
+- Built-in type serialisation (including collections: List, Dictionary,
+  arrays, HashSet)
+- OQL queries (`SELECT *` and `SELECT COUNT(*)`)
+- Connection pool
+- Locator discovery
+- Server failover / automatic reconnect
+
+### Phase 2 (custom objects + advanced query)
+
+- Custom-object serialisation (PDX)
+- Interop with the Java client
+- OQL projection queries (`SELECT field1, field2`)
+- PdxInstance (read fields without full deserialisation)
+- Continuous Query (server-push subscriptions)
+- Transactions (Begin / Commit / Rollback)
+
+### Phase 3 (security + compute)
+
+- Authentication (username/password, custom auth providers)
+- TLS / mTLS
+- Function execution (server-side)
+
+### Phase 4 (performance + sharding)
+
+- Delta propagation (ship only changed fields)
+- Partition resolver (custom colocation)
+
+### Not implemented
+
+- **cache.xml** — replaced by `appsettings.json` + `IOptions<T>`.
+- **Sub-regions** — Geode itself discourages them.
+- **Synchronous APIs** — async only.
+- **Cache listener / loader / writer** — niche use cases; easier to
+  implement server-side in Java.
+- **Region expiration / eviction** — managed by server-side
+  configuration; the client stays out.
+
+---
+
+## Phase 1 sub-phase breakdown
+
+Split into 5 sub-phases by dependency order. Each sub-phase is its own
+walking skeleton.
+
+### Phase 1.1 — Connection foundation + serialisation
+
+Single socket, handshake, built-in type codec. The plumbing works,
+nothing yet visible to the user.
+
+- Frame codec (big-endian, TcrPart, TcrMessage)
+- Handshake (against
+  `cppcache/src/TcrConnection.cpp::sendHandshakeForServer`)
+- A single `TcrConnection` with reader / writer loops
+- Built-in DSFID codec (string, byte[], bool, int, long, short, byte,
+  float, double, DateTime, null, List, Dictionary, arrays, HashSet)
+- Ping / Reply verification
+
+### Phase 1.2 — Single-key CRUD
+
+The first demo-able milestone.
+
+- Put(7) / Request(0) / Destroy(9) / ContainsKey(38) messages
+- Exception(2) reply handling
+- `IGeodeCache` / `IRegion<TKey,TValue>` public API
+- DI registration (`AddGeodeClient`)
+- Integration tests: put / get / remove / contains
+
+### Phase 1.3 — Bulk + management operations
+
+- PutAll(56) / GetAll70(100) / RemoveAll(109)
+- Clear (region-wide entry clear)
+- Invalidate
+- Each gets its own message type; rounds out the basic region surface
+
+### Phase 1.4 — Query
+
+- OQL Query(34) message
+- Result decoding: `SELECT *` returns `IReadOnlyList<TValue>`,
+  `SELECT COUNT(*)` returns `long`
+- Region convenience queries (ExistsValue / SelectValue)
+
+### Phase 1.5 — Connection management
+
+Promote the single socket to production-ready.
+
+- Connection pool (min/max, idle eviction, health checks)
+- Locator wire protocol (different from the server protocol)
+- Multi-server failover, automatic reconnect
+- Server endpoint health monitoring
+
+---
+
+## Wire protocol summary
+
+### Frame layout (all big-endian)
 
 ```
 +------------------+------------------+------------------+------------------+
@@ -159,138 +296,102 @@ Part:
 
 ### Handshake (the easiest place to get burned)
 
-The handshake does **not** use the standard frame format — it's an ad-hoc
-byte sequence. **Authoritative reference is the Java code, not cppcache** —
-when they disagree, the Java server wins:
+The handshake does **not** use the standard frame format — it's an
+ad-hoc byte sequence. Translate it byte-by-byte against
+`cppcache/src/TcrConnection.cpp::sendHandshakeForServer`. **Do not
+work from memory.**
 
-- client side: `geode-core/.../cache/client/internal/ClientSideHandshakeImpl.java::write`
-- server side: `geode-core/.../cache/tier/sockets/ServerSideHandshakeImpl.java`
-- shared    : `geode-core/.../cache/tier/sockets/Handshake.java` (constants, helpers)
-
-cppcache `TcrConnection.cpp::sendHandshakeForServer` is a parallel
-implementation with stale comments; cross-check before trusting it. **Do
-not work from memory.**
-
-```
-client → server:
-  ConnectionType u8           (100 = CLIENT_TO_SERVER, 101/102 = notification)
-  ProtocolVersion             (ordinal only; 1 byte if ≤ 127, else sentinel + i16)
-  ReplyOk         u8          (59)
-  ReadTimeout     i32         (request/response only; notification writes port list instead)
-  ClientProxyMembershipID     (one DataSerializable object on the wire:
-                                 FixedIDByte u8 = 1
-                                 DSFid       u8 = 38
-                                 identity    varint length + bytes
-                                 uniqueId    i32)
-  Overrides[]   u8 × N        (currently always N = 1: conflation byte)
-  SecurityMode  u8            (0 = none, 1 = normal + creds body, 3 = multi-user notification)
-  [Credentials body]          (only when SecurityMode != none)
-
-server → client:
-  AcceptanceCode  u8          (59 = OK; 60 REFUSED / 61 INVALID / 66 AUTH_NOT_REQUIRED /
-                                67 SERVER_IS_LOCATOR / 21 SSL_REQUIRED on rejection)
-  EndpointType    u8          (subscription/queue role — drain in MVP)
-  QueueSize       i32         (subscription queue size — drain in MVP)
-  ServerMember                (DataSerializable membership ID — drain in MVP)
-  Message         (UTF-8 str) (server diagnostic / refusal text; empty on success,
-                                u16 length prefix)
-  DeltaEnabled    u8 (bool)   (delta propagation flag — drain in MVP)
-```
-
-### MVP MessageType subset
+### MessageType (MVP subset)
 
 Pulled from `cppcache/src/TcrMessage.hpp`:
 
-| Value | Name               | Purpose                |
-| ----- | ------------------ | ---------------------- |
-| 0     | Request            | GET                    |
-| 1     | Response           | GET reply              |
-| 2     | Exception          | server error           |
-| 5     | Ping               | health check           |
-| 6     | Reply              | ack                    |
-| 7     | Put                | PUT                    |
-| 9     | Destroy            | REMOVE single key      |
-| 18    | CloseConnection    | bye                    |
-| 34    | Query              | OQL                    |
-| 38    | ContainsKey        |                        |
-| 56    | PutAll             |                        |
-| 99    | ServerToClientPing | server-initiated ping  |
-| 100   | GetAll70           |                        |
-
-### Serialisation (MVP)
-
-Only these DSFIDs (per `cppcache/include/geode/internal/DSCode.hpp`):
-
-- String (DSFID 87)
-- Integer / Long
-- Boolean / Double
-- Date
-- byte[] / null
-
-**PDX is not in MVP**.
+| Value | Name                | Sub-phase |
+| ----- | ------------------- | --------- |
+| 0     | Request (GET)       | 1.2       |
+| 1     | Response (GET reply)| 1.2       |
+| 2     | Exception           | 1.2       |
+| 5     | Ping                | 1.1       |
+| 6     | Reply               | 1.1       |
+| 7     | Put                 | 1.2       |
+| 9     | Destroy             | 1.2       |
+| 18    | CloseConnection     | 1.1       |
+| 34    | Query               | 1.4       |
+| 38    | ContainsKey         | 1.2       |
+| 56    | PutAll              | 1.3       |
+| 99    | ServerToClientPing  | 1.1       |
+| 100   | GetAll70            | 1.3       |
+| 109   | RemoveAll           | 1.3       |
 
 ---
 
-## Core principles
+## Implementation principles (keep these in mind)
 
-1. **Read `cppcache` before designing the protocol.** `TcrMessage.cpp`,
-   `TcrConnection.cpp`, `HandShake.cpp`, `ThinClientPoolDM.cpp` are the
-   spec.
-2. **Walking skeleton.** Get every slice to run end-to-end before stacking
+1. **Read cppcache before designing protocol.** `TcrMessage.cpp`,
+   `TcrConnection.cpp`, `HandShake.cpp`, and `ThinClientPoolDM.cpp` are
+   the spec.
+2. **API-first.** Declare interface shells first
+   (`NotImplementedException`), then fill in.
+3. **Walking skeleton.** Each phase runs end-to-end before stacking
    the next layer.
-3. **Top-down, outside-in.** Build the skeleton first: declare the public
-   API, the types it returns, and the call graph all the way down — but
-   leave bodies as `throw new NotImplementedException("TODO: …")` (or
-   the equivalent stub). Then pick **one** TODO at the top and fill it
-   in, which surfaces the next TODO down the stack. **Never** finish a
-   whole bottom layer (frame codec, serialiser, pool) before any top
-   layer (`PutAsync`, `GetAsync`) compiles end-to-end. The point is to
-   discover what the lower layers actually need from the call site
-   instead of guessing.
-4. **Frame codec must have unit tests** backed by byte fixtures from
-   Wireshark or `cppcache` source.
-5. **Don't over-abstract.** Write concrete classes at the lower layers;
-   only extract interfaces when DI wiring lands.
+4. **Frame codec must have unit tests** backed by Wireshark byte
+   fixtures.
+5. **Don't over-abstract.** Write concrete classes at the lower
+   layers; only extract interfaces when DI wiring lands in Phase 1.2.
 6. **Big-endian everywhere** (`BinaryPrimitives.WriteInt32BigEndian`).
    Geode is Java; the wire is network byte order.
+7. **A single connection already supports concurrency** (pipelined
+   requests keyed by transaction id). The pool is a
+   throughput / fault-isolation optimisation, not a baseline
+   requirement.
 
 ---
 
 ## Toolchain
 
 - **.NET 10 SDK** (LTS, GA 2025-11)
-- **xUnit v3** + FluentAssertions for assertions
+- **xUnit v3** + FluentAssertions
 - **Testcontainers** — integration tests boot `apachegeode/geode`
-- **GitHub Actions** — `ci.yml` (currently **disabled** — see
-  `CONTRIBUTING.md` §5) and `release.yml` (tag-driven)
+- **GitHub Actions** — CI on PR / push, release on tag
 - **NuGet** — `MinVer` derives the version from git tags
-- **Source Link** + `.snupkg` so users can step into our source
+- **Source Link** + `.snupkg`
 - **Apache-2.0** licence (matches the upstream project)
 
 ---
 
 ## Dual-network sync (Tomi's setup)
 
-The maintainer (`Tomi`) develops on two networks:
+The maintainer works across two networks:
 
-- **Internet side** — `origin` on GitHub, public CI, NuGet publish.
-- **Intranet side** — air-gapped enterprise GitLab / GitHub, internal CI.
-
-Sync is one-way: `main` on the internet → USB bare repo → intranet.
-
-Branching model (full rules in `CONTRIBUTING.md`):
-
-- `main` — protected, release-ready, the only branch that crosses the USB
-  boundary
-- `develop` — internet-side integration branch, day-to-day target for
-  feature PRs (does **not** cross USB)
-- `feat/*`, `fix/*`, `chore/*`, `docs/*`, ... — short-lived feature
-  branches, deleted after merge
-- `ci/offline` — intranet-only CI/CD configuration; **must never** be
-  pushed to `origin`
+- **Internet side** — primary development, GitHub, CI, NuGet publish.
+- **Intranet side** (air-gapped) — internal CI/CD, internal GitLab /
+  GitHub.
+- Sync method — USB bare repo.
+- Branches — `main` (features), `ci/offline` (CI/CD config,
+  **intranet-only**).
+- Rule — only reviewed / approved `main` crosses the USB boundary.
 
 **No direct commits to `main`.** All changes go through PR + review.
-See `CONTRIBUTING.md` for the full workflow.
 
 ---
 
+## Bootstrapping the next task
+
+Phase 1 starts with **Phase 1.1**. Suggested prompt:
+
+```
+Read CLAUDE.md. We're starting Phase 1.1.
+
+API-first first:
+1. Following the cppcache clicache/src/ headers, declare every Phase 1
+   public interface (IGeodeCache, IRegion<TKey,TValue>, IQueryService,
+   GeodeClientOptions, AddGeodeClient extension, related exceptions)
+   under src/Geode.Client/. Method bodies are NotImplementedException;
+   add full XML docs.
+2. Wire up DI but leave internal bindings throwing
+   (the API skeleton).
+3. Make sure dotnet build and dotnet test pass (mark tests
+   [Fact(Skip="Phase 1.1")] for now).
+
+Once that lands, move into the real Phase 1.1 work:
+Frame codec → Handshake → Ping.
+```

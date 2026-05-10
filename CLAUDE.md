@@ -105,25 +105,36 @@ naming, and semantics. Our work is "translate + modernise", not
 
 ---
 
-## Configuration schema
+## Configuration
 
-```json
-{
-  "Geode": {
-    "Locators": ["host1:10334", "host2:10334"],
-    "Servers":  ["host1:40404"],
-    "Pool": {
-      "MinConnections": 1,
-      "MaxConnections": 10,
-      "ReadTimeout": "00:00:10"
-    },
-    "Tls":  { "Enabled": false },
-    "Auth": { "Username": null, "Password": null }
-  }
-}
-```
+cppcache uses two files: a `.ini` (`SystemProperties`) and `cache.xml`
+(region / pool declarations parsed by Xerces). **We replace both with
+the .NET `IOptions<T>` pattern** — `appsettings.json` + `IConfiguration`
+binds straight to record / class options. **No `cache.xml`. No `.ini`.**
 
-Bound to a `GeodeClientOptions` record. **No `cache.xml`. No `.ini`.**
+### Options policy
+
+1. **Mirror, then prune.** When porting cppcache config, **copy every
+   property first** (one C# property per cppcache key, defaults
+   matching cppcache constants). Pruning happens once, late — likely
+   end of Phase 1.5 or before the first NuGet release — when we audit
+   which properties any code path actually reads. Do not pre-judge
+   "this looks unused" while porting; the cppcache audit window stays
+   open until the .NET pool design is settled.
+
+2. **Document semantics on the property, not in side notes.** Every
+   options property's XML doc must capture what was learned by reading
+   cppcache: which file consumes it, what the value actually drives
+   (e.g. `SO_SNDBUF`, expiry-task interval, per-endpoint cap), whether
+   it's pool-level / connection-level / endpoint-level, and any
+   platform-specific quirks (`#ifdef __linux` etc.). The doc is the
+   audit trail — anyone reviewing the property six months later
+   should not need to re-read cppcache to understand it.
+
+3. **No invented schema ahead of implementation.** Concrete JSON
+   shapes are decided phase-by-phase against cppcache
+   `SystemProperties` semantics; do not write a target schema in this
+   doc that the code hasn't reached yet.
 
 ---
 

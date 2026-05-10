@@ -17,12 +17,12 @@
 - [x] `GeodeCache.EnsureInitializedAsync` 用 `Lazy<Task>(ExecutionAndPublication)`
 - [x] 130 unit tests 通過、build 0 warning
 
-**遺留 / 已知偏離 CLAUDE.md schema**（待對應 phase 處理，不算 Phase 0 漏項）：
+**留待後續 phase 處理**（不算 Phase 0 漏項）：
 
 - `IRegion` / `IQueryService` / `IQuery` 仍是空殼（無方法）— Phase 1.2 / 1.4 補上
-- `GeodeClientOptions` 仍是 cppcache 移植版（含 `LogOptions` / `StatisticsOptions` / `HeapOptions` / `CacheXmlOptions` / `ThreadPoolSize` / `EnableChunkHandlerThread`），尚未對齊 CLAUDE.md 精簡 schema（`Locators` / `Servers` / `Pool{Min,Max,ReadTimeout}` / `Tls` / `Auth`）
-- `PoolOptions` 是固定 `ConnectionPoolSize`，未拆 `MinConnections` / `MaxConnections` — Phase 1.5
-- 缺 `AuthOptions{Username,Password}` — Phase 3
+- `GeodeClientOptions` 是 cppcache `SystemProperties` 全鏡像版（含 `LogOptions` / `StatisticsOptions` / `HeapOptions` / `CacheXmlOptions` / `ThreadPoolSize` / `EnableChunkHandlerThread` 等）— **這是刻意的**，依 CLAUDE.md「mirror then prune」政策，等 Phase 1.5 後期 / 釋出前才審視哪些保留
+- 各 options 子類的 XML doc 需逐步補足 cppcache 來源（消費檔案 / 語意 / 平台限制），對齊 CLAUDE.md「Document semantics on the property」原則
+- 缺 `AuthOptions` — Phase 3 安全工作再加
 
 ---
 
@@ -72,8 +72,8 @@
 
 ## Phase 1.5 — Connection management（未啟動）
 
-- [ ] `PoolOptions` 重構為 `MinConnections` / `MaxConnections` / `ReadTimeout`
-- [ ] Connection pool（min/max、idle eviction、health check）
+- [ ] Connection pool 設計（cppcache `ThinClientPoolDM` 為參考；先決定 `MaxConnections` 是 pool-wide 還是 per-endpoint）
+- [ ] `PoolOptions` 審視：哪些 cppcache 欄位保留 / 改名 / 刪除（依 CLAUDE.md「mirror then prune」，此階段才處理）
 - [ ] Locator 線路協定（與 server 不同）
 - [ ] Multi-server failover、自動重連
 - [ ] Server endpoint 健康監控

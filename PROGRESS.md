@@ -2,6 +2,7 @@
 
 > 每個 phase 完工 / 開工時更新此檔。
 > `CLAUDE.md` 是計畫（不變動），此檔是進度（會變動）。
+> [PORTING.md](PORTING.md) 是 cppcache ↔ C# class 對應表（更細粒度的實作狀況）。
 >
 > **新會話 / 新 phase 銜接**：先讀本檔再決定要不要探索程式碼。
 

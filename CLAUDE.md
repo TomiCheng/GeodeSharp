@@ -71,6 +71,75 @@ naming, and semantics. Our work is "translate + modernise", not
 - **Modernise:** sync → async, `gcnew` → record/class, cache.xml →
   `IOptions<T>`, static factory → DI.
 
+### Three-bucket porting rule
+
+For every cppcache class we encounter, decide which bucket it falls
+into and act accordingly. When in doubt, default to **bucket 2**
+(mirror) — same logic as the "mirror then prune" config policy.
+
+The actual class-by-class mapping (cppcache name → C# name, bucket,
+visibility, status, phase) lives in [PORTING.md](PORTING.md). Add a
+row whenever you encounter a new cppcache class.
+
+#### Bucket 1: BCL fully covers it → **don't implement**
+
+cppcache built these because C++ standard / boost gave them the
+primitives but not the abstraction. .NET has the abstraction
+out-of-the-box. Use the BCL type directly; do not port the cppcache
+class.
+
+| cppcache | .NET / BCL replacement                              |
+| -------- | --------------------------------------------------- |
+| `boost::asio::tcp::socket`            | `System.Net.Sockets.Socket` / `NetworkStream` |
+| `boost::asio::ssl::stream`            | `System.Net.Security.SslStream`               |
+| `boost::asio::io_context` + workers   | `Task` + `async`/`await`                      |
+| `std::thread` / `boost::thread`       | `Task.Run`                                    |
+| `std::mutex` / `std::recursive_mutex` | `lock` / `SemaphoreSlim`                      |
+| `std::condition_variable`             | `Channel<T>` / `SemaphoreSlim`                |
+| `std::atomic<T>`                      | `Interlocked`                                 |
+| `std::shared_ptr<T>`                  | GC                                            |
+| `std::chrono::duration`               | `TimeSpan`                                    |
+| `ExpiryTaskManager` + `FunctionExpiryTask` | `PeriodicTimer`                          |
+| cppcache internal `Task<T>` (worker)  | `Task.Run` + cancellable loop                 |
+| `LoggingMacros` / `LOGFINE` etc.      | `Microsoft.Extensions.Logging.ILogger`        |
+| `Statistics` framework                | `System.Diagnostics.Metrics.Meter` / EventCounters |
+| `Xerces-C` (cache.xml parser)         | Cut entirely (per Configuration policy)       |
+| `apache::geode::client::Properties`   | `IDictionary<string, string>`                 |
+
+#### Bucket 2: domain logic / wire protocol → **mirror the architecture**
+
+These are what we are actually writing. Match cppcache class names,
+file layout, inheritance, and method names; modernise only the
+mechanics (sync → async, multi-inheritance → composition, etc.).
+
+Examples: `ThinClientBaseDM`, `DistributionManager`, `PoolDM`,
+`TcrEndpoint`, `TcrPoolEndPoint`, `TcrConnection`,
+`TcrConnectionManager`, `ThinClientLocatorHelper`, `TcrMessage`,
+`Cache`, `CacheImpl`, `Region`, `ThinClientRegion`,
+`ClientMetadataService` (Phase 4), `ThinClientStickyManager`
+(Phase 6), `PdxType` / `PdxTypeRegistry` (Phase 2).
+
+#### Bucket 3: BCL partially covers, semantics incomplete → **thin wrapper**
+
+Use the BCL type as the engine; wrap **only enough** to add the
+missing semantics. Do not rebuild the whole cppcache class.
+
+| cppcache                            | What BCL is missing                  | Wrap strategy |
+| ----------------------------------- | ------------------------------------ | ------------- |
+| `ConnectionQueue<T>` (FIFO + condvar + size cap + timed get) | `Channel<T>` lacks "wait up to T then create new" | thin wrapper around `Channel<T>` exposing `TryGetWithTimeoutAsync` |
+| `synchronized_map<K,V>`             | `ConcurrentDictionary` has no iterate-with-lock | **don't wrap** — use `ConcurrentDictionary` + snapshot where needed |
+| `Cacheable` / `Serializable` family | `ISerializable` doesn't match PDX wire format | introduce `IDataSerializable` interface (Phase 2) |
+| `PoolStats` (named counters + sampler) | `Meter` naming/sampling differs | thin wrapper that registers cppcache-named counters into a `Meter` |
+| `CacheableString` / `CacheableBytes` | `string` / `byte[]` already exist    | **don't wrap** — handle DSCode tag in the codec only |
+| `ServerLocation` (host+port+version) | nothing equivalent                   | **don't wrap** — define a record `ServerLocation(...)` directly |
+
+#### Rule 4: when ambiguous → default to bucket 2
+
+If a cppcache class doesn't clearly fit bucket 1 or 3, mirror it
+(bucket 2) as a stub first. During wiring we'll discover whether it
+collapses to BCL (move to bucket 1) or shrinks to a wrapper
+(bucket 3). Same "mirror then prune" discipline as Options.
+
 ---
 
 ## Overall principles

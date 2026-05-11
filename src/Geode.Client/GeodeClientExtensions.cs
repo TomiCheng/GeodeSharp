@@ -191,7 +191,14 @@ public static class GeodeClientExtensions
         services.TryAddScoped<PoolManager>();
         services.TryAddSingleton<TcrPartBuilder>();
         services.TryAddSingleton<TcrMessageBuilder>();
-        services.AddTransient<TcrConnection>();
+        // TcrConnection is intentionally NOT registered: it's a
+        // stateful resource (owns a Socket / Stream / handshake state),
+        // not a stateless service. Production path opens one through
+        // TcrEndpoint.CreateNewConnectionAsync via
+        // ActivatorUtilities.CreateInstance<TcrConnection>(sp); tests
+        // do the same. Registering it would invite misuse via
+        // GetRequiredService<TcrConnection>() — which hands back a
+        // disconnected instance that still needs ConnectAsync.
         services.TryAddSingleton<IGeodeCacheFactory, GeodeCacheFactory>();
 
         services.AddKeyedSingleton<IGeodeCache>(

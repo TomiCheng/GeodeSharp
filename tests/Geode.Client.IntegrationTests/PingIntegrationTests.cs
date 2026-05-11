@@ -41,7 +41,12 @@ public class PingIntegrationTests(GeodeFixture fx)
             .AddGeodeClient(config)
             .BuildServiceProvider();
 
-        var connection = services.GetRequiredService<TcrConnection>();
+        // TcrConnection isn't a DI service (stateful resource — owns
+        // socket / stream / handshake state). Build it through
+        // ActivatorUtilities so its 4 ctor deps resolve from sp, same
+        // pattern as the production path in
+        // TcrEndpoint.CreateNewConnectionAsync.
+        var connection = ActivatorUtilities.CreateInstance<TcrConnection>(services);
 
         // ConnectAsync bundles TCP connect + Geode handshake. Failure
         // here surfaces as GeodeException (server refused) or IOException

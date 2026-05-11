@@ -39,16 +39,12 @@ internal sealed class ThinClientPoolDM(
     TcrConnectionManager connManager,
     ILogger<ThinClientPoolDM> logger) : ThinClientBaseDM(connManager, region: null), IPool
 {
-
-
-
     // ── Endpoint registry (ThinClientPoolDM.hpp m_endpoints) ──
     // Pool's view onto TCCM-owned TcrEndpoint instances. Same object
     // identity as TcrConnectionManager._endpoints; this map tracks
     // which endpoints THIS pool currently holds a ref on so destroy
     // knows what to release. Key uses DnsEndPoint default equality.
-    private readonly ConcurrentDictionary<DnsEndPoint, TcrEndpoint> _endpoints =
-        new();                                    // m_endpoints
+    private readonly ConcurrentDictionary<DnsEndPoint, TcrEndpoint> _endpoints = new();
 
     // ── Idle connection queue (cppcache inherits ConnectionQueue<TcrConnection>) ──
     // Unbounded for Phase 1.1; Phase 1.5 may bound by MaxConnections.

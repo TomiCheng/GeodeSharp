@@ -148,6 +148,57 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
     }
 
     [Fact]
+    public async Task ConnManageLoop_opens_MinConnections_against_real_server()
+    {
+        using var cts = new CancellationTokenSource(TestTimeout);
+
+        // MinConnections = 2 forces RestoreMinConnectionsAsync to loop
+        // CreatePoolConnectionAsync twice in the same tick — exercises
+        // (a) AddEPAsync deduping the second call to the same endpoint,
+        // (b) two distinct TcrConnection instances opened via DI,
+        // (c) two enqueues into _opConnections.
+        await using var services = new ServiceCollection()
+            .AddLogging()
+            .AddGeodeClient(config => config.CacheXml = new CacheXmlOptions
+            {
+                Pools =
+                {
+                    new CacheXmlPoolOptions
+                    {
+                        Name = "testPool",
+                        Servers =
+                        {
+                            new CacheXmlHostPort
+                            {
+                                Host = _fx.LocatorHost,
+                                Port = _fx.ServerPort,
+                            },
+                        },
+                        MinConnections = 2,
+                        IdleTimeout = TimeSpan.FromMilliseconds(100),
+                    },
+                },
+            })
+            .BuildServiceProvider();
+
+        var cache = services.GetRequiredService<IGeodeCache>();
+        await cache.EnsureInitializedAsync(cts.Token);
+
+        var pool = (ThinClientPoolDM)((Cache)cache).PoolManager.DefaultPool!;
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < deadline && pool.PoolSize < 2)
+        {
+            await Task.Delay(50, cts.Token);
+        }
+        Assert.True(
+            pool.PoolSize >= 2,
+            $"Expected pool.PoolSize >= 2 within deadline, got {pool.PoolSize}.");
+
+        await cache.CloseAsync(cts.Token);
+    }
+
+    [Fact]
     public async Task DisposeAsync_closes_underlying_connection()
     {
         using var cts = new CancellationTokenSource(TestTimeout);

@@ -1,4 +1,5 @@
 using Geode.Client.Protocol;
+using Geode.Client.Protocol.Serialization;
 using Xunit;
 
 namespace Geode.Client.Tests.Protocol;
@@ -6,7 +7,7 @@ namespace Geode.Client.Tests.Protocol;
 public class TcrMessageBuilderGetTests
 {
     private static TcrMessageBuilder NewBuilder() =>
-        new(new TcrPartBuilder());
+        new(new TcrPartBuilder(), new SerializationRegistry());
 
     // ====================================================================
     //  Property-level: shape of the resulting TcrMessage

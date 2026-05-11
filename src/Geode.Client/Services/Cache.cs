@@ -3,6 +3,7 @@ using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Geode.Client.Services;
 
@@ -314,20 +315,21 @@ internal sealed class Cache(
             }
 
             // ── 6.4 Build ThinClientRegion ─────────────────
-            // Positional args feed the primary ctor (name, parent,
-            // attributes, dm); ILogger<ThinClientRegion> is filled
-            // by DI. Phase 1.2 builds top-level regions only — the
-            // parent slot is always null until sub-region creation
-            // lands. ActivatorUtilities's params is non-nullable
-            // object[], so we forward null through a typed local
-            // + null-forgiving operator.
+            // Phase 1.2 builds top-level regions only — `parent` is
+            // always null until sub-region creation lands.
+            // ActivatorUtilities can't match a null arg against the
+            // `RegionInternal?` ctor slot (params object[] erases the
+            // type), so resolve the logger from DI manually and call
+            // the ctor directly. Mirrors what ActivatorUtilities would
+            // have done minus the broken null-arg matching.
             RegionInternal? parent = null;
-            var region = ActivatorUtilities.CreateInstance<ThinClientRegion>(
-                serviceProvider,
+            var regionLogger = serviceProvider.GetRequiredService<ILogger<ThinClientRegion>>();
+            var region = new ThinClientRegion(
                 xmlRegion.Name,
-                parent!,
+                parent,
                 attributes,
-                dm);
+                dm,
+                regionLogger);
 
             // ── 6.5 Register ───────────────────────────────
             // cppcache CacheImpl::createRegion throws

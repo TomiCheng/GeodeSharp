@@ -1,6 +1,7 @@
 using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
+using Geode.Client.Protocol.Serialization;
 using Geode.Client.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -205,7 +206,14 @@ public static class GeodeClientExtensions
         // Cache's IAsyncDisposable automatically.
         services.TryAddScoped<Services.Cache>();
         services.TryAddSingleton<TcrPartBuilder>();
-        services.TryAddSingleton<TcrMessageBuilder>();
+        // SerializationRegistry is per-cache (Scoped) so multi-cluster
+        // setups can register different PDX types per cluster without
+        // leaking — see cppcache CacheImpl::m_serializationRegistry.
+        // TcrMessageBuilder must drop from Singleton to Scoped because
+        // it now depends on the Scoped registry (Singleton → Scoped
+        // would be a captive-dependency lifetime violation).
+        services.TryAddScoped<SerializationRegistry>();
+        services.TryAddScoped<TcrMessageBuilder>();
 
         // IValidateOptions<T> is an additive abstraction: the options
         // pipeline runs every registered validator. TryAddEnumerable

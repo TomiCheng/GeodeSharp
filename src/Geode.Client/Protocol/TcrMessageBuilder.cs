@@ -1,3 +1,5 @@
+using Geode.Client.Protocol.Serialization;
+
 namespace Geode.Client.Protocol;
 
 /// <summary>
@@ -29,11 +31,19 @@ namespace Geode.Client.Protocol;
 /// <c>TxState</c> is present.
 /// </para>
 /// </remarks>
-internal sealed partial class TcrMessageBuilder(TcrPartBuilder partBuilder)
+internal sealed partial class TcrMessageBuilder(
+    TcrPartBuilder partBuilder,
+    SerializationRegistry serializationRegistry)
 {
     /// <summary>
     /// Sentinel used for any request that isn't part of a Geode
     /// transaction. Geode transactions land in Phase 11+.
     /// </summary>
     public const int MetaTransactionId = -1;
+
+    // partBuilder is consumed positionally by the operation partials
+    // (.Put / .Get / .ContainsKey / ...). serializationRegistry is the
+    // key/value codec dispatch — partials use it to replace inline type
+    // guards with central registry lookup as each op is reworked.
+    private readonly SerializationRegistry _serializationRegistry = serializationRegistry;
 }

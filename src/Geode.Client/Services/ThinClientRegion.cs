@@ -82,9 +82,46 @@ internal sealed class ThinClientRegion : LocalRegion
 
     public override Task<bool> ContainsKeyAsync(object key, CancellationToken ct = default)
     {
-        // TODO Phase 1.2.e: TcrMessageBuilder.ContainsKey(FullPath, key)
-        //   → _dm.SendSyncRequestAsync → reply Part 0 = bool. Mirrors
-        //   cppcache ThinClientRegion::containsKeyOnServer.
-        throw new NotImplementedException("TODO Phase 1.2.e: ThinClientRegion.ContainsKeyAsync");
+        // Walking-skeleton stub: return false without touching the wire.
+        // Lets consumers call ContainsKeyAsync end-to-end (via Cache →
+        // RegionView → here) before the real op is wired.
+        //
+        // ─── Full flow, fill in order (Phase 1.2.e) ───
+        // Mirrors cppcache ThinClientRegion::containsKeyOnServer
+        // (cppcache/src/ThinClientRegion.cpp:676-720) +
+        // TcrMessageContainsKey ctor (TcrMessage.cpp:1808-1843).
+        //
+        // 1. Build the wire request frame —
+        //    MessageType.ContainsKey (38), NumParts=3 (+1 if callback):
+        //      Part 1 │ IsObject=0 │ region FullPath (raw ASCII bytes)
+        //      Part 2 │ IsObject=1 │ DSCode-tagged serialized key
+        //      Part 3 │ IsObject=0 │ int32 = 0 (containsKey) / 1 (containsValueForKey)
+        //      Part 4 │ (optional) │ callback argument
+        //    New partial: TcrMessageBuilder.ContainsKey(regionPath, key, ...).
+        //
+        // 2. Key serialization — initial scope int32 only:
+        //      [DSCode.CacheableInt32 = 57][4 bytes int BE]
+        //    Broader DSFID dispatch lands with Phase 1.2.c codec.
+        //
+        // 3. Dispatch:
+        //      var reply = await _dm.SendSyncRequestAsync(request, ct: ct);
+        //    Note: ThinClientPoolDM.SendSyncRequestAsync is currently
+        //    NIE. MVP body = borrow conn from queue →
+        //    SendRequestToEndpointAsync (already wired by ping path) →
+        //    PutInQueueAsync. Single endpoint, no failover.
+        //
+        // 4. Reply decoding:
+        //      Response  (1) → Parts[0] = [DSCode.CacheableBoolean][0/1]
+        //                      → 1 byte bool, return it
+        //      Exception (2) → decode exception parts, throw GeodeException
+        //      anything else → throw GeodeException("Unknown reply type ...")
+        //
+        // 5. Wiring need: ThinClientRegion ctor takes
+        //    TcrMessageBuilder (DI singleton) so step 1 can build the
+        //    request without going through serviceProvider lookups.
+
+        _ = key;
+        _ = ct;
+        return Task.FromResult(false);
     }
 }

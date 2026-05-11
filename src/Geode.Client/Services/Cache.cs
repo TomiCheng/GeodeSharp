@@ -63,7 +63,7 @@ internal sealed class Cache : IGeodeCache
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private Task? _initTask;
 
-#pragma warning disable CS0169, CS0414 // placeholder fields mirroring CacheImpl; wired up phase by phase
+#pragma warning disable CS0169, CS0414, CS0649 // placeholder fields mirroring CacheImpl; wired up phase by phase
 
     // ── Lifecycle (CacheImpl.hpp:359-374) ──
     // m_closed       → IsClosed property (already exposed)
@@ -74,8 +74,10 @@ internal sealed class Cache : IGeodeCache
     private bool _keepAlive;              // m_keepAlive
 
     // ── Region registry (CacheImpl.hpp:364-366) ──
-    private readonly ConcurrentDictionary<string, object?> _regions =
-        new(StringComparer.Ordinal);      // m_regions
+    // cppcache m_regions is std::map<string, shared_ptr<Region>>; we
+    // hold the non-generic IRegion base because XML-driven population
+    // happens before TKey/TValue are known.
+    private readonly ConcurrentDictionary<string, IRegion> _regions = new(StringComparer.Ordinal); 
 
     // ── Connection / Pool (CacheImpl.hpp:330, 362-363, 369) ──
     private object? _distributedSystem;   // m_distributedSystem
@@ -106,7 +108,7 @@ internal sealed class Cache : IGeodeCache
     // ── Auth (CacheImpl.hpp:382) ──
     private object? _authInitialize;      // m_authInitialize
 
-#pragma warning restore CS0169, CS0414
+#pragma warning restore CS0169, CS0414, CS0649
 
     public Cache(
         IServiceProvider serviceProvider,
@@ -259,6 +261,88 @@ internal sealed class Cache : IGeodeCache
         // ── 6. PDX / serialization registration (Phase 2+) ──────
         // TODO: if (_options.CacheXml?.Pdx is { } pdx) apply pdx
         //   ignoreUnreadFields / readSerialized to _pdxTypeRegistry.
+    }
+
+    public IRegion<TKey, TValue>? GetRegion<TKey, TValue>(string path)
+        where TKey : notnull
+    {
+        // Untyped lookup does the cppcache-faithful work (path validation,
+        // sub-region recursion, destroyPending check). RegionView is a
+        // pure compile-time wrapper — TKey/TValue are not runtime-bound.
+        var region = GetRegion(path);
+        return region is null ? null : new RegionView<TKey, TValue>(region);
+    }
+
+    /// <summary>
+    /// Mirrors cppcache <c>CacheImpl::getRegion</c>
+    /// (<c>cppcache/src/CacheImpl.cpp:475-518</c>) line-for-line:
+    /// throwIfClosed, m_destroyPending check (returns null), path
+    /// validation, leading-slash strip, first-segment lookup,
+    /// sub-region recursion via <c>region-&gt;getSubregion(remainder)</c>.
+    /// </summary>
+    public IRegion? GetRegion(string path)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+
+        // cppcache: throwIfClosed
+        ObjectDisposedException.ThrowIf(IsClosed, this);
+
+        // cppcache lock_guard(m_destroyCacheMutex) is unnecessary —
+        // ConcurrentDictionary covers map-side races, and
+        // _destroyPending is a single atomic int.
+        if (Volatile.Read(ref _destroyPending) != 0)
+        {
+            // cppcache CacheImpl.cpp:483 — silent null when destroy is
+            // mid-flight, distinct from throwIfClosed (which fires
+            // after IsClosed flips true).
+            return null;
+        }
+
+        // cppcache: path == "/" || path.length() < 1 →
+        //   IllegalArgumentException("Cache::getRegion: path is empty
+        //   or a /"). We split into ArgumentException for empty (BCL
+        //   ArgumentException.ThrowIfNullOrEmpty) and for "/".
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        if (path == "/")
+        {
+            throw new ArgumentException(
+                "Cache.GetRegion: path is empty or '/'.", nameof(path));
+        }
+
+        // cppcache: strip a single leading "/".
+        var fullname = path.StartsWith('/') ? path[1..] : path;
+
+        // cppcache: split at first '/'; left segment is the root region
+        // name, the rest (if any) is the sub-region path.
+        var idx = fullname.IndexOf('/');
+        var stepname = idx < 0 ? fullname : fullname[..idx];
+
+        // cppcache findRegion(stepname): pure map lookup.
+        if (!_regions.TryGetValue(stepname, out var region))
+        {
+            return null;
+        }
+
+        if (idx >= 0)
+        {
+            // cppcache CacheImpl.cpp:504 — recurse into sub-region tree.
+            //   var remainder = fullname[(idx + 1)..];
+            //   region = region.GetSubregion(remainder);
+            // TODO sub-region phase: IRegion has no GetSubregion yet;
+            //   add it once the sub-region API surfaces. Until then,
+            //   any path with an interior '/' falls through to NIE so
+            //   callers don't silently get the root when they asked
+            //   for a child.
+            throw new NotImplementedException(
+                $"Sub-region path '{path}' not yet supported; sub-region " +
+                "API lands in a future phase.");
+        }
+
+        // TODO Phase 3 multi-user: cppcache CacheImpl.cpp:509-514 —
+        //   if (isPoolInMultiuserMode(*region)) LOGWARN("...attached
+        //   with region ... is in multiuser authentication mode...").
+
+        return region;
     }
 
     public async Task CloseAsync(CancellationToken ct = default)

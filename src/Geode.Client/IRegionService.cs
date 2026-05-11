@@ -31,7 +31,56 @@ public interface IRegionService : IAsyncDisposable
     /// </summary>
     Task CloseAsync(CancellationToken ct = default);
 
-    // Phase 1.2: IRegion<TKey, TValue> GetRegion<TKey, TValue>(string name);
+    /// <summary>
+    /// Get the strongly-typed handle for the region at
+    /// <paramref name="path"/>. Returns <c>null</c> when no region
+    /// with that path is registered. Mirrors cppcache
+    /// <c>RegionService::getRegion(const std::string&amp; path)</c>
+    /// (<c>cppcache/include/geode/RegionService.hpp</c>); the
+    /// <c>&lt;TKey, TValue&gt;</c> split is a C# addition (cppcache
+    /// regions are untyped at the native layer, only typed in the
+    /// C++/CLI <c>clicache</c> wrapper).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Lookup-only</b>; never creates a region. Region instances
+    /// are populated at <c>EnsureInitializedAsync</c> from
+    /// <c>CacheXml.Regions</c> (Path A). Programmatic creation
+    /// (Path B) lands in a later sub-phase.
+    /// </para>
+    /// <para>
+    /// First successful call for a given path binds the
+    /// <c>&lt;TKey, TValue&gt;</c> pair to that region for the
+    /// lifetime of this cache. Subsequent calls with the same path
+    /// must use the same type parameters or
+    /// <see cref="InvalidOperationException"/> is thrown.
+    /// </para>
+    /// <para>
+    /// Sub-region paths use <c>/</c> as separator
+    /// (<c>"/parent/child"</c>); the leading slash is optional.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="path"/> is empty or just <c>"/"</c>.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The region exists but is already attached under different
+    /// type parameters.
+    /// </exception>
+    IRegion<TKey, TValue>? GetRegion<TKey, TValue>(string path)
+        where TKey : notnull;
+
+    /// <summary>
+    /// Untyped overload of <see cref="GetRegion{TKey, TValue}"/> —
+    /// pure lookup. Returns <c>null</c> when no region with
+    /// <paramref name="path"/> is registered. Mirrors cppcache
+    /// <c>CacheImpl::getRegion</c>
+    /// (<c>cppcache/src/CacheImpl.cpp:475</c>) directly: same path
+    /// validation (empty / <c>"/"</c> rejected), same leading-slash
+    /// strip, same first-segment + sub-region recursion.
+    /// </summary>
+    IRegion? GetRegion(string path);
+
     // Phase 1.4: IQueryService QueryService { get; }
     // Phase 1.x: IReadOnlyList<IRegion> RootRegions { get; }
     // Phase 2:   PdxInstanceFactory CreatePdxInstanceFactory(string className, ...);

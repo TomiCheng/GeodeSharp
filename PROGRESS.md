@@ -75,17 +75,29 @@
 
 ---
 
-## Phase 1.2 — Single-key CRUD（未啟動）
+## Phase 1.2 — Single-key CRUD（進行中）
 
 依 [CLAUDE.md](CLAUDE.md) Phase 1.2 計畫展開：
 
-- [ ] `IRegion<TKey,TValue>` 介面方法殼：`PutAsync` / `GetAsync` / `RemoveAsync` / `ContainsKeyAsync`
+- [x] `IRegionService.GetRegion(string)` / `GetRegion<TKey,TValue>(string)` interface 殼（lookup-only，找不到回 null，對齊 cppcache `CacheImpl::getRegion`）
+- [x] `Cache.GetRegion(string)`（untyped）實作完成 — line-for-line 對齊 cppcache `CacheImpl::getRegion` (`CacheImpl.cpp:475-518`)：throwIfClosed / `_destroyPending` / 空字串 / `"/"` 驗證 / leading-slash strip / first-segment lookup ；sub-region 路徑（中間有 `/`）目前 NIE，留 sub-region phase
+- [x] `Cache.GetRegion<TKey,TValue>(string)` typed overload — `region is null ? null : new RegionView<TKey,TValue>(region)`
+- [x] `RegionView<TKey,TValue>` typed wrapper（[Services/RegionView.cs](src/Geode.Client/Services/RegionView.cs)）— compile-time-only typed view，每次 `GetRegion<K,V>` 都 new 一個；K/V 純編譯期保護，runtime 不追蹤；型別錯靠 unbox 自然噴 `InvalidCastException`
+- [x] `IRegion` 加 `Name` / `FullPath` / 4 個 `object`-typed op；`IRegion<TKey,TValue>` 加 4 個 typed overload（無 `new` 修飾，純 overload）
+- [x] `RegionInternal` / `LocalRegion` / `ThinClientRegion` 三層空殼建立（鏡像 cppcache `Region → RegionInternal → LocalRegion → ThinClientRegion`）：
+  - [Internal/RegionInternal.cs](src/Geode.Client/Internal/RegionInternal.cs) — abstract，holds `Attributes`，`PoolName` 從 attr 取
+  - [Internal/LocalRegion.cs](src/Geode.Client/Internal/LocalRegion.cs) — abstract，holds `Name` / `FullPath` / `Parent`，FullPath 自動串「`/parent/.../child`」
+  - [Services/ThinClientRegion.cs](src/Geode.Client/Services/ThinClientRegion.cs) — sealed，ctor 吃 `ThinClientBaseDM`，4 ops 全 NIE（待 Phase 1.2.e 填）
 - [ ] Built-in DSFID 型別 codec（string / byte[] / int / long / short / byte / bool / float / double / DateTime / null / List / Dictionary / array / HashSet）— 從原 Phase 1.1 移過來
 - [ ] `Put(7)` / `Request(0)` / `Destroy(9)` / `ContainsKey(38)` 訊息建構
 - [ ] `Response(1)` / `Exception(2)` 回覆解析
-- [ ] `IGeodeCache.GetRegion<TKey,TValue>(name)` 公開 API
 - [ ] 解開 `PutGetIntegrationTests` / `GetDiagnosticTests` 五個 Skip
 - [ ] 整合測試：put / get / remove / contains
+
+### Deferred / 留待後續
+
+- 寫入端：`_regions` 目前完全空，`GetRegion` 一律回 null。`ThinClientRegion` skeleton 已建好，下一步是 `Cache.InitializeCoreAsync` 從 `CacheXml.Regions` 預建 `ThinClientRegion` 寫入 `_regions`
+- `RegionView` 跟 `IRegion` op 殼 unit test 還沒寫
 
 ---
 

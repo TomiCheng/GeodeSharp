@@ -1,12 +1,20 @@
 namespace Geode.Client;
 
 /// <summary>
-/// Non-generic <see cref="IRegion{TKey, TValue}"/> base. Mirrors
-/// cppcache <c>Region</c> (<c>cppcache/include/geode/Region.hpp</c>);
-/// the type-parameter split exists in C# only.
+/// Non-generic region surface; the actual op methods live here with
+/// <see cref="object"/>-typed key / value because XML-driven region
+/// registration (Path A) doesn't carry <c>TKey</c> / <c>TValue</c>
+/// information. Mirrors cppcache <c>Region</c>
+/// (<c>cppcache/include/geode/Region.hpp</c>) — cppcache regions are
+/// untyped at the native layer, only typed in the C++/CLI <c>clicache</c>
+/// wrapper. The typed <see cref="IRegion{TKey, TValue}"/> overlay below
+/// is the C# equivalent of the clicache wrapper.
 /// </summary>
 public interface IRegion
 {
+    /// <summary>Region's local name (last segment of <see cref="FullPath"/>).</summary>
+    string Name { get; }
+
     /// <summary>
     /// Name of the <see cref="IPool"/> this region was created on.
     /// Empty string if the region uses the cache's default pool.
@@ -14,9 +22,59 @@ public interface IRegion
     /// (reachable via <c>region-&gt;getAttributes().getPoolName()</c>).
     /// </summary>
     string PoolName { get; }
+
+    /// <summary>
+    /// Full path including parent regions (e.g. <c>"/orders"</c> for
+    /// a root region, <c>"/parent/child"</c> for a sub-region). Mirrors
+    /// cppcache <c>Region::getFullPath()</c>.
+    /// </summary>
+    string FullPath { get; }
+
+    /// <summary>
+    /// Put <paramref name="value"/> under <paramref name="key"/> on the
+    /// server. Mirrors cppcache <c>Region::put(key, value)</c>.
+    /// </summary>
+    Task PutAsync(object key, object value, CancellationToken ct = default);
+
+    /// <summary>
+    /// Get the value under <paramref name="key"/>; <c>null</c> when the
+    /// key is absent. Mirrors cppcache <c>Region::get(key)</c>.
+    /// </summary>
+    Task<object?> GetAsync(object key, CancellationToken ct = default);
+
+    /// <summary>
+    /// Remove <paramref name="key"/>; returns <c>true</c> when the key
+    /// existed. Mirrors cppcache <c>Region::remove(key)</c>.
+    /// </summary>
+    Task<bool> RemoveAsync(object key, CancellationToken ct = default);
+
+    /// <summary>
+    /// Check whether <paramref name="key"/> exists on the server.
+    /// Mirrors cppcache <c>Region::containsKeyOnServer(key)</c>.
+    /// </summary>
+    Task<bool> ContainsKeyAsync(object key, CancellationToken ct = default);
 }
 
+/// <summary>
+/// Strongly-typed wrapper over <see cref="IRegion"/>. <c>TKey</c> and
+/// <c>TValue</c> are pure compile-time type guards — there is no
+/// runtime <c>K,V</c> binding on the underlying region. Implementations
+/// (see <c>Services.RegionView{TKey, TValue}</c>) box / unbox onto the
+/// non-generic <see cref="IRegion"/> ops; type mismatches surface
+/// naturally as <see cref="InvalidCastException"/> from the unbox.
+/// </summary>
 public interface IRegion<TKey, TValue> : IRegion
     where TKey : notnull
 {
+    /// <inheritdoc cref="IRegion.PutAsync(object, object, CancellationToken)" />
+    Task PutAsync(TKey key, TValue value, CancellationToken ct = default);
+
+    /// <inheritdoc cref="IRegion.GetAsync(object, CancellationToken)" />
+    Task<TValue?> GetAsync(TKey key, CancellationToken ct = default);
+
+    /// <inheritdoc cref="IRegion.RemoveAsync(object, CancellationToken)" />
+    Task<bool> RemoveAsync(TKey key, CancellationToken ct = default);
+
+    /// <inheritdoc cref="IRegion.ContainsKeyAsync(object, CancellationToken)" />
+    Task<bool> ContainsKeyAsync(TKey key, CancellationToken ct = default);
 }

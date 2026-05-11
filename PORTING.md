@@ -78,8 +78,11 @@ mirror cppcache file-for-file unless explicitly noted, per the
 | --- | --- | --- | --- | --- | --- |
 | `Cache` (façade) + `CacheImpl` (Pimpl body) | `Geode.Client.Services.Cache` (single class, implements public `IGeodeCache`) | 2 | 🔨 | 1.1 | cppcache's Pimpl split (`Cache` → `m_cacheImpl`) is collapsed — .NET doesn't need the binary-compatibility shim. `InitializeCoreAsync` is the next entry point |
 | (DI factory layer) | `Geode.Client.Services.GeodeCacheFactory` | — | ✅ | 0 | New, no cppcache analogue |
-| `ThinClientRegion` | `Geode.Client.Services.ThinClientRegion<TKey,TValue>` | 2 | ⏳ | 1.2 | |
-| `Region` (base) | merged into `IRegion<TKey,TValue>` | 2 | ⏳ | 1.2 | C# unifies abstract base + interface |
+| `ThinClientRegion` | `Geode.Client.Services.ThinClientRegion` (non-generic) | 2 | 🔨 | 1.2 | Skeleton only — fields + ctor + 4 NIE ops. Wire dispatch lands in 1.2.e. Stays non-generic to mirror cppcache native; typed surface goes through `RegionView` wrapper |
+| `LocalRegion` | `Geode.Client.Internal.LocalRegion` (abstract) | 2 | 🔨 | 1.2 | Empty placeholder layer; just holds Name / FullPath / Parent. Local-cache machinery (`m_entries` / listener / writer / loader) deferred to Phase 2+ when `caching-enabled` is honoured |
+| `RegionInternal` | `Geode.Client.Internal.RegionInternal` (abstract) | 2 | 🔨 | 1.2 | Empty placeholder layer; holds `Attributes` and forwards `PoolName`. Internal-only API surface (EventId-aware ops, version stamps, tombstones) deferred to Phase 2+ |
+| `Region` (base) | `Geode.Client.IRegion` (non-generic) + `Geode.Client.IRegion<TKey,TValue>` (typed overlay) | 2 | 🔨 | 1.2 | Non-generic interface holds the real op surface (`object` keys / values); typed interface is overload-only sugar |
+| (no cppcache analogue) | `Geode.Client.Services.RegionView<TKey,TValue>` | — | ✅ | 1.2 | Compile-time-only typed wrapper; new instance per `Cache.GetRegion<K,V>(name)` call. cppcache splits typed/untyped across native + clicache layers; C# folds both into one |
 
 ### Distribution managers (Phase 1.5)
 

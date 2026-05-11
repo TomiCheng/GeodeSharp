@@ -3,9 +3,9 @@ using System.Buffers.Binary;
 using System.IO;
 using System.Net.Sockets;
 using System.Text;
+using Geode.Client.Internal;
 using Geode.Client.Options;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace Geode.Client.Protocol;
 
@@ -16,7 +16,7 @@ namespace Geode.Client.Protocol;
 internal sealed class TcrConnection(
     IServiceProvider serviceProvider,
     ILogger<TcrConnection> logger,
-    IOptions<GeodeClientOptions> options,
+    CacheScopeContext scopeContext,
     ClientProxyMembershipIdBuilder membershipIdBuilder,
     TcrMessageBuilder messageBuilder)
     : IAsyncDisposable
@@ -26,11 +26,12 @@ internal sealed class TcrConnection(
     readonly TcpClient _tcpClient = new();
     Stream? _stream;
 
-    // Hold the IOptions handle (not .Value) so callers can re-resolve via
-    // IOptionsMonitor patterns later if needed. Currently consumed by
-    // HandshakeAsync step 7 (Subscription.ConflateEvents); Phase 6+ pool /
-    // TLS / auth code will read further fields.
-    private readonly IOptions<GeodeClientOptions> _options = options;
+    // Read options through the scope context so named registrations route
+    // to the right cache (plain IOptions<T> always returned the unnamed
+    // default). Currently consumed by HandshakeAsync step 7
+    // (Subscription.ConflateEvents); Phase 6+ pool / TLS / auth code
+    // will read further fields.
+    private readonly GeodeClientOptions _options = scopeContext.Options;
 
     /// <summary>
     /// Server's subscription-queue role, captured from the handshake reply
@@ -359,7 +360,7 @@ internal sealed class TcrConnection(
     /// to the wire byte used in the handshake "overrides" field. Mirrors
     /// cppcache <c>TcrConnection::getOverrides</c>.
     /// </summary>
-    private byte MapConflateEvents() => _options.Value.Subscription.ConflateEvents switch
+    private byte MapConflateEvents() => _options.Subscription.ConflateEvents switch
     {
         null  => 0,   // CONFLATION_DEFAULT — let the server decide
         true  => 1,   // CONFLATION_ON

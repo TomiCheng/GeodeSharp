@@ -5,6 +5,7 @@ using Geode.Client.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using MsOptions = Microsoft.Extensions.Options.Options;
 
 namespace Geode.Client;
@@ -98,7 +99,9 @@ public static class GeodeClientExtensions
         var key = name ?? MsOptions.DefaultName;
         var section = name ?? DefaultSectionName;
 
-        services.AddOptions<GeodeClientOptions>(key).BindConfiguration(section);
+        services.AddOptions<GeodeClientOptions>(key)
+            .BindConfiguration(section)
+            .ValidateOnStart();
         return AddCore(services, name);
     }
 
@@ -116,7 +119,9 @@ public static class GeodeClientExtensions
         ArgumentNullException.ThrowIfNull(configuration);
 
         var key = name ?? MsOptions.DefaultName;
-        services.AddOptions<GeodeClientOptions>(key).Bind(configuration);
+        services.AddOptions<GeodeClientOptions>(key)
+            .Bind(configuration)
+            .ValidateOnStart();
         return AddCore(services, name);
     }
 
@@ -133,7 +138,9 @@ public static class GeodeClientExtensions
         ArgumentNullException.ThrowIfNull(configure);
 
         var key = name ?? MsOptions.DefaultName;
-        services.AddOptions<GeodeClientOptions>(key).Configure(configure);
+        services.AddOptions<GeodeClientOptions>(key)
+            .Configure(configure)
+            .ValidateOnStart();
         return AddCore(services, name);
     }
 
@@ -187,10 +194,27 @@ public static class GeodeClientExtensions
     {
         var key = name ?? MsOptions.DefaultName;
 
+        services.TryAddScoped<CacheScopeContext>();
         services.TryAddScoped<ClientProxyMembershipIdBuilder>();
         services.TryAddScoped<PoolManager>();
+        services.TryAddScoped<TcrConnectionManager>();
+        // Cache itself is Scoped — one instance per per-cache
+        // AsyncServiceScope (created by GeodeCacheFactory). Lets the
+        // factory resolve via GetRequiredService<Cache>() rather than
+        // ActivatorUtilities, and lets scope.DisposeAsync() cascade the
+        // Cache's IAsyncDisposable automatically.
+        services.TryAddScoped<Services.Cache>();
         services.TryAddSingleton<TcrPartBuilder>();
         services.TryAddSingleton<TcrMessageBuilder>();
+
+        // IValidateOptions<T> is an additive abstraction: the options
+        // pipeline runs every registered validator. TryAddEnumerable
+        // ensures we only contribute one instance even when the user
+        // calls AddGeodeClient multiple times (multi-cluster scenario),
+        // while still leaving room for user-supplied validators to
+        // coexist.
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IValidateOptions<GeodeClientOptions>, GeodeClientOptionsValidator>());
         // TcrConnection is intentionally NOT registered: it's a
         // stateful resource (owns a Socket / Stream / handshake state),
         // not a stateless service. Production path opens one through

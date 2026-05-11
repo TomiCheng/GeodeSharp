@@ -110,24 +110,23 @@ internal sealed class Cache : IGeodeCache
 
     public Cache(
         IServiceProvider serviceProvider,
-        string name,
-        GeodeClientOptions options,
+        CacheScopeContext scopeContext,
         ClientProxyMembershipIdBuilder membershipIdBuilder,
-        PoolManager poolManager)
+        PoolManager poolManager,
+        TcrConnectionManager tcrConnectionManager)
     {
         ArgumentNullException.ThrowIfNull(serviceProvider);
-        ArgumentNullException.ThrowIfNull(name);
-        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(scopeContext);
         ArgumentNullException.ThrowIfNull(membershipIdBuilder);
         ArgumentNullException.ThrowIfNull(poolManager);
+        ArgumentNullException.ThrowIfNull(tcrConnectionManager);
 
-        Name = name;
+        Name = scopeContext.Name;
         _serviceProvider = serviceProvider;
-        _options = options;
+        _options = scopeContext.Options;
         _membershipIdBuilder = membershipIdBuilder;
         _poolManager = poolManager;
-        _tcrConnectionManager =
-            ActivatorUtilities.CreateInstance<TcrConnectionManager>(serviceProvider, options);
+        _tcrConnectionManager = tcrConnectionManager;
     }
 
     public string Name { get; }
@@ -287,10 +286,10 @@ internal sealed class Cache : IGeodeCache
         // Forward to CloseAsync; idempotent until connection logic lands.
         await CloseAsync().ConfigureAwait(false);
 
-        // TCCM is Cache-owned (not DI-managed) — release its semaphores
-        // / CTS so we don't leak OS handles. PoolManager is DI-Scoped so
-        // the AsyncServiceScope disposes it for us.
-        await _tcrConnectionManager.DisposeAsync().ConfigureAwait(false);
+        // TCCM is now DI-Scoped — the per-cache AsyncServiceScope
+        // disposes it for us in reverse-resolve order, after Cache.
+        // PoolManager / ClientProxyMembershipIdBuilder / CacheScopeContext
+        // ride the same cascade.
 
         _initLock.Dispose();
     }

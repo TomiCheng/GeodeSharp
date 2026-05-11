@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Geode.Client.Internal;
 using Geode.Client.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -75,11 +76,24 @@ internal sealed class GeodeCacheFactory(
         try
         {
             var options = optionsMonitor.Get(name);
-            // ActivatorUtilities needs a concrete type; T = IGeodeCache
-            // would throw "Instances of abstract classes cannot be
-            // created." Implicit upcast back to IGeodeCache on return.
-            var cache = (IGeodeCache)ActivatorUtilities.CreateInstance<Cache>(
-                scope.ServiceProvider, name, options);
+
+            // Bind name + options into the scope so every scope-internal
+            // service (ClientProxyMembershipIdBuilder, TcrConnection,
+            // ThinClientPoolDM, ...) sees the right cache's options
+            // without anyone reaching back into IOptionsMonitor with a
+            // hard-coded name. This is what lets named registrations
+            // (AddGeodeClient(opts, "g1")) compose with the rest of the
+            // pipeline — IOptions<T> alone always returns the unnamed
+            // default and would alias clusters together.
+            scope.ServiceProvider
+                .GetRequiredService<CacheScopeContext>()
+                .Initialize(name, options);
+
+            // Cache is registered as Scoped (see AddCore), so the scope
+            // owns its lifetime. name + options flow in via the
+            // CacheScopeContext initialised above. Implicit upcast back
+            // to IGeodeCache on return.
+            var cache = (IGeodeCache)scope.ServiceProvider.GetRequiredService<Cache>();
             return new ScopedCacheEntry(cache, scope);
         }
         catch
@@ -93,14 +107,15 @@ internal sealed class GeodeCacheFactory(
     }
 
     /// <summary>
-    /// Cascade <see cref="IAsyncDisposable.DisposeAsync"/> to every
-    /// cached <see cref="IGeodeCache"/> and then to the per-cache
-    /// <see cref="AsyncServiceScope"/>. After this returns,
+    /// Dispose every per-cache <see cref="AsyncServiceScope"/>; the
+    /// scope's own dispose cascades into <see cref="Cache"/> and the
+    /// other scoped services (<see cref="PoolManager"/>, ...) in
+    /// reverse-resolve order. After this returns,
     /// <see cref="Get(string)"/> throws
     /// <see cref="ObjectDisposedException"/>. Idempotent.
     /// </summary>
     /// <remarks>
-    /// Per-cache and per-scope disposal exceptions are logged via
+    /// Per-scope disposal exceptions are logged via
     /// <c>ILogger&lt;GeodeCacheFactory&gt;</c> and swallowed — one bad
     /// cache must not block the others' close path, and rethrowing
     /// from a finalizer-shaped path would mask the original exception
@@ -120,22 +135,13 @@ internal sealed class GeodeCacheFactory(
         foreach (var (name, lazy) in snapshot)
         {
             // Skip Lazy entries that lost the GetOrAdd race and never
-            // had .Value invoked — there's no scope or cache to dispose.
+            // had .Value invoked — there's no scope to dispose.
             if (!lazy.IsValueCreated)
             {
                 continue;
             }
 
-            var (cache, scope) = lazy.Value;
-
-            try
-            {
-                await cache.DisposeAsync().ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error disposing cache {CacheName}", name);
-            }
+            var (_, scope) = lazy.Value;
 
             try
             {

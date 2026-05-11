@@ -35,11 +35,11 @@ namespace Geode.Client.Internal;
 /// </para>
 /// </remarks>
 internal sealed class TcrConnectionManager(
-    GeodeClientOptions options,
+    CacheScopeContext scopeContext,
     ILogger<TcrConnectionManager> logger,
     IServiceProvider serviceProvider) : IAsyncDisposable
 {
-    private readonly GeodeClientOptions _options = options;
+    private readonly GeodeClientOptions _options = scopeContext.Options;
     private readonly ILogger<TcrConnectionManager> _logger = logger;
     private readonly IServiceProvider _serviceProvider = serviceProvider;
 

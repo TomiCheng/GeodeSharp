@@ -19,6 +19,40 @@ public class GeodeClientExtensionsTests
     private static IConfiguration BuildConfig(IDictionary<string, string?> kv) =>
         new ConfigurationBuilder().AddInMemoryCollection(kv).Build();
 
+    /// <summary>
+    /// Minimum pool config that satisfies <c>GeodeClientOptionsValidator</c>:
+    /// one pool named "test" with one server entry. Use as the configure
+    /// delegate for tests that exercise DI shape only and don't care about
+    /// pool contents — composed via
+    /// <c>opt =&gt; { MinimalPool(opt); opt.Name = "..."; }</c> when the
+    /// test also needs to set top-level fields.
+    /// </summary>
+    private static void MinimalPool(GeodeClientOptions opt) =>
+        opt.CacheXml = new CacheXmlOptions
+        {
+            Pools =
+            {
+                new CacheXmlPoolOptions
+                {
+                    Name = "test",
+                    Servers = { new CacheXmlHostPort { Host = "localhost", Port = 40404 } },
+                },
+            },
+        };
+
+    /// <summary>
+    /// IConfiguration-shaped equivalent of <see cref="MinimalPool"/>: the
+    /// keys under <paramref name="sectionPrefix"/> that the binder needs
+    /// to materialise one valid pool. Merge into a test's config dict
+    /// before <see cref="BuildConfig"/>.
+    /// </summary>
+    private static void AddMinimalPoolKeys(IDictionary<string, string?> kv, string sectionPrefix = "")
+    {
+        kv[$"{sectionPrefix}CacheXml:Pools:0:Name"] = "test";
+        kv[$"{sectionPrefix}CacheXml:Pools:0:Servers:0:Host"] = "localhost";
+        kv[$"{sectionPrefix}CacheXml:Pools:0:Servers:0:Port"] = "40404";
+    }
+
     private static GeodeClientOptions Bound(IServiceProvider sp, string name) =>
         sp.GetRequiredService<IOptionsMonitor<GeodeClientOptions>>().Get(name);
 
@@ -41,7 +75,9 @@ public class GeodeClientExtensionsTests
     [Fact]
     public async Task Unnamed_BindConfiguration_DefaultSection()
     {
-        var cfg = BuildConfig(new Dictionary<string, string?> { ["Geode:Name"] = "single" });
+        var cfgKeys = new Dictionary<string, string?> { ["Geode:Name"] = "single" };
+        AddMinimalPoolKeys(cfgKeys, "Geode:");
+        var cfg = BuildConfig(cfgKeys);
         var services = NewServices();
         services.AddSingleton<IConfiguration>(cfg);
         services.AddGeodeClient();
@@ -54,7 +90,9 @@ public class GeodeClientExtensionsTests
     [Fact]
     public async Task Unnamed_BindFromConfigurationArg()
     {
-        var cfg = BuildConfig(new Dictionary<string, string?> { ["Name"] = "from-arg" });
+        var cfgKeys = new Dictionary<string, string?> { ["Name"] = "from-arg" };
+        AddMinimalPoolKeys(cfgKeys);
+        var cfg = BuildConfig(cfgKeys);
         var services = NewServices();
         services.AddGeodeClient(cfg);
         await using var sp = services.BuildServiceProvider();
@@ -67,7 +105,7 @@ public class GeodeClientExtensionsTests
     public async Task Unnamed_ProgrammaticConfigure()
     {
         var services = NewServices();
-        services.AddGeodeClient(opt => opt.Name = "code-set");
+        services.AddGeodeClient(opt => { MinimalPool(opt); opt.Name = "code-set"; });
         await using var sp = services.BuildServiceProvider();
 
         Assert.Equal("code-set", Bound(sp, MsOptions.DefaultName).Name);
@@ -78,11 +116,14 @@ public class GeodeClientExtensionsTests
     [Fact]
     public async Task Named_BindConfiguration_NameAsSection()
     {
-        var cfg = BuildConfig(new Dictionary<string, string?>
+        var cfgKeys = new Dictionary<string, string?>
         {
             ["geode1:Name"] = "n1",
             ["geode2:Name"] = "n2",
-        });
+        };
+        AddMinimalPoolKeys(cfgKeys, "geode1:");
+        AddMinimalPoolKeys(cfgKeys, "geode2:");
+        var cfg = BuildConfig(cfgKeys);
         var services = NewServices();
         services.AddSingleton<IConfiguration>(cfg);
         services.AddGeodeClient("geode1");
@@ -100,7 +141,9 @@ public class GeodeClientExtensionsTests
     [Fact]
     public async Task Named_BindFromConfigurationArg()
     {
-        var cfg = BuildConfig(new Dictionary<string, string?> { ["Name"] = "named-arg" });
+        var cfgKeys = new Dictionary<string, string?> { ["Name"] = "named-arg" };
+        AddMinimalPoolKeys(cfgKeys);
+        var cfg = BuildConfig(cfgKeys);
         var services = NewServices();
         services.AddGeodeClient(cfg, "primary");
         await using var sp = services.BuildServiceProvider();
@@ -112,7 +155,7 @@ public class GeodeClientExtensionsTests
     public async Task Named_ProgrammaticConfigure()
     {
         var services = NewServices();
-        services.AddGeodeClient(opt => opt.Name = "g1-code", "g1");
+        services.AddGeodeClient(opt => { MinimalPool(opt); opt.Name = "g1-code"; }, "g1");
         await using var sp = services.BuildServiceProvider();
 
         Assert.Equal("g1-code", Bound(sp, "g1").Name);
@@ -125,7 +168,7 @@ public class GeodeClientExtensionsTests
     public async Task Factory_Get_ReturnsSameInstanceAcrossCalls()
     {
         var services = NewServices();
-        services.AddGeodeClient(_ => { });
+        services.AddGeodeClient(MinimalPool);
         await using var sp = services.BuildServiceProvider();
 
         var f = sp.GetRequiredService<IGeodeCacheFactory>();
@@ -136,8 +179,8 @@ public class GeodeClientExtensionsTests
     public async Task Factory_DifferentNames_ReturnDifferentInstances()
     {
         var services = NewServices();
-        services.AddGeodeClient(_ => { }, "g1");
-        services.AddGeodeClient(_ => { }, "g2");
+        services.AddGeodeClient(MinimalPool, "g1");
+        services.AddGeodeClient(MinimalPool, "g2");
         await using var sp = services.BuildServiceProvider();
 
         var f = sp.GetRequiredService<IGeodeCacheFactory>();
@@ -148,7 +191,7 @@ public class GeodeClientExtensionsTests
     public async Task KeyedService_AndFactory_ReturnSameInstance()
     {
         var services = NewServices();
-        services.AddGeodeClient(_ => { }, "g1");
+        services.AddGeodeClient(MinimalPool, "g1");
         await using var sp = services.BuildServiceProvider();
 
         var fromFactory = sp.GetRequiredService<IGeodeCacheFactory>().Get("g1");
@@ -160,7 +203,7 @@ public class GeodeClientExtensionsTests
     public async Task Factory_Get_NullName_Throws()
     {
         var services = NewServices();
-        services.AddGeodeClient(_ => { });
+        services.AddGeodeClient(MinimalPool);
         await using var sp = services.BuildServiceProvider();
 
         var f = sp.GetRequiredService<IGeodeCacheFactory>();
@@ -173,8 +216,8 @@ public class GeodeClientExtensionsTests
     public async Task Mixed_UnnamedAndNamed_Coexist()
     {
         var services = NewServices();
-        services.AddGeodeClient(opt => opt.Name = "default-cluster");
-        services.AddGeodeClient(opt => opt.Name = "legacy-cluster", "legacy");
+        services.AddGeodeClient(opt => { MinimalPool(opt); opt.Name = "default-cluster"; });
+        services.AddGeodeClient(opt => { MinimalPool(opt); opt.Name = "legacy-cluster"; }, "legacy");
         await using var sp = services.BuildServiceProvider();
 
         // unnamed via plain injection
@@ -194,7 +237,7 @@ public class GeodeClientExtensionsTests
     public async Task NamedOnly_PlainInjection_Throws()
     {
         var services = NewServices();
-        services.AddGeodeClient(_ => { }, "only-named");
+        services.AddGeodeClient(MinimalPool, "only-named");
         await using var sp = services.BuildServiceProvider();
 
         // no unnamed registration -> the unkeyed alias is absent.
@@ -207,8 +250,8 @@ public class GeodeClientExtensionsTests
     public async Task FactoryDispose_CascadesTo_AllCachedCaches()
     {
         var services = NewServices();
-        services.AddGeodeClient(_ => { }, "g1");
-        services.AddGeodeClient(_ => { }, "g2");
+        services.AddGeodeClient(MinimalPool, "g1");
+        services.AddGeodeClient(MinimalPool, "g2");
         var sp = services.BuildServiceProvider();
 
         var f = sp.GetRequiredService<IGeodeCacheFactory>();
@@ -228,7 +271,7 @@ public class GeodeClientExtensionsTests
     public async Task FactoryDispose_IsIdempotent()
     {
         var services = NewServices();
-        services.AddGeodeClient(_ => { });
+        services.AddGeodeClient(MinimalPool);
         await using var sp = services.BuildServiceProvider();
 
         var disposable = (IAsyncDisposable)sp.GetRequiredService<IGeodeCacheFactory>();
@@ -240,7 +283,7 @@ public class GeodeClientExtensionsTests
     public async Task Factory_Get_AfterDispose_Throws()
     {
         var services = NewServices();
-        services.AddGeodeClient(_ => { });
+        services.AddGeodeClient(MinimalPool);
         await using var sp = services.BuildServiceProvider();
 
         var f = sp.GetRequiredService<IGeodeCacheFactory>();

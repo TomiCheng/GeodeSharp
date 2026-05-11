@@ -1,11 +1,10 @@
 using System.Buffers.Binary;
 using System.Net;
 using System.Text;
+using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
-using Microsoft.Extensions.Options;
 using Xunit;
-using OptionsFactory = Microsoft.Extensions.Options.Options;
 
 namespace Geode.Client.Tests.Protocol;
 
@@ -23,7 +22,11 @@ namespace Geode.Client.Tests.Protocol;
 public class ClientProxyMembershipIdBuilderTests
 {
     private static ClientProxyMembershipIdBuilder NewBuilder(GeodeClientOptions? options = null)
-        => new(OptionsFactory.Create(options ?? new GeodeClientOptions()));
+    {
+        var ctx = new CacheScopeContext();
+        ctx.Initialize(string.Empty, options ?? new GeodeClientOptions());
+        return new ClientProxyMembershipIdBuilder(ctx);
+    }
 
     // ====================================================================
     //  Smoke / invariants

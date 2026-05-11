@@ -2,8 +2,8 @@ using System.Buffers;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using Geode.Client.Internal;
 using Geode.Client.Options;
-using Microsoft.Extensions.Options;
 
 namespace Geode.Client.Protocol;
 
@@ -23,14 +23,18 @@ namespace Geode.Client.Protocol;
 /// emits the identity bytes.
 /// </para>
 /// <para>
-/// Should be registered as a singleton (Phase 5 DI). All connections in a
-/// process share the same identity — matches cppcache where one factory
-/// per process holds a single <c>randString_</c> reused across every
-/// <c>create()</c>. The result is cached after the first <see cref="Build"/>
-/// call since inputs (hostname, IP, PID, options) are immutable.
+/// Registered as <b>scoped</b> in <c>AddCore</c> — one builder per
+/// cache. Identity is cache-scoped because <see cref="GeodeClientOptions.Name"/>
+/// (cluster name) participates in the blob; two caches with different
+/// configured names must yield different identity bytes. Reads
+/// <see cref="GeodeClientOptions"/> through <see cref="CacheScopeContext"/>
+/// so named registrations route correctly (plain <c>IOptions&lt;T&gt;</c>
+/// would always return the unnamed default and alias clusters together).
+/// The result is still cached after the first <see cref="Build"/>
+/// call since inputs (hostname, IP, PID, options) are immutable per cache.
 /// </para>
 /// </remarks>
-internal sealed class ClientProxyMembershipIdBuilder(IOptions<GeodeClientOptions> options)
+internal sealed class ClientProxyMembershipIdBuilder(CacheScopeContext scopeContext)
 {
     // === cppcache hardcoded values (ClientProxyMembershipID.cpp:31-33) ======
     private const byte InternalDistributedMemberDsfid = 92;
@@ -44,7 +48,7 @@ internal sealed class ClientProxyMembershipIdBuilder(IOptions<GeodeClientOptions
     /// </summary>
     private static readonly string s_uniqueTag = GenerateUniqueTag();
 
-    private readonly GeodeClientOptions _options = options.Value;
+    private readonly GeodeClientOptions _options = scopeContext.Options;
 
     /// <summary>
     /// Cached identity bytes. Inputs are immutable for the lifetime of this

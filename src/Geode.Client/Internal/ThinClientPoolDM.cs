@@ -87,6 +87,7 @@ internal sealed class ThinClientPoolDM(
     // ── State flags (ThinClientPoolDM.hpp:203-204) ──
     private int _isDestroyed;                      // m_isDestroyed (Interlocked 0/1)
     private int _destroyPending;                   // m_destroyPending (Interlocked 0/1)
+    private bool _keepAlive;                       // m_keepAlive (set in DestroyAsync, read by Step 5a)
 
     // ── Stats (Phase 1.5 thin wrapper around Meter) ──
     private object? _stats;                        // m_stats (PoolStats)
@@ -146,13 +147,16 @@ internal sealed class ThinClientPoolDM(
         //      CloseConnection(18) on each, dispose endpoints
         _ = ct;          // current body has no awaits that observe caller's ct;
                          // background cancellation flows through _backgroundCts.
-        _ = keepAlive;   // TODO Phase 2+: route into per-connection CloseConnection.
 
         // 1. Idempotent destroy guard.
         if (Interlocked.Exchange(ref _isDestroyed, 1) != 0)
         {
             return;
         }
+
+        // Stash the caller's keepAlive intent for Step 5a's CloseAsync calls.
+        // cppcache: m_keepAlive = keepAlive (ThinClientPoolDM.cpp:789).
+        _keepAlive = keepAlive;
 
         // 2. Signal every background loop to stop.
         _backgroundCts.Cancel();
@@ -179,12 +183,24 @@ internal sealed class ThinClientPoolDM(
         _updateLocatorSignal.Dispose();
         _backgroundCts.Dispose();
 
-        // 5. TODO Phase 1.1: drain _opConnections — for each TcrConnection:
-        //       await conn.SendAsync(MessageType.CloseConnection bytes);
-        //       await conn.DisposeAsync();
-        //    TODO Phase 1.2+: dispose endpoints in _endpoints (unregister
-        //       from TCCM, close subscription channel if any).
-        //    TODO Phase 1.5: drain TCCM's release queues.
+        // 5a. Drain _opConnections — every idle conn gets a polite
+        //     CloseConnection(18) before its socket goes away. Mirrors
+        //     cppcache ConnectionQueue::close (ConnectionQueue.hpp:87)
+        //     invoked from ThinClientPoolDM::destroy (L829).
+        _opConnections.Writer.TryComplete();
+        while (_opConnections.Reader.TryRead(out var conn))
+        {
+            // CloseAsync sends MessageType.CloseConnection(18) then
+            // disposes the socket. Currently NIE — until the leaf lands,
+            // any drained conn here will throw and bubble out of
+            // DestroyAsync. Top-down: call site is in place, leaf next.
+            await conn.CloseAsync(_keepAlive, ct).ConfigureAwait(false);
+        }
+
+        // 5b. TODO Phase 1.5: release pool's TCCM refs to endpoints in
+        //   _endpoints (ConnManager.RemoveRefToTcrEndpointAsync). Phase
+        //   1.1: rely on cache-scope dispose to cascade.
+        _endpoints.Clear();
     }
 
     // ── Lifecycle (override base + add pool-mode init) ──────────

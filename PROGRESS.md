@@ -40,15 +40,25 @@
 - [x] `TcrConnection` 框架 + handshake bytes
 - [x] `PingIntegrationTests` 對 `apachegeode/geode` 真機通過
 
-### 接到 Cache（剩餘工作）
+### 接到 Cache
 
-- [ ] `TcrEndpoint.CreateNewConnectionAsync` 實作 — 開 socket、跑 handshake、回 `TcrConnection`
-- [ ] `Cache.InitializeCoreAsync` 實作 path (b)：從 options 拿單一 host:port → 建 `TcrEndpoint` → 呼叫 `CreateNewConnectionAsync`
-- [ ] `Cache.CloseAsync` 送 `CloseConnection(18)` 並釋放連線（`TcrEndpoint.DisposeAsync`）
-- [ ] 確保 `EnsureInitializedAsync` 之後 `Cache` 上的 ping / 簡易往返能跑
+- [x] `TcrEndpoint.CreateNewConnectionAsync` 實作 — 開 socket、跑 handshake、回 `TcrConnection`
+- [x] `Cache.InitializeCoreAsync` 從 options 拿單一 host:port → 建 `TcrEndpoint` → 呼叫 `CreateNewConnectionAsync`（commit `20a53fc`）
+- [x] `Cache.CloseAsync` 送 `CloseConnection(18)` 並釋放連線
+  - `TcrMessageBuilder.CloseConnection(bool keepAlive)` partial（1-byte payload，cppcache `TcrMessageCloseConnection` 對齊）
+  - `TcrConnection.CloseAsync(keepAlive, ct)` — fire-and-forget 送 18 + 2s send budget + catch+LogInformation + `DisposeAsync`
+  - `ThinClientPoolDM.DestroyAsync` Step 5a：drain `_opConnections` → 對每條 conn 呼叫 `CloseAsync(_keepAlive, ct)`
+  - `_keepAlive` 欄位（cppcache `m_keepAlive` 鏡像；`DestroyAsync(bool keepAlive)` 寫入）；Phase 1.1 永遠 false
+  - **TODO Phase 1.5**：`_endpoints` 釋放 TCCM ref（`ConnManager.RemoveRefToTcrEndpointAsync`），目前靠 cache scope dispose 連鎖收尾
+- [x] `EnsureInitializedAsync` 之後 ping loop 端到端能跑
+  - `ThinClientPoolDM.PingLoopAsync` + `PingServerLocalAsync`（commit `07820de`）
+  - `TcrEndpoint.PingAsync(ThinClientPoolDM, ct)` 對齊 cppcache `pingServer`（含 `_msgSent` / `_pingSent` 短路）
+  - `ThinClientBaseDM.SendSyncRequestAsync` / `SendRequestToEndpointAsync` 簽名收成 `TcrMessage` → `Task<TcrMessage>`（不再 by-ref reply + GfErrType code）
+  - `ThinClientPoolDM.SendRequestToEndpointAsync` + `GetFromEPAsync` + `CreatePoolConnectionToAEndPointAsync` + `PutInQueueAsync` Phase 1.1 切片
+  - 整合測試 `PingLoop_pings_endpoint_against_real_server`（commit `bc6b909`）— 配 `MinConnections=1` / `IdleTimeout=100ms` / `PingInterval=200ms`，驗 `PingTickCount>=3` && `PingSuccessCount>=2` && `PoolSize>=1`
 - [ ] **（Phase 1.1 收尾）** Options 驗證：在 `AddGeodeClient` 接 `ValidateOnStart()` + `IValidateOptions<GeodeClientOptions>`，檢 `CacheXml.Pools` 必要欄位（Name 非空、Servers/Locators 至少一個、Host/Port 範圍）。讓 `InitializeCoreAsync` 內部可省驗證，假設輸入合法
 
-**下一步入口**：[src/Geode.Client/Internal/TcrEndpoint.cs](src/Geode.Client/Internal/TcrEndpoint.cs) 的 `CreateNewConnectionAsync`。
+**下一步入口**：Options validation（最後收尾項）。
 
 ### 後移到別的 phase
 

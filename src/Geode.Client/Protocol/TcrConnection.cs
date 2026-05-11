@@ -17,7 +17,8 @@ internal sealed class TcrConnection(
     IServiceProvider serviceProvider,
     ILogger<TcrConnection> logger,
     IOptions<GeodeClientOptions> options,
-    ClientProxyMembershipIdBuilder membershipIdBuilder)
+    ClientProxyMembershipIdBuilder membershipIdBuilder,
+    TcrMessageBuilder messageBuilder)
     : IAsyncDisposable
 {
 
@@ -519,6 +520,57 @@ internal sealed class TcrConnection(
         await SendAsync(request.Encode(), cancellationToken).ConfigureAwait(false);
         var replyBytes = await ReceiveAsync(cancellationToken).ConfigureAwait(false);
         return TcrMessage.Decode(replyBytes);
+    }
+
+    /// <summary>
+    /// Polite shutdown: send <see cref="MessageType.CloseConnection"/>
+    /// (18) so the server frees this socket's session immediately, then
+    /// <see cref="DisposeAsync"/> the underlying transport. Mirrors
+    /// cppcache <c>TcrConnection::close()</c>
+    /// (<c>cppcache/src/TcrConnection.cpp:933-951</c>).
+    /// </summary>
+    /// <param name="keepAlive">
+    /// Tells the server whether to keep this client's subscription queue
+    /// (Phase 2+ HA / durable client). Phase 1.1 callers always pass
+    /// <c>false</c> — we have no subscription state worth preserving.
+    /// </param>
+    /// <remarks>
+    /// Fire-and-forget: cppcache does not await any reply (the server
+    /// just closes its side after receiving the frame) and swallows
+    /// every exception (<c>LOGINFO</c> only) — by definition this is
+    /// the destruction path, so a half-dead socket failing the write is
+    /// not an error worth propagating.
+    /// </remarks>
+    public async Task CloseAsync(bool keepAlive, CancellationToken ct = default)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        // Builder is ctor-injected; cppcache pulls it lazily off DataOutput.
+        var closeMsg = messageBuilder.CloseConnection(keepAlive);
+
+        // 2-second send budget mirrors cppcache TcrConnection.cpp:944
+        // (`send(..., std::chrono::seconds(2), false)`). The connection is
+        // dying anyway — don't let a slow / half-dead socket hold up shutdown.
+        using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        sendCts.CancelAfter(TimeSpan.FromSeconds(2));
+
+        try
+        {
+            await SendAsync(closeMsg.Encode(), sendCts.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // cppcache LOGINFO("Close connection message failed with msg: %s")
+            // (TcrConnection.cpp:947). By definition we're tearing down — a
+            // failed write isn't actionable, just informational. Caller's ct
+            // cancellation flows through but we still dispose below.
+            logger.LogInformation(ex, "Close connection message failed");
+        }
+
+        await DisposeAsync().ConfigureAwait(false);
     }
 
     private bool _disposed;

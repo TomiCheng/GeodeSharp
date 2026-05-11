@@ -39,55 +39,103 @@ internal sealed class GeodeClientOptionsValidator : IValidateOptions<GeodeClient
             ? "GeodeClientOptions"
             : $"GeodeClientOptions[{name}]";
 
-        // CacheXml null and empty Pools list collapse to the same
-        // failure: "client doesn't know where to connect". Phase 1.1's
-        // InitializeCoreAsync requires at least one pool.
-        var pools = options.CacheXml?.Pools;
-        if (pools is null || pools.Count == 0)
+
+        if (options.CacheXml is not null)
         {
-            failures.Add(
-                $"{prefix}.CacheXml.Pools must contain at least one pool.");
-        }
-        else
-        {
-            for (var i = 0; i < pools.Count; i++)
+            // CacheXml null and empty Pools list collapse to the same
+            // failure: "client doesn't know where to connect". Phase 1.1's
+            // InitializeCoreAsync requires at least one pool.
+            var pools = options.CacheXml.Pools;
+            if (pools is null || pools.Count == 0)
             {
-                var pool = pools[i];
-
-                if (string.IsNullOrWhiteSpace(pool.Name))
+                failures.Add(
+                    $"{prefix}.CacheXml.Pools must contain at least one pool.");
+            }
+            else
+            {
+                for (var i = 0; i < pools.Count; i++)
                 {
-                    failures.Add(
-                        $"{prefix}.CacheXml.Pools[{i}].Name must not be null, empty, or whitespace.");
-                }
+                    var pool = pools[i];
 
-                if (pool.Locators.Count + pool.Servers.Count  == 0)
-                {
-                    failures.Add(
-                        $"{prefix}.CacheXml.Pools[{i}] must have at least one locator or server.");
-                }
+                    if (string.IsNullOrWhiteSpace(pool.Name))
+                    {
+                        failures.Add(
+                            $"{prefix}.CacheXml.Pools[{i}].Name must not be null, empty, or whitespace.");
+                    }
 
-                ValidateHostPorts($"{prefix}.CacheXml.Pools[{i}].Locators", pool.Locators, failures);
-                ValidateHostPorts($"{prefix}.CacheXml.Pools[{i}].Servers", pool.Servers, failures);
+                    if (pool.Locators.Count + pool.Servers.Count == 0)
+                    {
+                        failures.Add(
+                            $"{prefix}.CacheXml.Pools[{i}] must have at least one locator or server.");
+                    }
 
-                // MinConnections == 0 is allowed (cppcache permits 0 = pure lazy).
-                if (pool.MinConnections < 0)
-                {
-                    failures.Add(
-                        $"{prefix}.CacheXml.Pools[{i}].MinConnections must be >= 0 (got {pool.MinConnections}).");
-                }
+                    ValidateHostPorts($"{prefix}.CacheXml.Pools[{i}].Locators", pool.Locators, failures);
+                    ValidateHostPorts($"{prefix}.CacheXml.Pools[{i}].Servers", pool.Servers, failures);
 
-                // MaxConnections == null means "unbounded" — skip the comparison.
-                if (pool.MaxConnections is int max && max < pool.MinConnections)
-                {
-                    failures.Add(
-                        $"{prefix}.CacheXml.Pools[{i}].MaxConnections ({max}) must be >= MinConnections ({pool.MinConnections}).");
+                    // MinConnections == 0 is allowed (cppcache permits 0 = pure lazy).
+                    if (pool.MinConnections < 0)
+                    {
+                        failures.Add(
+                            $"{prefix}.CacheXml.Pools[{i}].MinConnections must be >= 0 (got {pool.MinConnections}).");
+                    }
+
+                    // MaxConnections == null means "unbounded" — skip the comparison.
+                    if (pool.MaxConnections is int max && max < pool.MinConnections)
+                    {
+                        failures.Add(
+                            $"{prefix}.CacheXml.Pools[{i}].MaxConnections ({max}) must be >= MinConnections ({pool.MinConnections}).");
+                    }
                 }
             }
+
+            ValidateXmlRegion(options.CacheXml.Regions, options.CacheXml.NamedAttributes, failures, prefix);
         }
+
+
 
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);
+    }
+
+    private static void ValidateXmlRegion(
+        List<CacheXmlRegionOptions> regions,
+        Dictionary<string, CacheXmlRegionAttributesOptions> namedAttributes,
+        List<string> failures,
+        string prefix)
+    {
+        // Phase 1.2 — region name structural check. Hoisted out of
+        // Cache.InitializeCoreAsync step 6 so a blank / whitespace name
+        // fails at host build time (ValidateOnStart) rather than deep
+        // inside the init flow. Empty Regions list is allowed — a cache
+        // with no XML-declared regions is a valid configuration (the
+        // app may rely on programmatic / future Path B registration).
+        if (regions is null) return;
+
+        for (var i = 0; i < regions.Count; i++)
+        {
+            var region = regions[i];
+            if (string.IsNullOrWhiteSpace(region.Name))
+            {
+                failures.Add(
+                    $"{prefix}.CacheXml.Regions[{i}].Name must not be null, empty, or whitespace.");
+            }
+
+            // Refid reference check — non-empty RefId must point to a
+            // declared template in CacheXml.NamedAttributes. Mirrors
+            // cppcache CacheXmlParser refid handling
+            // (CacheXmlParser.cpp:777-786) which throws
+            // CacheXmlException("referenced named attribute ... does
+            // not exist") at parse time; we do it at host build time
+            // via ValidateOnStart instead.
+            if (!string.IsNullOrEmpty(region.RefId)
+                && !namedAttributes.ContainsKey(region.RefId))
+            {
+                failures.Add(
+                    $"{prefix}.CacheXml.Regions[{i}].RefId='{region.RefId}' " +
+                    $"does not match any key in {prefix}.CacheXml.NamedAttributes.");
+            }
+        }
     }
 
     /// <summary>

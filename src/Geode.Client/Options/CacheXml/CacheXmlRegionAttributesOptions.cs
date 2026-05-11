@@ -45,10 +45,12 @@ public class CacheXmlRegionAttributesOptions
     /// <summary><c>concurrency-checks-enabled</c>.</summary>
     public bool? ConcurrencyChecksEnabled { get; set; }
 
-    /// <summary><c>id</c>.</summary>
-    public string Id { get; set; } = string.Empty;
-
-    /// <summary><c>refid</c>.</summary>
+    /// <summary>
+    /// Inner <c>&lt;region-attributes refid="..."&gt;</c> reference.
+    /// Mirrors the cppcache schema; currently ignored — refid resolution
+    /// only honours the outer <see cref="CacheXmlRegionOptions.RefId"/>.
+    /// Wire this in when a consumer actually needs inner-element refid.
+    /// </summary>
     public string RefId { get; set; } = string.Empty;
 
     /// <summary><c>&lt;region-time-to-live&gt;</c>.</summary>

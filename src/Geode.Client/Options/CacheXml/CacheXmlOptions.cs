@@ -53,4 +53,24 @@ public class CacheXmlOptions
     /// PDX defaults declared in the XML (<c>&lt;pdx&gt;</c>).
     /// </summary>
     public CacheXmlPdxOptions Pdx { get; } = new();
+
+    /// <summary>
+    /// Reusable region-attributes templates, keyed by name. A
+    /// <see cref="CacheXmlRegionOptions"/> with non-empty
+    /// <see cref="CacheXmlRegionOptions.RefId"/> looks up its template
+    /// here at <c>InitializeCoreAsync</c> time; the template's values
+    /// supply defaults that the region's inline
+    /// <see cref="CacheXmlRegionOptions.Attributes"/> can override.
+    /// Mirrors cppcache <c>&lt;region-attributes id="..."&gt;</c> →
+    /// <c>&lt;region refid="..."&gt;</c> template inheritance
+    /// (<c>cppcache/src/CacheXmlParser.cpp</c> <c>namedRegions_</c>).
+    /// </summary>
+    /// <remarks>
+    /// Single-level only — a template's own <c>RefId</c> is not
+    /// followed (no chained inheritance). Inner
+    /// <c>&lt;region-attributes refid="..."&gt;</c> is also unsupported
+    /// today; only the outer <see cref="CacheXmlRegionOptions.RefId"/>
+    /// triggers resolution.
+    /// </remarks>
+    public Dictionary<string, CacheXmlRegionAttributesOptions> NamedAttributes { get; } = new();
 }

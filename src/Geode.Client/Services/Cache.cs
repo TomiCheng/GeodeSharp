@@ -34,13 +34,14 @@ namespace Geode.Client.Services;
 /// </remarks>
 ///
 
-internal sealed class Cache : IGeodeCache
+internal sealed class Cache(
+    IServiceProvider serviceProvider,
+    CacheScopeContext scopeContext,
+    //ClientProxyMembershipIdBuilder membershipIdBuilder,
+    PoolManager poolManager,
+    TcrConnectionManager tcrConnectionManager) : IGeodeCache
 {
-    private readonly IServiceProvider _serviceProvider;
-    private readonly GeodeClientOptions _options;
-    private readonly ClientProxyMembershipIdBuilder _membershipIdBuilder;
-    private readonly PoolManager _poolManager;
-    private readonly TcrConnectionManager _tcrConnectionManager;
+    private readonly GeodeClientOptions _options = scopeContext.Options;
 
     /// <summary>
     /// <c>SemaphoreSlim</c>-gated double-checked init. cppcache
@@ -110,28 +111,7 @@ internal sealed class Cache : IGeodeCache
 
 #pragma warning restore CS0169, CS0414, CS0649
 
-    public Cache(
-        IServiceProvider serviceProvider,
-        CacheScopeContext scopeContext,
-        ClientProxyMembershipIdBuilder membershipIdBuilder,
-        PoolManager poolManager,
-        TcrConnectionManager tcrConnectionManager)
-    {
-        ArgumentNullException.ThrowIfNull(serviceProvider);
-        ArgumentNullException.ThrowIfNull(scopeContext);
-        ArgumentNullException.ThrowIfNull(membershipIdBuilder);
-        ArgumentNullException.ThrowIfNull(poolManager);
-        ArgumentNullException.ThrowIfNull(tcrConnectionManager);
-
-        Name = scopeContext.Name;
-        _serviceProvider = serviceProvider;
-        _options = scopeContext.Options;
-        _membershipIdBuilder = membershipIdBuilder;
-        _poolManager = poolManager;
-        _tcrConnectionManager = tcrConnectionManager;
-    }
-
-    public string Name { get; }
+    public string Name { get; } = scopeContext.Name;
 
     /// <summary>
     /// Test-only escape hatch: expose the scoped <see cref="PoolManager"/>
@@ -139,7 +119,7 @@ internal sealed class Cache : IGeodeCache
     /// internals (e.g. <c>PoolSize</c>) without DI scope wrangling. Not
     /// part of the public API — gated by <c>InternalsVisibleTo</c>.
     /// </summary>
-    internal PoolManager PoolManager => _poolManager;
+    internal PoolManager PoolManager => poolManager;
 
     public bool IsClosed { get; private set; }
 
@@ -210,7 +190,7 @@ internal sealed class Cache : IGeodeCache
         // (our MVP) the three background workers stay parked; this
         // is essentially a flag flip. Must complete before any pool
         // queries TCCM.IsDurable / haEnabled.
-        await _tcrConnectionManager.InitAsync(isPool: true, ct).ConfigureAwait(false);
+        await tcrConnectionManager.InitAsync(isPool: true, ct).ConfigureAwait(false);
 
         // ── 3-5. Build and init pools ───────────────────────────
         // Both paths produce a sequence of CacheXmlPoolOptions; the
@@ -227,40 +207,235 @@ internal sealed class Cache : IGeodeCache
             //   into CacheXmlPoolOptions-shape items.
             throw new NotImplementedException(
                 "TODO: Cache.InitializeCoreAsync step 3.b (path b — Options-based)");
-
-            // Step 4 and 5
         }
         else
         {
-            // path (a) — Declarative cache.xml-style.
-            // cppcache equivalent: initializeDeclarativeCache(xml)
-            //   → xmlParser->create() builds pools from <pool> elements.
-            foreach (var xmlPool in _options.CacheXml.Pools)
-            {
-                // ── 4. Build ThinClientPoolDM + register ────────────
-                // ctor enforces Phase 1.5 deferred limits (multi-server
-                // / locator) internally; here we just hand it the xml
-                // pool config and the shared TCCM.
-                // Positional args match ThinClientPoolDM's primary ctor
-                // (xmlPool + options + TCCM); ILogger is filled by DI.
-                var pool = ActivatorUtilities.CreateInstance<ThinClientPoolDM>(
-                    _serviceProvider, xmlPool, _options, _tcrConnectionManager);
-                _poolManager.AddPool(xmlPool.Name, pool);
-
-                // ── 5. Init pool — real TCP / handshake fires here ──
-                // Pool.InitAsync internally:
-                //   • locator query → endpoint list, OR direct server list
-                //   • foreach endpoint → TcrEndpoint.CreateNewConnectionAsync(...)
-                //       • socket open + handshake bytes
-                //       • receive server-issued uniqueId
-                //   • mark pool ready
-                await pool.InitAsync(ct).ConfigureAwait(false);
-            }
+            // path (a) — Declarative cache.xml-style. Mirrors cppcache
+            // CacheImpl::initializeDeclarativeCache(xml).
+            await InitializeDeclarativeCacheAsync(_options.CacheXml, ct).ConfigureAwait(false);
         }
 
-        // ── 6. PDX / serialization registration (Phase 2+) ──────
+        // ── 7. PDX / serialization registration (Phase 2+) ──────
         // TODO: if (_options.CacheXml?.Pdx is { } pdx) apply pdx
         //   ignoreUnreadFields / readSerialized to _pdxTypeRegistry.
+    }
+
+    /// <summary>
+    /// Build pools and regions from an already-bound
+    /// <see cref="CacheXmlOptions"/> tree. Mirrors cppcache
+    /// <c>CacheImpl::initializeDeclarativeCache(const std::string&amp;)</c>
+    /// — the difference is we work off already-parsed options instead
+    /// of running an XML parser (Xerces is bucket 1, cut per
+    /// CLAUDE.md).
+    /// </summary>
+    /// <remarks>
+    /// Two passes: pools first (so regions can resolve their pool
+    /// references), then regions. Each pool's <c>InitAsync</c> opens
+    /// real sockets — this is where I/O actually fires.
+    /// </remarks>
+    private async Task InitializeDeclarativeCacheAsync(CacheXmlOptions cacheXml, CancellationToken ct)
+    {
+        // ── 4-5. Pools ──────────────────────────────────────────
+        // cppcache equivalent: CacheXmlParser builds pools from <pool>
+        // elements during create().
+        foreach (var xmlPool in cacheXml.Pools)
+        {
+            // ── 4. Build ThinClientPoolDM + register ────────────
+            // ctor enforces Phase 1.5 deferred limits (multi-server
+            // / locator) internally; here we just hand it the xml
+            // pool config and the shared TCCM.
+            // Positional args match ThinClientPoolDM's primary ctor
+            // (xmlPool + options + TCCM); ILogger is filled by DI.
+            var pool = ActivatorUtilities.CreateInstance<ThinClientPoolDM>(
+                serviceProvider, xmlPool, _options, tcrConnectionManager);
+            poolManager.AddPool(xmlPool.Name, pool);
+
+            // ── 5. Init pool — real TCP / handshake fires here ──
+            // Pool.InitAsync internally:
+            //   • locator query → endpoint list, OR direct server list
+            //   • foreach endpoint → TcrEndpoint.CreateNewConnectionAsync(...)
+            //       • socket open + handshake bytes
+            //       • receive server-issued uniqueId
+            //   • mark pool ready
+            await pool.InitAsync(ct).ConfigureAwait(false);
+        }
+
+        // ── 6. Build regions ────────────────────────────────────
+        // cppcache equivalent: CacheXmlParser::create iterates
+        // <region> elements and calls CacheImpl::createRegion(name,
+        // attrs) for each top-level region (sub-regions handled
+        // recursively in the parser itself).
+        foreach (var xmlRegion in cacheXml.Regions)
+        {
+            // Name structural validation (non-empty / non-whitespace)
+            // and RefId existence are enforced by
+            // GeodeClientOptionsValidator at host build time — no
+            // inline checks needed here.
+
+            // ── 6.1 Resolve refid template ─────────────────
+            // cppcache CacheXmlParser folds <region refid="..."> onto
+            // a previously declared <region-attributes id="..."> at
+            // parse time (CacheXmlParser.cpp:777-786). We do the same
+            // here: clone the template, then let xmlRegion.Attributes
+            // override non-null / non-empty fields.
+            var attributes = ResolveAttributes(xmlRegion, cacheXml.NamedAttributes);
+
+            // ── 6.2 Resolve pool ───────────────────────────
+            // cppcache CacheImpl::createRegion_internal
+            // (CacheImpl.cpp:524) looks up the pool by name; empty
+            // PoolName falls through to PoolManager.DefaultPool
+            // (Find("") returns DefaultPool).
+            var pool = poolManager.Find(attributes.PoolName);
+            if (pool is null)
+            {
+                // Either PoolName references a pool not declared in
+                // CacheXml.Pools, or PoolName is empty and no pools
+                // are registered (the validator should have caught
+                // the second case; defensive guard).
+                throw new InvalidOperationException(
+                    $"Region '{xmlRegion.Name}' references pool " +
+                    $"'{attributes.PoolName}' which is not registered " +
+                    "(empty PoolName resolves to the default pool).");
+            }
+
+            // ── 6.3 IPool → ThinClientBaseDM ───────────────
+            // MVP has only one IPool impl (ThinClientPoolDM, which
+            // IS-A ThinClientBaseDM), so the cast is always safe
+            // today. The pattern-match form gives a clearer error
+            // message if a future non-DM IPool implementation
+            // arrives (Phase 1.5+) than a raw InvalidCastException.
+            if (pool is not ThinClientBaseDM dm)
+            {
+                throw new InvalidOperationException(
+                    $"Pool '{attributes.PoolName}' " +
+                    $"({pool.GetType().Name}) does not derive from " +
+                    $"{nameof(ThinClientBaseDM)}; cannot be used as a " +
+                    "region's distribution manager.");
+            }
+
+            // ── 6.4 Build ThinClientRegion ─────────────────
+            // Positional args feed the primary ctor (name, parent,
+            // attributes, dm); ILogger<ThinClientRegion> is filled
+            // by DI. Phase 1.2 builds top-level regions only — the
+            // parent slot is always null until sub-region creation
+            // lands. ActivatorUtilities's params is non-nullable
+            // object[], so we forward null through a typed local
+            // + null-forgiving operator.
+            RegionInternal? parent = null;
+            var region = ActivatorUtilities.CreateInstance<ThinClientRegion>(
+                serviceProvider,
+                xmlRegion.Name,
+                parent!,
+                attributes,
+                dm);
+
+            // ── 6.5 Register ───────────────────────────────
+            // cppcache CacheImpl::createRegion throws
+            // RegionExistsException when m_regions already holds
+            // the name. Future: GeodeClientOptionsValidator should
+            // also flag duplicate names in CacheXml.Regions at
+            // startup so this guard becomes pure belt-and-braces.
+            if (!_regions.TryAdd(xmlRegion.Name, region))
+            {
+                throw new InvalidOperationException(
+                    $"Region '{xmlRegion.Name}' is declared more than once " +
+                    "in CacheXml.Regions.");
+            }
+
+            // ── 6.6 Sub-region children ────────────────────
+            if (xmlRegion.ChildRegions.Count > 0)
+            {
+                // TODO: recurse into ChildRegions and build each as
+                //   a sub-region of `region`. Mirrors cppcache
+                //   CacheXmlParser walking nested <region> elements
+                //   and calling RegionInternal::createSubregion on
+                //   the parent. Currently throws so XML-declared
+                //   sub-regions aren't silently dropped.
+                throw new NotImplementedException(
+                    $"Region '{xmlRegion.Name}' declares " +
+                    $"{xmlRegion.ChildRegions.Count} sub-region(s); " +
+                    "sub-region creation is deferred to a later phase.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Apply a refid template (if any) and merge the region's inline
+    /// attribute overrides on top. Mirrors cppcache
+    /// <c>CacheXmlParser</c> refid handling
+    /// (<c>CacheXmlParser.cpp:777-786</c>): non-empty
+    /// <see cref="CacheXmlRegionOptions.RefId"/> clones the named
+    /// template; inline <see cref="CacheXmlRegionOptions.Attributes"/>
+    /// then overrides each field that is non-null (for value-type
+    /// nullables) or non-empty (for plain strings).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Chained refid is not honoured — a template's own
+    /// <see cref="CacheXmlRegionAttributesOptions.RefId"/> is ignored;
+    /// templates must be self-contained.
+    /// </para>
+    /// <para>
+    /// Returns <paramref name="xmlRegion"/>'s
+    /// <see cref="CacheXmlRegionOptions.Attributes"/> verbatim (same
+    /// reference) when there is no <c>RefId</c> — no merge work, no
+    /// allocation.
+    /// </para>
+    /// </remarks>
+    private static CacheXmlRegionAttributesOptions ResolveAttributes(
+        CacheXmlRegionOptions xmlRegion,
+        IReadOnlyDictionary<string, CacheXmlRegionAttributesOptions> namedAttributes)
+    {
+        if (string.IsNullOrEmpty(xmlRegion.RefId))
+        {
+            return xmlRegion.Attributes;
+        }
+
+        // Validator already enforces RefId membership; defensive guard
+        // covers callers that bypass DI validation.
+        if (!namedAttributes.TryGetValue(xmlRegion.RefId, out var template))
+        {
+            throw new InvalidOperationException(
+                $"Region '{xmlRegion.Name}' RefId='{xmlRegion.RefId}' " +
+                "does not match any key in CacheXml.NamedAttributes.");
+        }
+
+        var inline = xmlRegion.Attributes;
+        return new CacheXmlRegionAttributesOptions
+        {
+            // Nullable value types: inline non-null wins.
+            CachingEnabled           = inline.CachingEnabled           ?? template.CachingEnabled,
+            CloningEnabled           = inline.CloningEnabled           ?? template.CloningEnabled,
+            Scope                    = inline.Scope                    ?? template.Scope,
+            InitialCapacity          = inline.InitialCapacity          ?? template.InitialCapacity,
+            LoadFactor               = inline.LoadFactor               ?? template.LoadFactor,
+            ConcurrencyLevel         = inline.ConcurrencyLevel         ?? template.ConcurrencyLevel,
+            LruEntriesLimit          = inline.LruEntriesLimit          ?? template.LruEntriesLimit,
+            DiskPolicy               = inline.DiskPolicy               ?? template.DiskPolicy,
+            ClientNotification       = inline.ClientNotification       ?? template.ClientNotification,
+            ConcurrencyChecksEnabled = inline.ConcurrencyChecksEnabled ?? template.ConcurrencyChecksEnabled,
+
+            // Plain strings: inline non-empty wins.
+            Endpoints = string.IsNullOrEmpty(inline.Endpoints) ? template.Endpoints : inline.Endpoints,
+            PoolName  = string.IsNullOrEmpty(inline.PoolName)  ? template.PoolName  : inline.PoolName,
+
+            // Inner RefId is not honoured (mirrors decision in
+            // CacheXmlRegionAttributesOptions doc); leave empty so the
+            // resolved attributes don't accidentally trigger a second
+            // round of resolution somewhere.
+            RefId = string.Empty,
+
+            // Reference types: inline non-null replaces wholesale (no deep merge).
+            RegionTimeToLive   = inline.RegionTimeToLive   ?? template.RegionTimeToLive,
+            RegionIdleTime     = inline.RegionIdleTime     ?? template.RegionIdleTime,
+            EntryTimeToLive    = inline.EntryTimeToLive    ?? template.EntryTimeToLive,
+            EntryIdleTime      = inline.EntryIdleTime      ?? template.EntryIdleTime,
+            PartitionResolver  = inline.PartitionResolver  ?? template.PartitionResolver,
+            CacheLoader        = inline.CacheLoader        ?? template.CacheLoader,
+            CacheListener      = inline.CacheListener      ?? template.CacheListener,
+            CacheWriter        = inline.CacheWriter        ?? template.CacheWriter,
+            PersistenceManager = inline.PersistenceManager ?? template.PersistenceManager,
+        };
     }
 
     public IRegion<TKey, TValue>? GetRegion<TKey, TValue>(string path)
@@ -360,7 +535,7 @@ internal sealed class Cache : IGeodeCache
         // ThinClientPoolDM (cancels its conn-management loop, releases
         // timers, drains connections). PoolManager.CloseAsync is
         // internally idempotent so a later DI-scope dispose is safe.
-        await _poolManager.CloseAsync(keepAlive: false, ct).ConfigureAwait(false);
+        await poolManager.CloseAsync(keepAlive: false, ct).ConfigureAwait(false);
 
         IsClosed = true;
     }

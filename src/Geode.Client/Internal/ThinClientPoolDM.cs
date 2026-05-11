@@ -110,6 +110,25 @@ internal sealed class ThinClientPoolDM(
     /// </summary>
     internal int PoolSize => Volatile.Read(ref _poolSize);
 
+    private int _pingTickCount;
+    private int _pingSuccessCount;
+
+    /// <summary>
+    /// Test-only: number of ping-loop ticks that have entered
+    /// <see cref="PingServerLocalAsync"/>. Lets integration tests assert
+    /// the loop is alive without scraping logs. Phase 1.5 stats wrapper
+    /// (cppcache <c>PoolStats</c>) will subsume this.
+    /// </summary>
+    internal int PingTickCount => Volatile.Read(ref _pingTickCount);
+
+    /// <summary>
+    /// Test-only: number of <see cref="TcrEndpoint.PingAsync"/> calls that
+    /// returned without throwing AND left the endpoint still
+    /// <see cref="TcrEndpoint.IsConnected"/> true. Subsumed by Phase 1.5
+    /// stats once <c>PoolStats</c> lands.
+    /// </summary>
+    internal int PingSuccessCount => Volatile.Read(ref _pingSuccessCount);
+
     // ── IPool ────────────────────────────────────────────────────
 
     public override async Task DestroyAsync(bool keepAlive = false, CancellationToken ct = default)
@@ -145,8 +164,13 @@ internal sealed class ThinClientPoolDM(
             try { await _connManageLoop.ConfigureAwait(false); }
             catch (OperationCanceledException) { /* expected */ }
         }
-        // TODO Phase 1.5: same await pattern for _pingLoop /
-        //   _updateLocatorLoop once they're launched.
+        if (_pingLoop is not null)
+        {
+            try { await _pingLoop.ConfigureAwait(false); }
+            catch (OperationCanceledException) { /* expected */ }
+        }
+        // TODO Phase 1.5: same await pattern for _updateLocatorLoop once
+        //   it's launched.
 
         // 4. Dispose timers + sync primitives owned by this pool.
         _pingTimer?.Dispose();
@@ -240,15 +264,130 @@ internal sealed class ThinClientPoolDM(
         //       manageConnections, 10s initial delay, interval);
         _connManageLoop = ConnManageLoopAsync(_backgroundCts.Token);
 
+        // Ping loop — cppcache ThinClientPoolDM.cpp:269-290 splits this in
+        // two: a long-running pingServer Task that blocks on
+        // ping_semaphore_.acquire(), plus a FunctionExpiryTask scheduled by
+        // ExpiryTaskManager that releases the semaphore every PingInterval.
+        // We collapse to one loop driven by PeriodicTimer; _pingSignal stays
+        // declared so Phase 1.5's failover path can release it for an
+        // immediate probe (then this loop becomes WaitAny(timer, signal)).
+        //
+        // Interval resolution mirrors cppcache getPingInterval(): per-pool
+        // override (CacheXmlPoolOptions.PingInterval) wins, otherwise fall
+        // back to the system default (PoolOptions.PingInterval, 10s).
+        // Interval <= 0 disables ping entirely (cppcache L286-289).
+        var pingInterval = xmlPool.PingInterval ?? options.Pool.PingInterval;
+        if (pingInterval > TimeSpan.Zero)
+        {
+            logger.LogDebug(
+                "ThinClientPoolDM::startBackgroundThreads: Scheduling ping task at {Interval}",
+                pingInterval);
+            _pingTimer = new PeriodicTimer(pingInterval);
+            _pingLoop = PingLoopAsync(_backgroundCts.Token);
+        }
+        else
+        {
+            logger.LogDebug(
+                "ThinClientPoolDM::startBackgroundThreads: Not scheduling ping task as ping interval {Interval}",
+                pingInterval);
+        }
+
         // TODO Phase 1.5: launch the rest of the workers and timers:
-        //   • _pingLoop = Task.Run(() => PingLoopAsync(_backgroundCts.Token));
-        //       drives endpoint pings on _xmlPool.PingInterval
-        //                                  ?? _options.Pool.PingInterval.
         //   • _updateLocatorLoop = Task.Run(() => UpdateLocatorLoopAsync(_backgroundCts.Token));
         //       only when _xmlPool.Locators.Count > 0.
-        //   • _pingTimer = new PeriodicTimer(pingInterval);
         //   • RemoteQueryService.InitAsync   — Phase 1.4 (pool-scoped QS).
         //   • Statistics sampler             — bucket-1 (Meter-based).
+    }
+
+    /// <summary>
+    /// Periodic ping loop. Mirrors cppcache
+    /// <c>ThinClientPoolDM::pingServer</c>
+    /// (<c>ThinClientPoolDM.cpp:2070-2083</c>): each tick walks every
+    /// connected endpoint and probes it with <c>MessageType.Ping</c>.
+    /// </summary>
+    private async Task PingLoopAsync(CancellationToken ct)
+    {
+        // cppcache LOGFINE("Starting ping thread for pool %s", ...)
+        logger.LogDebug("Starting ping loop for pool {Pool}", Name);
+        try
+        {
+            while (await _pingTimer!.WaitForNextTickAsync(ct).ConfigureAwait(false))
+            {
+                try
+                {
+                    await PingServerLocalAsync(ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    // One bad tick must not kill the loop — next tick retries.
+                    logger.LogWarning(ex, "Ping tick failed for pool {Pool}", Name);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // graceful shutdown via _backgroundCts.Cancel().
+        }
+        // cppcache LOGFINE("Ending ping thread for pool %s", ...)
+        logger.LogDebug("Ending ping loop for pool {Pool}", Name);
+    }
+
+    /// <summary>
+    /// One ping sweep: probe every connected endpoint and prune the
+    /// pool's references to any that fall offline. Mirrors cppcache
+    /// <c>ThinClientPoolDM::pingServerLocal</c>
+    /// (<c>ThinClientPoolDM.cpp:2028-2040</c>).
+    /// </summary>
+    /// <remarks>
+    /// cppcache holds <c>m_endpointsLock</c> for the whole sweep because
+    /// <c>std::map</c> isn't safe for concurrent iteration; our
+    /// <see cref="_endpoints"/> is a <see cref="ConcurrentDictionary{TKey,TValue}"/>
+    /// so a snapshot enumeration is safe and the sweep won't block
+    /// <see cref="AddEPAsync"/>.
+    /// </remarks>
+    private async Task PingServerLocalAsync(CancellationToken ct)
+    {
+        Interlocked.Increment(ref _pingTickCount);
+
+        // Snapshot enumeration: ConcurrentDictionary's GetEnumerator is
+        // weakly consistent — safe under concurrent AddEPAsync, but a
+        // brand-new endpoint added mid-sweep may or may not appear this
+        // tick. That's fine: it'll be picked up next interval.
+        // cppcache LOGDEBUG("Pinging %zu endpoints for pool %s", ...) — paraphrased.
+        logger.LogTrace(
+            "Ping sweep for pool {Pool}: {Count} endpoint(s)",
+            Name, _endpoints.Count);
+
+        foreach (var (_, endpoint) in _endpoints)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (!endpoint.IsConnected)
+            {
+                // cppcache: pingServerLocal skips disconnected endpoints
+                // (the test is inside the loop body at L2032).
+                continue;
+            }
+
+            await endpoint.PingAsync(this, ct).ConfigureAwait(false);
+
+            if (endpoint.IsConnected)
+            {
+                Interlocked.Increment(ref _pingSuccessCount);
+            }
+
+            if (!endpoint.IsConnected)
+            {
+                // cppcache (ThinClientPoolDM.cpp:2034-2037): the ping just
+                // flipped the endpoint's connected_ bit to false → drop the
+                // pool's references on its conns + subscription.
+                // TODO Phase 1.5: RemoveEPConnections(endpoint);
+                //                 RemoveCallbackConnection(endpoint);
+                logger.LogDebug(
+                    "Ping flipped endpoint {Endpoint} to disconnected; cleanup deferred to Phase 1.5",
+                    endpoint.Name);
+            }
+        }
     }
 
     /// <summary>
@@ -499,9 +638,8 @@ internal sealed class ThinClientPoolDM(
 
     // ── ThinClientBaseDM pure abstract ──────────────────────────
 
-    public override Task<int /*GfErrType*/> SendSyncRequestAsync(
-        object request,
-        object reply,
+    public override Task<TcrMessage> SendSyncRequestAsync(
+        TcrMessage request,
         bool attemptFailover = true,
         bool isBackgroundThread = false,
         CancellationToken ct = default)
@@ -511,15 +649,216 @@ internal sealed class ThinClientPoolDM(
         throw new NotImplementedException("TODO: ThinClientPoolDM.SendSyncRequestAsync");
     }
 
-    public override Task<int /*GfErrType*/> SendRequestToEndpointAsync(
-        object request,
-        object reply,
+    /// <summary>
+    /// Send <paramref name="request"/> directly to
+    /// <paramref name="endpoint"/>, no DM-level routing. Mirrors cppcache
+    /// <c>ThinClientPoolDM::sendRequestToEP</c>
+    /// (<c>ThinClientPoolDM.cpp:1841-1995</c>) — the path used by
+    /// register-interest, subscription, and the ping loop.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// cppcache's body wraps the send in an auth-retry loop (max 2
+    /// retries on <c>AuthenticationRequiredException</c>), threads
+    /// multi-user creds, classifies server exceptions, and toggles
+    /// <c>putConnInPool</c> based on whether a pool conn or temporary
+    /// conn was used. Phase 1.1 implements only the bare wire path:
+    /// borrow conn → send → return / put-back. Auth retry is Phase 3;
+    /// failover branching is Phase 1.5; multi-user is Phase 3.
+    /// </para>
+    /// </remarks>
+    public override async Task<TcrMessage> SendRequestToEndpointAsync(
+        TcrMessage request,
         TcrEndpoint endpoint,
         CancellationToken ct = default)
     {
-        // TODO Phase 1.2 / 2+: targeted send for register-interest /
-        //   subscription. Bypass the queue's load-balancing.
-        throw new NotImplementedException("TODO: ThinClientPoolDM.SendRequestToEndpointAsync");
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(endpoint);
+        ct.ThrowIfCancellationRequested();
+
+        if (Volatile.Read(ref _isDestroyed) != 0)
+        {
+            throw new ObjectDisposedException(nameof(ThinClientPoolDM));
+        }
+
+        logger.LogDebug(
+            "ThinClientPoolDM::sendRequestToEP type={MessageType} endpoint={Endpoint}",
+            request.MessageType, endpoint.Name);
+
+        // Step 1 — try borrow an idle pool conn for this endpoint.
+        //   cppcache: TcrConnection* conn = getFromEP(currentEndpoint);
+        var conn = await GetFromEPAsync(endpoint, ct).ConfigureAwait(false);
+
+        // Step 2 — none idle? open a fresh one ON this endpoint.
+        //   cppcache: createPoolConnectionToAEndPoint(...) → fallback to
+        //   currentEndpoint->createNewConnection (temporary, putConnInPool=false)
+        //   if pool-cap reached. Phase 1.1 collapses both branches into one
+        //   pool-tracked conn (no maxConn limiter yet).
+        var putConnInPool = true;
+        if (conn is null)
+        {
+            conn = await CreatePoolConnectionToAEndPointAsync(endpoint, ct).ConfigureAwait(false);
+        }
+
+        if (conn is null)
+        {
+            // cppcache: setConnectionStatus(false) + LOGFINE("3Failed to connect").
+            endpoint.SetConnected(false);
+            throw new GeodeException(
+                $"ThinClientPoolDM: could not obtain a connection to {endpoint.Name}.");
+        }
+
+        // TODO Phase 3 — auth / multi-user creds:
+        //   if (TcrMessage.IsUserInitiativeOps(request) && (IsSecurityOn || IsMultiUserMode))
+        //     await SendUserCredentialsAsync(...);
+
+        try
+        {
+            // Step 3 — actual wire I/O. cppcache:
+            //   currentEndpoint->sendRequestConnWithRetry(request, reply, conn, true)
+            // We currently send straight on the conn; the per-conn retry
+            // wrap (cppcache's "WithRetry") is Phase 1.5 once timeouts /
+            // partial-write recovery surface.
+            var reply = await conn.SendRequestAsync(request, ct).ConfigureAwait(false);
+
+            // TODO Phase 3: if reply.MessageType == Exception &&
+            //   IsAuthRequireException(reply) → unauth + outer retry loop.
+
+            // Step 4 — happy path: return conn to its endpoint queue.
+            //   cppcache: putConnInPool ? put(conn, false) : close+delete(conn).
+            if (putConnInPool)
+            {
+                await PutInQueueAsync(conn, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                await conn.DisposeAsync().ConfigureAwait(false);
+            }
+
+            return reply;
+        }
+        catch
+        {
+            // cppcache: setConnectionStatus(false) + removeEPConnections(1)
+            // + removeEPFromMetadataIfError. Phase 1.5 will classify the
+            // GfErrType and decide whether to truly mark the endpoint
+            // down vs. retry on another conn; Phase 1.1 is conservative
+            // — any failure on a conn drops it and marks endpoint down.
+            endpoint.SetConnected(false);
+            if (putConnInPool)
+            {
+                Interlocked.Decrement(ref _poolSize);
+            }
+            await conn.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Try borrow an idle <see cref="TcrConnection"/> already attached to
+    /// <paramref name="endpoint"/>. Mirrors cppcache
+    /// <c>ThinClientPoolDM::getFromEP</c>.
+    /// </summary>
+    /// <returns>An idle conn for this endpoint, or <c>null</c> if none available.</returns>
+    private Task<TcrConnection?> GetFromEPAsync(TcrEndpoint endpoint, CancellationToken ct)
+    {
+        // TODO Phase 1.5 (multi-endpoint): scan _opConnections for a conn
+        //   whose endpoint == endpoint; cppcache walks its queue and
+        //   filters by getEndpointObject(). Requires TcrConnection to
+        //   carry a back-ref to its TcrEndpoint (cppcache m_endpointObj).
+        // Phase 1.1 single-endpoint shortcut: any conn in _opConnections
+        //   belongs to the only endpoint, so TryRead is sufficient.
+        _ = endpoint;
+        _ = ct;
+        return _opConnections.Reader.TryRead(out var conn)
+            ? Task.FromResult<TcrConnection?>(conn)
+            : Task.FromResult<TcrConnection?>(null);
+    }
+
+    /// <summary>
+    /// Open a fresh <see cref="TcrConnection"/> on a specific
+    /// <paramref name="endpoint"/>, bypassing
+    /// <see cref="SelectEndpointAsync"/>. Mirrors cppcache
+    /// <c>ThinClientPoolDM::createPoolConnectionToAEndPoint</c>
+    /// (<c>ThinClientPoolDM.cpp:1663-1718</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Caller must have already registered <paramref name="endpoint"/>
+    /// via <see cref="AddEPAsync"/> (or be iterating
+    /// <see cref="_endpoints"/> directly, as
+    /// <see cref="PingServerLocalAsync"/> does). cppcache makes the same
+    /// assumption — this helper does not AddEP.
+    /// </para>
+    /// <para>
+    /// Returns <c>null</c> when the endpoint cannot currently be reached;
+    /// the caller (<see cref="SendRequestToEndpointAsync"/>) then falls
+    /// back to its own error path. Unlike
+    /// <see cref="CreatePoolConnectionAsync"/> this does NOT enqueue —
+    /// the caller uses the conn immediately and returns it to the queue
+    /// after the send.
+    /// </para>
+    /// </remarks>
+    private async Task<TcrConnection?> CreatePoolConnectionToAEndPointAsync(
+        TcrEndpoint endpoint, CancellationToken ct)
+    {
+        // TODO Phase 1.5: MaxConnections cap check
+        // (cppcache ThinClientPoolDM.cpp:1672-1687):
+        //   var max = Math.Max(_xmlPool.MaxConnections, _xmlPool.MinConnections);
+        //   if (_poolSize >= max) { maxConnLimit = true; return null; }
+        // The `maxConnLimit` out-flag tells sendRequestToEP whether to
+        // fall back to a temporary (non-pool) conn — we'll wire that
+        // branch when MaxConnections enforcement lands.
+
+        // cppcache LOGFINE("creating a new connection to the endpoint %s") (L1690-1693)
+        logger.LogDebug(
+            "ThinClientPoolDM::createPoolConnectionToAEndPoint: opening new connection to {Endpoint}",
+            endpoint.Name);
+
+        TcrConnection conn;
+        try
+        {
+            conn = await endpoint
+                .CreateNewConnectionAsync(
+                    isClientNotification: false,
+                    isSecondary: false,
+                    connectTimeout: null,    // TODO Phase 1.5: thread xmlPool.ConnectTimeout / options.Pool.ConnectTimeout
+                    ct: ct)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // cppcache LOGFINE("2Failed to connect to %s") (L1702)
+            logger.LogWarning(ex,
+                "ThinClientPoolDM::createPoolConnectionToAEndPoint: failed to connect to {Endpoint}",
+                endpoint.Name);
+            return null;
+        }
+
+        // cppcache (L1704-1712): mark endpoint healthy + bump pool counter.
+        endpoint.SetConnected(true);
+        Interlocked.Increment(ref _poolSize);
+        // TODO Phase 1.5: stats — incPoolConnects, setCurPoolConnections,
+        //   incLoadCondConnects when _poolSize > MinConnections.
+
+        return conn;
+    }
+
+    /// <summary>
+    /// Return a borrowed <see cref="TcrConnection"/> to the pool queue.
+    /// Mirrors cppcache <c>ThinClientPoolDM::put(conn, isTransaction)</c>
+    /// (the <c>false</c> overload — sticky-tx routing is Phase 6).
+    /// </summary>
+    private ValueTask PutInQueueAsync(TcrConnection conn, CancellationToken ct)
+    {
+        // TODO Phase 1.5: stamp conn last-access for cleanStaleConnections;
+        //   Phase 6: route to sticky-tx queue when forTransaction=true.
+        _ = ct;
+        return _opConnections.Writer.WriteAsync(conn, ct);
     }
 
     // ── Connection lifecycle helpers (Phase 1.5) ────────────────

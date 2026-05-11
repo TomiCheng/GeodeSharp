@@ -296,15 +296,117 @@ internal sealed class TcrEndpoint(
     }
 
     /// <summary>
-    /// Send <c>MessageType.Ping</c> to update <see cref="IsConnected"/>.
-    /// Mirrors cppcache <c>TcrEndpoint::pingServer</c>.
+    /// Send <c>MessageType.Ping</c> through <paramref name="poolDM"/> and
+    /// update <see cref="IsConnected"/> based on the reply. Mirrors cppcache
+    /// <c>TcrEndpoint::pingServer(ThinClientPoolDM*)</c>
+    /// (<c>cppcache/src/TcrEndpoint.cpp:499-544</c>).
     /// </summary>
-    public Task PingAsync(object? poolDM = null, CancellationToken ct = default)
+    /// <remarks>
+    /// <para>
+    /// cppcache passes <c>poolDM == nullptr</c> for non-pool / standalone
+    /// endpoints and falls back to <c>this->send(pingMsg, reply)</c>; we
+    /// only run pool-mode in MVP so the null branch throws NIE for now.
+    /// </para>
+    /// <para>
+    /// The cppcache <c>m_msgSent</c> / <c>m_pingSent</c> short-circuit
+    /// (<c>TcrEndpoint.cpp:506,540-543</c>) is preserved verbatim — every
+    /// other tick is a no-op when there has been recent activity, halving
+    /// ping bandwidth when the channel is busy. Phase 1.2's
+    /// <c>SendSyncRequestAsync</c> will set <c>_msgSent = true</c> after
+    /// each real op so this skip starts paying off; until then
+    /// <c>_msgSent</c> stays false and only <c>_pingSent</c> gates the
+    /// skip (effective ping cadence = every 2 ticks).
+    /// </para>
+    /// <para>
+    /// cppcache's <c>GF_TIMEOUT</c> tolerance (<c>m_pingTimeouts &lt; 2</c>
+    /// before flipping <c>connected_</c>) is deferred to Phase 1.5 — needs
+    /// the GfErrType taxonomy to land first so we can distinguish
+    /// "transport timed out" from "server returned exception" cleanly. For
+    /// now any send-path exception flips connected to false.
+    /// </para>
+    /// </remarks>
+    public async Task PingAsync(
+        ThinClientPoolDM? poolDM = null,
+        CancellationToken ct = default)
     {
-        // TODO: pick a conn (or create one); send Ping; on success
-        //       _connected = 1, _pingTimeouts = 0; on failure,
-        //       _pingTimeouts++ and possibly setConnected(false).
-        throw new NotImplementedException("TODO: TcrEndpoint.PingAsync");
+        // cppcache LOGDEBUG("Sending ping message to endpoint %s") (TcrEndpoint.cpp:500)
+        logger.LogDebug("Sending ping message to endpoint {Endpoint}", Name);
+
+        if (!IsConnected)
+        {
+            // cppcache LOGFINER (TcrEndpoint.cpp:502)
+            logger.LogTrace("Skipping ping task for disconnected endpoint {Endpoint}", Name);
+            return;
+        }
+
+        // Activity short-circuit (cppcache L506,540-543).
+        if (_msgSent || _pingSent)
+        {
+            _msgSent = false;
+            _pingSent = false;
+            return;
+        }
+
+        if (poolDM is null)
+        {
+            // cppcache TcrEndpoint.cpp:514-516 falls back to this->send(...).
+            // Standalone / non-pool DM is Phase 2+.
+            throw new NotImplementedException(
+                "TODO Phase 2+: standalone endpoint.send(ping) path (non-pool DM).");
+        }
+
+        var messageBuilder = serviceProvider.GetRequiredService<TcrMessageBuilder>();
+        var pingRequest = messageBuilder.Ping();
+
+        // cppcache LOGFINEST("Sending ping message to endpoint %s") (TcrEndpoint.cpp:510)
+        logger.LogTrace("Sending ping message to endpoint {Endpoint}", Name);
+
+        TcrMessage reply;
+        try
+        {
+            reply = await poolDM
+                .SendRequestToEndpointAsync(pingRequest, this, ct)
+                .ConfigureAwait(false);
+            _pingSent = true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Caller-driven shutdown — propagate; loop layer treats as graceful.
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // TODO Phase 1.5: classify as GF_TIMEOUT and tolerate up to 2
+            //   consecutive timeouts (++_pingTimeouts) before flipping
+            //   connected. cppcache TcrEndpoint.cpp:522-524.
+            //   Currently any error flips connected immediately.
+            _pingTimeouts = 0;
+            // cppcache LOGFINEST("Sent ping ... with error code %d") (L517-518)
+            logger.LogWarning(ex,
+                "Ping to endpoint {Endpoint} failed; marking disconnected", Name);
+            if (IsConnected)
+            {
+                SetConnected(false);
+            }
+            return;
+        }
+
+        // Non-timeout outcome → reset tolerance counter (cppcache L525).
+        _pingTimeouts = 0;
+
+        // cppcache (TcrEndpoint.cpp:532-534): connected iff the server
+        // returned a proper Reply frame. Anything else (Exception reply,
+        // unexpected MessageType) means the server is unhappy with us.
+        var connected = reply.MessageType == MessageType.Reply;
+        if (IsConnected != connected)
+        {
+            SetConnected(connected);
+        }
+
+        // cppcache LOGFINEST("Completed sending ping message") (L539)
+        logger.LogTrace(
+            "Completed sending ping message to endpoint {Endpoint} (replyType={ReplyType})",
+            Name, reply.MessageType);
     }
 
     /// <summary>

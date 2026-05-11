@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using Geode.Client.Protocol;
 
 namespace Geode.Client.Internal;
 
@@ -82,23 +83,30 @@ internal abstract class ThinClientBaseDM : IAsyncDisposable
     // ── Pure abstract: each DM implements its own dispatch ─────
 
     /// <summary>
-    /// Send a request and block until reply / error. Mirrors cppcache
-    /// pure-virtual <c>sendSyncRequest</c>.
+    /// Send a request and await the server's reply. Mirrors cppcache
+    /// pure-virtual <c>sendSyncRequest(request, reply, ...)</c>; cppcache
+    /// mutates the caller-supplied <c>reply</c> in place and returns
+    /// <c>GfErrType</c>, but .NET transport errors surface as exceptions
+    /// (<see cref="System.IO.IOException"/> / <see cref="GeodeException"/>)
+    /// so we return the reply directly. Callers inspect
+    /// <see cref="TcrMessage.MessageType"/> for protocol-level errors
+    /// (<see cref="MessageType.Exception"/>) themselves.
     /// </summary>
-    public abstract Task<int /*GfErrType*/> SendSyncRequestAsync(
-        object request,                  // TcrMessage
-        object reply,                    // TcrMessageReply
+    public abstract Task<TcrMessage> SendSyncRequestAsync(
+        TcrMessage request,
         bool attemptFailover = true,
         bool isBackgroundThread = false,
         CancellationToken ct = default);
 
     /// <summary>
-    /// Send to a specific endpoint, no DM-level routing. Mirrors
-    /// cppcache pure-virtual <c>sendRequestToEP</c>.
+    /// Send to a specific endpoint, bypassing DM-level routing /
+    /// load-balancing / failover. Mirrors cppcache pure-virtual
+    /// <c>sendRequestToEP(request, reply, endpoint)</c>; same
+    /// return-vs-mutate convention as
+    /// <see cref="SendSyncRequestAsync"/>.
     /// </summary>
-    public abstract Task<int /*GfErrType*/> SendRequestToEndpointAsync(
-        object request,
-        object reply,
+    public abstract Task<TcrMessage> SendRequestToEndpointAsync(
+        TcrMessage request,
         TcrEndpoint endpoint,
         CancellationToken ct = default);
 
@@ -109,22 +117,26 @@ internal abstract class ThinClientBaseDM : IAsyncDisposable
     /// <c>sendSyncRequestRegisterInterest</c> — when
     /// <paramref name="endpoint"/> is null delegate to
     /// <see cref="SendSyncRequestAsync"/>; otherwise delegate to
-    /// <see cref="SendRequestToEndpointAsync"/>.
+    /// <see cref="SendRequestToEndpointAsync"/>. A disconnected
+    /// endpoint surfaces as a <see cref="GeodeException"/> rather than
+    /// cppcache's <c>GF_NOTCON</c> error code.
     /// </summary>
-    public virtual Task<int /*GfErrType*/> SendSyncRequestRegisterInterestAsync(
-        object request,
-        object reply,
+    public virtual Task<TcrMessage> SendSyncRequestRegisterInterestAsync(
+        TcrMessage request,
         bool attemptFailover = true,
         TcrEndpoint? endpoint = null,
         CancellationToken ct = default)
     {
         if (endpoint is null)
         {
-            return SendSyncRequestAsync(request, reply, attemptFailover, false, ct);
+            return SendSyncRequestAsync(request, attemptFailover, false, ct);
         }
-        return endpoint.IsConnected
-            ? SendRequestToEndpointAsync(request, reply, endpoint, ct)
-            : Task.FromResult(/*GF_NOTCON*/ -1);
+        if (!endpoint.IsConnected)
+        {
+            throw new GeodeException(
+                $"Endpoint {endpoint.Name} is not connected (cppcache GF_NOTCON).");
+        }
+        return SendRequestToEndpointAsync(request, endpoint, ct);
     }
 
     // ── Empty virtual hooks (override in derived if needed) ────

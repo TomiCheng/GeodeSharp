@@ -322,14 +322,11 @@ internal sealed class Cache(
             // type), so resolve the logger from DI manually and call
             // the ctor directly. Mirrors what ActivatorUtilities would
             // have done minus the broken null-arg matching.
-            RegionInternal? parent = null;
-            var regionLogger = serviceProvider.GetRequiredService<ILogger<ThinClientRegion>>();
-            var region = new ThinClientRegion(
+            var region = ActivatorUtilities.CreateInstance<ThinClientRegion>(
+                serviceProvider,
                 xmlRegion.Name,
-                parent,
                 attributes,
-                dm,
-                regionLogger);
+                dm);
 
             // ── 6.5 Register ───────────────────────────────
             // cppcache CacheImpl::createRegion throws

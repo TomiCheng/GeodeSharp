@@ -654,15 +654,66 @@ internal sealed class ThinClientPoolDM(
 
     // ── ThinClientBaseDM pure abstract ──────────────────────────
 
-    public override Task<TcrMessage> SendSyncRequestAsync(
+    /// <summary>
+    /// DM-level send: pick an endpoint and route the request through
+    /// it. Mirrors cppcache
+    /// <c>ThinClientPoolDM::sendSyncRequest(request, reply, ...)</c>
+    /// (<c>ThinClientPoolDM.cpp:1380-1500</c>) — the path every region
+    /// op (Put / Get / ContainsKey / Destroy) takes when the caller
+    /// does not pin a specific endpoint.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Phase 1.2 slice — single endpoint, no failover, no retry.
+    /// cppcache wraps <see cref="SendRequestToEndpointAsync"/> in a
+    /// do-while loop driven by <c>isFatalError</c> classification +
+    /// <c>selectEndpoint(excludeServers)</c>; the retry logic lands in
+    /// Phase 1.5 once <c>GfErrType</c> taxonomy + <c>excludeServers</c>
+    /// thread through.
+    /// </para>
+    /// <para>
+    /// <paramref name="attemptFailover"/> and
+    /// <paramref name="isBackgroundThread"/> are accepted for cppcache
+    /// signature parity but currently ignored — failover is Phase 1.5,
+    /// background-thread stats hooks are Phase 1.5 stats work.
+    /// </para>
+    /// </remarks>
+    public override async Task<TcrMessage> SendSyncRequestAsync(
         TcrMessage request,
         bool attemptFailover = true,
         bool isBackgroundThread = false,
         CancellationToken ct = default)
     {
-        // TODO Phase 1.2: dequeue conn → endpoint.SendAsync → enqueue.
-        //   On error: failover loop (Phase 1.5).
-        throw new NotImplementedException("TODO: ThinClientPoolDM.SendSyncRequestAsync");
+        ArgumentNullException.ThrowIfNull(request);
+        ct.ThrowIfCancellationRequested();
+
+        if (Volatile.Read(ref _isDestroyed) != 0)
+        {
+            throw new ObjectDisposedException(nameof(ThinClientPoolDM));
+        }
+
+        _ = attemptFailover;        // Phase 1.5: failover loop.
+        _ = isBackgroundThread;     // Phase 1.5: stats hook.
+
+        logger.LogDebug(
+            "ThinClientPoolDM::sendSyncRequest type={MessageType} txId={TxId}",
+            request.MessageType, request.TransactionId);
+
+        // Step 1 — pick an endpoint. cppcache's selectEndpoint takes
+        //   excludeServers + currentServer; MVP needs neither (single
+        //   endpoint, no retry).
+        var location = await SelectEndpointAsync(ct).ConfigureAwait(false);
+
+        // Step 2 — get-or-create the pool's TcrEndpoint reference.
+        //   cppcache does this implicitly inside selectEndpoint; we
+        //   keep the addEP step explicit.
+        var endpoint = await AddEPAsync(location, ct).ConfigureAwait(false);
+
+        // Step 3 — delegate to the endpoint-pinned send path. That
+        //   helper handles conn borrow / fallback-create / send /
+        //   put-back / disconnect-on-error already; nothing more for
+        //   this layer to do in MVP.
+        return await SendRequestToEndpointAsync(request, endpoint, ct).ConfigureAwait(false);
     }
 
     /// <summary>

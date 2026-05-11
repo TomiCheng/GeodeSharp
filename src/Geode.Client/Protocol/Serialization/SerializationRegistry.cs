@@ -47,9 +47,9 @@ internal sealed class SerializationRegistry
         // wire formats land. Phase 1.2 starts with int32 (the
         // walking-skeleton key type).
         Register(new Int32DataConverter());
+        Register(new BooleanDataConverter());
 
         // TODO Phase 1.2.c: widen the built-in set —
-        //   Register(new BooleanDataConverter());
         //   Register(new ByteDataConverter());
         //   Register(new Int16DataConverter());
         //   Register(new Int64DataConverter());

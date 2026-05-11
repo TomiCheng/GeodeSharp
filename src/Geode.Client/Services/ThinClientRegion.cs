@@ -1,5 +1,8 @@
+using System.Text;
 using Geode.Client.Internal;
 using Geode.Client.Options;
+using Geode.Client.Protocol;
+using Geode.Client.Protocol.Serialization;
 using Microsoft.Extensions.Logging;
 
 namespace Geode.Client.Services;
@@ -27,31 +30,22 @@ namespace Geode.Client.Services;
 /// is <c>object</c>-typed; strong typing is compile-time only.
 /// </para>
 /// </remarks>
-internal sealed class ThinClientRegion : LocalRegion
+internal sealed class ThinClientRegion(
+    ILogger<ThinClientRegion> logger,
+    TcrMessageBuilder tcrMessageBuilder,
+    SerializationRegistry serializationRegistry,
+    string name,
+    CacheXmlRegionAttributesOptions attributes,
+    ThinClientBaseDM dm)
+    : LocalRegion(name, null, attributes)
 {
-    private readonly ThinClientBaseDM _dm;
-    private readonly ILogger<ThinClientRegion> _logger;
-
-    public ThinClientRegion(
-        string name,
-        RegionInternal? parent,
-        CacheXmlRegionAttributesOptions attributes,
-        ThinClientBaseDM dm,
-        ILogger<ThinClientRegion> logger)
-        : base(name, parent, attributes)
-    {
-        ArgumentNullException.ThrowIfNull(dm);
-        ArgumentNullException.ThrowIfNull(logger);
-        _dm = dm;
-        _logger = logger;
-    }
 
     /// <summary>
     /// Distribution manager this region dispatches to. Mirrors
     /// cppcache <c>ThinClientRegion::m_tcrdm</c>; pool-mode MVP
     /// always carries a <see cref="ThinClientPoolDM"/> here.
     /// </summary>
-    internal ThinClientBaseDM DistributionManager => _dm;
+    internal ThinClientBaseDM DistributionManager => dm;
 
     public override Task PutAsync(object key, object value, CancellationToken ct = default)
     {
@@ -80,48 +74,83 @@ internal sealed class ThinClientRegion : LocalRegion
         throw new NotImplementedException("TODO Phase 1.2.e: ThinClientRegion.RemoveAsync");
     }
 
-    public override Task<bool> ContainsKeyAsync(object key, CancellationToken ct = default)
+    public override async Task<bool> ContainsKeyAsync(object key, CancellationToken ct = default)
     {
-        // Walking-skeleton stub: return false without touching the wire.
-        // Lets consumers call ContainsKeyAsync end-to-end (via Cache →
-        // RegionView → here) before the real op is wired.
-        //
-        // ─── Full flow, fill in order (Phase 1.2.e) ───
+        logger.LogTrace("ContainsKeyAsync: region={RegionPath}, key={Key}", FullPath, key);
+
         // Mirrors cppcache ThinClientRegion::containsKeyOnServer
         // (cppcache/src/ThinClientRegion.cpp:676-720) +
         // TcrMessageContainsKey ctor (TcrMessage.cpp:1808-1843).
         //
-        // 1. Build the wire request frame —
-        //    MessageType.ContainsKey (38), NumParts=3 (+1 if callback):
-        //      Part 1 │ IsObject=0 │ region FullPath (raw ASCII bytes)
-        //      Part 2 │ IsObject=1 │ DSCode-tagged serialized key
-        //      Part 3 │ IsObject=0 │ int32 = 0 (containsKey) / 1 (containsValueForKey)
-        //      Part 4 │ (optional) │ callback argument
-        //    New partial: TcrMessageBuilder.ContainsKey(regionPath, key, ...).
-        //
-        // 2. Key serialization — initial scope int32 only:
-        //      [DSCode.CacheableInt32 = 57][4 bytes int BE]
-        //    Broader DSFID dispatch lands with Phase 1.2.c codec.
-        //
-        // 3. Dispatch:
-        //      var reply = await _dm.SendSyncRequestAsync(request, ct: ct);
-        //    Note: ThinClientPoolDM.SendSyncRequestAsync is currently
-        //    NIE. MVP body = borrow conn from queue →
-        //    SendRequestToEndpointAsync (already wired by ping path) →
-        //    PutInQueueAsync. Single endpoint, no failover.
-        //
-        // 4. Reply decoding:
-        //      Response  (1) → Parts[0] = [DSCode.CacheableBoolean][0/1]
-        //                      → 1 byte bool, return it
-        //      Exception (2) → decode exception parts, throw GeodeException
-        //      anything else → throw GeodeException("Unknown reply type ...")
-        //
-        // 5. Wiring need: ThinClientRegion ctor takes
-        //    TcrMessageBuilder (DI singleton) so step 1 can build the
-        //    request without going through serviceProvider lookups.
+        // ─── Step 1+2: build request frame ────────────────────
+        // Region FullPath + DSCode-tagged key via
+        // SerializationRegistry; partial source:
+        // Protocol/TcrMessageBuilder.ContainsKey.cs.
+        var request = tcrMessageBuilder.ContainsKey(FullPath, key);
 
-        _ = key;
-        _ = ct;
-        return Task.FromResult(false);
+        // ─── Step 3: dispatch via DM ─────────────────────────
+        // ThinClientPoolDM.SendSyncRequestAsync picks the (single in
+        // MVP) endpoint, routes through SendRequestToEndpointAsync
+        // (conn borrow / fallback create / send / put-back).
+        var reply = await dm
+            .SendSyncRequestAsync(request, ct: ct)
+            .ConfigureAwait(false);
+
+        // ─── Step 4: reply decoding ──────────────────────────
+        // cppcache containsKeyOnServer reply switch
+        // (ThinClientRegion.cpp:691-712): Response → bool, Exception
+        // → throw, anything else → throw.
+        switch (reply.MessageType)
+        {
+            case MessageType.Response:
+                {
+                    // Part 0 payload = [DSCode.CacheableBoolean][0/1].
+                    // Registry consumes the DSCode and dispatches to
+                    // BooleanDataConverter for the 1-byte body.
+                    var partReader = new BigEndianBinaryReader(reply.Parts[0].Payload);
+                    var value = serializationRegistry.ReadObject(partReader);
+                    if (value is bool b)
+                    {
+                        return b;
+                    }
+                    throw new GeodeException(
+                        $"ContainsKey on '{FullPath}': expected bool reply, " +
+                        $"got {value?.GetType().Name ?? "null"}.");
+                }
+
+            case MessageType.Exception:
+                throw new GeodeException(
+                    $"Server exception on ContainsKey '{FullPath}': " +
+                    DecodeExceptionPreview(reply));
+
+            default:
+                throw new GeodeException(
+                    $"Unexpected reply type {reply.MessageType} for ContainsKey on '{FullPath}'.");
+        }
+    }
+
+    /// <summary>
+    /// Best-effort ASCII preview of an Exception reply's Part 0. The
+    /// server typically returns the Java exception class name +
+    /// message there as a <c>CacheableASCIIString</c>; until
+    /// <c>StringDataConverter</c> lands we just render printable bytes
+    /// directly so the caller sees a readable hint in the
+    /// <see cref="GeodeException"/> message. Mirrors the diagnostic
+    /// pattern in <c>GetDiagnosticTests</c>.
+    /// </summary>
+    private static string DecodeExceptionPreview(TcrMessage reply)
+    {
+        if (reply.Parts.Count == 0)
+        {
+            return "<no exception parts>";
+        }
+
+        var bytes = reply.Parts[0].Payload.Span;
+        var sb = new StringBuilder(bytes.Length);
+        foreach (var b in bytes)
+        {
+            sb.Append(b is >= 0x20 and < 0x7F ? (char)b : '.');
+        }
+        return sb.ToString();
     }
 }

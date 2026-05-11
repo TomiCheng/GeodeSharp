@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Geode.Client.Options;
+using Geode.Client.Protocol;
 
 namespace Geode.Client.Internal;
 
@@ -76,6 +77,13 @@ internal sealed class ThinClientPoolDM : ThinClientBaseDM, IPool
 
 #pragma warning restore CS0169, CS0414, CS0649
 
+    /// <summary>
+    /// 0 = <see cref="InitAsync"/> not run, 1 = ran. Mirrors cppcache
+    /// pool DM's one-shot init guard; gated by
+    /// <see cref="Interlocked.Exchange(ref int, int)"/>.
+    /// </summary>
+    private int _initGuard;
+
     public ThinClientPoolDM(
         CacheXmlPoolOptions xmlPool,
         GeodeClientOptions options,
@@ -108,30 +116,244 @@ internal sealed class ThinClientPoolDM : ThinClientBaseDM, IPool
 
     // ── IPool ────────────────────────────────────────────────────
 
-    public override Task DestroyAsync(bool keepAlive = false, CancellationToken ct = default)
+    public override async Task DestroyAsync(bool keepAlive = false, CancellationToken ct = default)
     {
         // Single override satisfies both ThinClientBaseDM.DestroyAsync
         // (virtual) and IPool.DestroyAsync (interface).
-        // TODO Phase 1.1: send CloseConnection(18) on each connection,
-        //   dispose endpoint(s), set _isDestroyed = 1.
-        // TODO Phase 1.5: stop background workers + ping timer, drain
-        //   release queues.
-        throw new NotImplementedException("TODO: ThinClientPoolDM.DestroyAsync");
+        //
+        // Mirror cppcache ThinClientPoolDM::destroy() order:
+        //   1. mark destroyed (idempotent)
+        //   2. cancel background CTS — every loop's Task.Delay /
+        //      WaitAsync throws OperationCanceledException
+        //   3. await each background Task so they fully unwind
+        //   4. dispose timers + sync primitives
+        //   5. (TODO Phase 1.1+) drain _opConnections, send
+        //      CloseConnection(18) on each, dispose endpoints
+        _ = ct;          // current body has no awaits that observe caller's ct;
+                         // background cancellation flows through _backgroundCts.
+        _ = keepAlive;   // TODO Phase 2+: route into per-connection CloseConnection.
+
+        // 1. Idempotent destroy guard.
+        if (Interlocked.Exchange(ref _isDestroyed, 1) != 0)
+        {
+            return;
+        }
+
+        // 2. Signal every background loop to stop.
+        _backgroundCts.Cancel();
+
+        // 3. Await each loop's graceful exit. OperationCanceledException
+        //    is expected here — that IS the graceful exit signal.
+        if (_connManageLoop is not null)
+        {
+            try { await _connManageLoop.ConfigureAwait(false); }
+            catch (OperationCanceledException) { /* expected */ }
+        }
+        // TODO Phase 1.5: same await pattern for _pingLoop /
+        //   _updateLocatorLoop once they're launched.
+
+        // 4. Dispose timers + sync primitives owned by this pool.
+        _pingTimer?.Dispose();
+        _pingSignal.Dispose();
+        _connManageSignal.Dispose();
+        _updateLocatorSignal.Dispose();
+        _backgroundCts.Dispose();
+
+        // 5. TODO Phase 1.1: drain _opConnections — for each TcrConnection:
+        //       await conn.SendAsync(MessageType.CloseConnection bytes);
+        //       await conn.DisposeAsync();
+        //    TODO Phase 1.2+: dispose endpoints in _endpoints (unregister
+        //       from TCCM, close subscription channel if any).
+        //    TODO Phase 1.5: drain TCCM's release queues.
     }
 
     // ── Lifecycle (override base + add pool-mode init) ──────────
 
     public override Task InitAsync(CancellationToken ct = default)
     {
-        // TODO Phase 1.1:
-        //   var server = _xmlPool.Servers[0];   // ctor guaranteed Count == 1
-        //   1. Create TcrEndpoint for ($"{server.Host}:{server.Port}")
-        //   2. _endpoint.CreateNewConnectionAsync(ct) → first TcrConnection
-        //   3. Register endpoint into _endpoints / TCCM
-        //   4. Enqueue connection into _opConnections (when Channel built)
-        // TODO Phase 1.5: locator query (multiple Locators), multi-Server
-        //   fan-out, start three background workers + ping PeriodicTimer.
-        throw new NotImplementedException("TODO: ThinClientPoolDM.InitAsync");
+        // ── 1. Pre-check ────────────────────────────────────────
+        ct.ThrowIfCancellationRequested();
+
+        if (Volatile.Read(ref _isDestroyed) != 0)
+        {
+            throw new ObjectDisposedException(nameof(ThinClientPoolDM));
+        }
+
+        // Idempotent: first caller wins. Mirrors cppcache m_initGuard
+        // semantics — set BEFORE doing work, no rollback on failure.
+        // Concurrent re-entry is prevented by Cache.EnsureInitializedAsync's
+        // SemaphoreSlim, so this is purely a "skip if already ran" check.
+        if (Interlocked.Exchange(ref _initGuard, 1) != 0)
+        {
+            return Task.CompletedTask;
+        }
+
+        // ── 2. Pool-level flags ─────────────────────────────────
+        // cppcache equivalent (ThinClientPoolDM.cpp:217-224):
+        //   m_isMultiUserMode = getMultiuserAuthentication();
+        //   m_isSecurityOn = cacheImpl->getAuthInitialize() != nullptr;
+        // TODO Phase 3 (security):
+        //   _isMultiUserMode = _xmlPool.MultiuserAuthentication ?? false;
+        //   _isSecurityOn    = _options.Auth?.HasCredentials ?? false;
+
+        // ── 3. TCCM init — deliberately NOT here ────────────────
+        // cppcache calls m_connManager.init(true) inside
+        // ThinClientPoolDM::init() (ThinClientPoolDM.cpp:228), which
+        // means N pools call it N times; the call is idempotent only
+        // because cppcache m_initGuard short-circuits the 2nd..Nth.
+        // We hoist it up to Cache.InitializeCoreAsync step 2 so it
+        // runs exactly once per cache. TCCM is a cache-scoped
+        // singleton — re-initialising it from each pool is redundant.
+        // End state matches cppcache.
+
+        // ── 4. startBackgroundThreads ───────────────────────────
+        StartBackgroundThreads();
+
+        // ── 5. Lazy connection opening ──────────────────────────
+        // cppcache deliberately does NOT open any TCP here. First
+        // connection opens through one of two paths, both calling
+        // selectEndpoint() (ThinClientPoolDM.cpp:577-632) where the
+        // locator vs server branching lives:
+        //   (a) restoreMinConnections — runs ~10 s after init via the
+        //       conn-management Task above; opens up to MinConnections
+        //       eagerly in the background.
+        //   (b) sendSyncRequest → getConnectionFromQueue →
+        //       createPoolConnection → selectEndpoint →
+        //       TcrEndpoint.CreateNewConnectionAsync.
+        //
+        // Phase 1.1 mirrors this: EnsureInitializedAsync completes
+        // without any TCP touch. Tests that need to verify the
+        // handshake must follow init with a Ping or simple op once
+        // sendSyncRequest is wired up (Phase 1.2 / 1.5).
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Launch the pool's background machinery. Mirrors cppcache
+    /// <c>ThinClientPoolDM::startBackgroundThreads()</c>
+    /// (<c>ThinClientPoolDM.cpp:264-371</c>). Phase 1.5 fills the
+    /// body; Phase 1.1 calls into an empty stub so the InitAsync
+    /// flow already has the right shape.
+    /// </summary>
+    private void StartBackgroundThreads()
+    {
+        // conn-management loop drives the lazy connection opening
+        // (RestoreMinConnectionsAsync). cppcache mirrors:
+        //   m_connManageTask = expiryTaskManager.schedule(
+        //       manageConnections, 10s initial delay, interval);
+        _connManageLoop = ConnManageLoopAsync(_backgroundCts.Token);
+
+        // TODO Phase 1.5: launch the rest of the workers and timers:
+        //   • _pingLoop = Task.Run(() => PingLoopAsync(_backgroundCts.Token));
+        //       drives endpoint pings on _xmlPool.PingInterval
+        //                                  ?? _options.Pool.PingInterval.
+        //   • _updateLocatorLoop = Task.Run(() => UpdateLocatorLoopAsync(_backgroundCts.Token));
+        //       only when _xmlPool.Locators.Count > 0.
+        //   • _pingTimer = new PeriodicTimer(pingInterval);
+        //   • RemoteQueryService.InitAsync   — Phase 1.4 (pool-scoped QS).
+        //   • Statistics sampler             — bucket-1 (Meter-based).
+    }
+
+    /// <summary>
+    /// Periodic conn-management loop. Mirrors cppcache
+    /// <c>ThinClientPoolDM::manageConnectionsInternal()</c>
+    /// (<c>ThinClientPoolDM.cpp:554-575</c>): on each tick run
+    /// cleanStaleConnections + RestoreMinConnectionsAsync +
+    /// cleanStickyConnections. cppcache schedules it with a 10 s
+    /// initial delay; we mirror that by awaiting the interval
+    /// before the first iteration.
+    /// </summary>
+    private async Task ConnManageLoopAsync(CancellationToken ct)
+    {
+        var interval = _xmlPool.IdleTimeout ?? TimeSpan.FromSeconds(10);
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(interval, ct).ConfigureAwait(false);
+
+                try
+                {
+                    // TODO Phase 1.5: await CleanStaleConnectionsAsync(ct);
+                    await RestoreMinConnectionsAsync(ct).ConfigureAwait(false);
+                    // TODO Phase 6:    await CleanStickyConnectionsAsync(ct);
+                }
+                catch (Exception) when (!ct.IsCancellationRequested)
+                {
+                    // Survive transient errors so a single bad tick
+                    // doesn't kill the loop. Phase 1.5: log via
+                    // ILogger.
+                }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // graceful shutdown via _backgroundCts.Cancel().
+        }
+    }
+
+    /// <summary>
+    /// Open new <see cref="TcrConnection"/>s until the pool holds at
+    /// least <c>MinConnections</c>. Mirrors cppcache
+    /// <c>ThinClientPoolDM::restoreMinConnections()</c>.
+    /// </summary>
+    /// <remarks>
+    /// Called by the conn-management loop scheduled in
+    /// <see cref="StartBackgroundThreads"/> (Phase 1.5), and
+    /// indirectly via the request path when
+    /// <see cref="SendSyncRequestAsync"/>'s queue dequeue starves
+    /// (Phase 1.2). Each iteration delegates to
+    /// <see cref="CreatePoolConnectionAsync"/>; that helper does the
+    /// endpoint selection + handshake.
+    /// </remarks>
+    private async Task RestoreMinConnectionsAsync(CancellationToken ct)
+    {
+        var min = _xmlPool.MinConnections ?? 1;     // Phase 1.1 default
+        while (Volatile.Read(ref _poolSize) < min)
+        {
+            ct.ThrowIfCancellationRequested();
+            var conn = await CreatePoolConnectionAsync(ct).ConfigureAwait(false);
+            if (conn is null)
+            {
+                // No endpoint reachable this cycle — bail; the next
+                // conn-management tick will retry. Avoids spinning
+                // when every endpoint is unhealthy.
+                break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Open exactly one new <see cref="TcrConnection"/>. Mirrors
+    /// cppcache <c>ThinClientPoolDM::createPoolConnection()</c>:
+    /// select an endpoint (locator or static server list), get-or-
+    /// create its <see cref="TcrEndpoint"/> from the registry,
+    /// open the connection on it, enqueue. Returns <c>null</c> when
+    /// no endpoint can currently be reached.
+    /// </summary>
+    private Task<TcrConnection?> CreatePoolConnectionAsync(CancellationToken ct)
+    {
+        // TODO Phase 1.1 / 1.5:
+        //   1. var location = SelectEndpoint();
+        //        - Phase 1.5: locator vs server branching
+        //          (cppcache ThinClientPoolDM.cpp:577-632).
+        //        - Phase 1.1: trivially _xmlPool.Servers[0].
+        //   2. var endpoint = AddRefToTcrEndpoint(location);
+        //        - get-or-create TcrEndpoint in _endpoints (and in
+        //          TCCM's global registry — mirrors cppcache
+        //          addRefToTcrEndpoint).
+        //   3. var conn = await endpoint.CreateNewConnectionAsync(
+        //          isClientNotification: false,
+        //          isSecondary: false,
+        //          connectTimeout: _options.Pool.ConnectTimeout,
+        //          ct);
+        //   4. await _opConnections!.Writer.WriteAsync(conn, ct);
+        //        (build the Channel<TcrConnection> in ctor / lazily.)
+        //   5. Interlocked.Increment(ref _poolSize);
+        //   6. return conn;
+        throw new NotImplementedException(
+            "TODO: ThinClientPoolDM.CreatePoolConnectionAsync");
     }
 
     // ── ThinClientBaseDM pure abstract ──────────────────────────

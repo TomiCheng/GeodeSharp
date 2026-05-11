@@ -44,7 +44,7 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
         };
     }
 
-    [Fact(Skip = "Phase 1.1 in progress: TcrEndpoint.CreateNewConnectionAsync + Cache.InitializeCoreAsync not wired yet")]
+    [Fact]
     public async Task EnsureInitializedAsync_opens_connection_against_real_server()
     {
         using var cts = new CancellationTokenSource(TestTimeout);
@@ -71,7 +71,7 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
         Assert.True(cache.IsClosed);
     }
 
-    [Fact(Skip = "Phase 1.1 in progress: same as above")]
+    [Fact]
     public async Task CloseAsync_is_idempotent()
     {
         using var cts = new CancellationTokenSource(TestTimeout);
@@ -90,7 +90,7 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
         Assert.True(cache.IsClosed);
     }
 
-    [Fact(Skip = "Phase 1.1 in progress: same as above")]
+    [Fact]
     public async Task DisposeAsync_closes_underlying_connection()
     {
         using var cts = new CancellationTokenSource(TestTimeout);

@@ -251,13 +251,24 @@ internal sealed class Cache : IGeodeCache
         //   ignoreUnreadFields / readSerialized to _pdxTypeRegistry.
     }
 
-    public Task CloseAsync(CancellationToken ct = default)
+    public async Task CloseAsync(CancellationToken ct = default)
     {
-        // TODO: drain in-flight ops, send CloseConnection (MessageType 18),
-        //       dispose connections. Until init runs there is nothing
-        //       to tear down, so closing is idempotent and safe.
+        if (IsClosed) return;   // idempotent
+
+        // Mirror cppcache CacheImpl::close() ordering:
+        //   TODO Phase 1.5: TCCM.CloseAsync — stop background workers
+        //     (m_tcrConnectionManager->close() comes first in cppcache so
+        //     scheduled ping tasks can't fire on torn-down state).
+        //   TODO Phase 1.2: destroy regions (region drop happens between
+        //     TCCM stop and pool close in cppcache).
+        //
+        // Pool drain — cascades pool.DestroyAsync into each
+        // ThinClientPoolDM (cancels its conn-management loop, releases
+        // timers, drains connections). PoolManager.CloseAsync is
+        // internally idempotent so a later DI-scope dispose is safe.
+        await _poolManager.CloseAsync(keepAlive: false, ct).ConfigureAwait(false);
+
         IsClosed = true;
-        return Task.CompletedTask;
     }
 
     public async ValueTask DisposeAsync()

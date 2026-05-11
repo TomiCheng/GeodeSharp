@@ -323,11 +323,21 @@ internal sealed class ThinClientPoolDM(
     /// </summary>
     private async Task PingLoopAsync(CancellationToken ct)
     {
+        // cppcache schedules the ping task with a fixed 1 s initial
+        // delay and then repeats every PingInterval
+        // (ThinClientPoolDM.cpp:285-286, `schedule(task, seconds(1),
+        // interval)`). Without this initial delay, PeriodicTimer's
+        // first tick would only fire `PingInterval` after timer
+        // creation — leaving a long warmup gap before any real ping.
+        var initialDelay = TimeSpan.FromSeconds(1);
+
         // cppcache LOGFINE("Starting ping thread for pool %s", ...)
         logger.LogDebug("Starting ping loop for pool {Pool}", Name);
         try
         {
-            while (await _pingTimer!.WaitForNextTickAsync(ct).ConfigureAwait(false))
+            await Task.Delay(initialDelay, ct).ConfigureAwait(false);
+
+            do
             {
                 try
                 {
@@ -339,6 +349,7 @@ internal sealed class ThinClientPoolDM(
                     logger.LogWarning(ex, "Ping tick failed for pool {Pool}", Name);
                 }
             }
+            while (await _pingTimer!.WaitForNextTickAsync(ct).ConfigureAwait(false));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -417,13 +428,22 @@ internal sealed class ThinClientPoolDM(
     /// </summary>
     private async Task ConnManageLoopAsync(CancellationToken ct)
     {
+        // cppcache schedules the conn-management task with a fixed 1 s
+        // initial delay and then repeats every IdleTimeout
+        // (ThinClientPoolDM.cpp:343-344, `schedule(task, seconds(1),
+        // idle)`). Pre-opens MinConnections within ~1 s of init so the
+        // first user op finds an aged connection in the queue instead
+        // of having to lazy-open a fresh one (which the server hasn't
+        // finished registering, → RegionDestroyedException on the very
+        // first request).
+        var initialDelay = TimeSpan.FromSeconds(1);
         var interval = xmlPool.IdleTimeout;
         try
         {
+            await Task.Delay(initialDelay, ct).ConfigureAwait(false);
+
             while (!ct.IsCancellationRequested)
             {
-                await Task.Delay(interval, ct).ConfigureAwait(false);
-
                 try
                 {
                     // TODO Phase 1.5: await CleanStaleConnectionsAsync(ct);
@@ -436,6 +456,8 @@ internal sealed class ThinClientPoolDM(
                     // doesn't kill the loop. Phase 1.5: log via
                     // ILogger.
                 }
+
+                await Task.Delay(interval, ct).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

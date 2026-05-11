@@ -42,21 +42,32 @@ internal sealed class Cache : IGeodeCache
     private readonly TcrConnectionManager _tcrConnectionManager;
 
     /// <summary>
-    /// First-caller-wins async init: every concurrent call awaits the
-    /// same <see cref="Task"/>. cppcache equivalent is the
-    /// <c>m_initDone</c> + <c>m_initDoneLock</c> guard inside
-    /// <c>CacheImpl::createRegion</c> / <c>getQueryService</c>;
-    /// <see cref="LazyThreadSafetyMode.ExecutionAndPublication"/> is
-    /// the .NET idiom that collapses that flag + mutex into one type.
+    /// <c>SemaphoreSlim</c>-gated double-checked init. cppcache
+    /// equivalent is the <c>m_initDone</c> + <c>m_initDoneLock</c>
+    /// guard inside <c>CacheImpl::createRegion</c> /
+    /// <c>getQueryService</c>. Chosen over <c>Lazy&lt;Task&gt;(EAP)</c>
+    /// so:
+    /// <list type="bullet">
+    ///   <item>the first caller's ct reaches
+    ///         <see cref="InitializeCoreAsync"/>;</item>
+    ///   <item>each later caller awaits via
+    ///         <see cref="Task.WaitAsync(CancellationToken)"/> using
+    ///         their own ct &#x2014; cancelling that wait does not
+    ///         cancel the underlying init;</item>
+    ///   <item>on failure, <c>_initTask</c> can be reset to null to
+    ///         allow retry (cppcache <c>m_initDone</c> stays false on
+    ///         throw — same semantics).</item>
+    /// </list>
     /// </summary>
-    private readonly Lazy<Task> _initialization;
+    private readonly SemaphoreSlim _initLock = new(1, 1);
+    private Task? _initTask;
 
 #pragma warning disable CS0169, CS0414 // placeholder fields mirroring CacheImpl; wired up phase by phase
 
     // ── Lifecycle (CacheImpl.hpp:359-374) ──
     // m_closed       → IsClosed property (already exposed)
-    // m_initialized  → captured by _initialization (Lazy<Task>)
-    // m_initDoneLock → bucket 1, replaced by Lazy<Task>(ExecutionAndPublication)
+    // m_initialized  → captured by _initTask (null = not started)
+    // m_initDoneLock → _initLock (SemaphoreSlim, async-friendly)
     // m_destroyCacheMutex → bucket 1, replaced by System.Threading.Lock
     private int _destroyPending;          // m_destroyPending (Interlocked 0/1)
     private bool _keepAlive;              // m_keepAlive
@@ -115,34 +126,52 @@ internal sealed class Cache : IGeodeCache
         _poolManager = poolManager;
         _tcrConnectionManager =
             ActivatorUtilities.CreateInstance<TcrConnectionManager>(serviceProvider, options);
-        _initialization = new Lazy<Task>(
-            InitializeCoreAsync,
-            LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     public string Name { get; }
 
     public bool IsClosed { get; private set; }
 
-    public Task EnsureInitializedAsync(CancellationToken ct = default)
+    public async Task EnsureInitializedAsync(CancellationToken ct = default)
     {
-        // TODO: ct is currently ignored. Lazy<Task>'s factory takes no
-        // arguments, so we can't pipe the caller's ct in. When the
-        // init body does real work, choose:
-        //   (a) capture first-caller's ct into a field; later callers
-        //       share it. Simple, but their ct can't cancel anything.
-        //   (b) move off Lazy<Task> to a TaskCompletionSource pattern
-        //       so each caller's ct cancels their own await without
-        //       cancelling the init itself.
-        _ = ct;
-        return _initialization.Value;
+        // Outer fast-path: once init started, every caller awaits the
+        // shared Task. Volatile.Read pairs with the Volatile.Write
+        // inside the lock so the publish is observable without
+        // re-acquiring the semaphore.
+        var task = Volatile.Read(ref _initTask);
+        if (task is null)
+        {
+            await _initLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                // Double-check: a concurrent caller may have set it
+                // while we waited on the semaphore.
+                task = _initTask;
+                if (task is null)
+                {
+                    // Start the init under the lock. The first caller's
+                    // ct flows into InitializeCoreAsync; later callers
+                    // observe their own ct only via WaitAsync below.
+                    task = InitializeCoreAsync(ct);
+                    Volatile.Write(ref _initTask, task);
+                }
+            }
+            finally
+            {
+                _initLock.Release();
+            }
+        }
+        // Per-caller cancellation: WaitAsync(ct) cancels *this* await,
+        // not the underlying init Task. Other callers keep waiting.
+        await task.WaitAsync(ct).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Runs once via <see cref="_initialization"/>. Two config sources
-    /// converge on the same in-memory pool / region registry. cppcache
-    /// splits them by sync timing (<c>CacheFactory::create</c> body);
-    /// we unify under one async method so ctor never blocks on I/O.
+    /// Runs once via <see cref="EnsureInitializedAsync"/>. Two config
+    /// sources converge on the same in-memory pool / region registry.
+    /// cppcache splits them by sync timing
+    /// (<c>CacheFactory::create</c> body); we unify under one async
+    /// method so ctor never blocks on I/O.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -157,8 +186,10 @@ internal sealed class Cache : IGeodeCache
     /// <c>_options.CacheXml is not null</c>.
     /// </para>
     /// </remarks>
-    private Task InitializeCoreAsync()
+    private Task InitializeCoreAsync(CancellationToken ct)
     {
+        _ = ct; // TODO: thread into pool DM init + TCCM.InitAsync once they're wired.
+
         if (_options.CacheXml is null)
         {
             // path (b) — Options-based
@@ -172,7 +203,7 @@ internal sealed class Cache : IGeodeCache
             //       and build the same pool / region objects.
         }
         // After either path:
-        //   • TODO: _tcrConnectionManager.InitAsync(isPool: true, ct)
+        //   • TODO: await _tcrConnectionManager.InitAsync(isPool: true, ct);
         //   • TODO: each pool's InitAsync triggers handshake / TCP open.
         throw new NotImplementedException("TODO: Cache.InitializeCoreAsync");
     }
@@ -195,5 +226,7 @@ internal sealed class Cache : IGeodeCache
         // / CTS so we don't leak OS handles. PoolManager is DI-Scoped so
         // the AsyncServiceScope disposes it for us.
         await _tcrConnectionManager.DisposeAsync().ConfigureAwait(false);
+
+        _initLock.Dispose();
     }
 }

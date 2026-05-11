@@ -1,6 +1,9 @@
 using System.Collections.Concurrent;
+using System.Net;
 using System.Threading.Channels;
 using Geode.Client.Options;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Geode.Client.Internal;
 
@@ -31,15 +34,28 @@ namespace Geode.Client.Internal;
 /// <c>Cache</c> and gets options through DI).
 /// </para>
 /// </remarks>
-internal sealed class TcrConnectionManager(GeodeClientOptions options) : IAsyncDisposable
+internal sealed class TcrConnectionManager(
+    GeodeClientOptions options,
+    ILogger<TcrConnectionManager> logger,
+    IServiceProvider serviceProvider) : IAsyncDisposable
 {
     private readonly GeodeClientOptions _options = options;
+    private readonly ILogger<TcrConnectionManager> _logger = logger;
+    private readonly IServiceProvider _serviceProvider = serviceProvider;
 
 #pragma warning disable CS0169, CS0414, CS0649, CS9113 // placeholder fields mirroring TcrConnectionManager; wired up phase by phase
 
     // ── Endpoint registry (TcrConnectionManager.hpp m_endpoints) ──
-    private readonly ConcurrentDictionary<string, object?> _endpoints =
-        new(StringComparer.Ordinal);                // m_endpoints (value: TcrEndpoint)
+    // Cache-wide canonical owner of TcrEndpoint instances. Value is
+    // Lazy<TcrEndpoint> so the get-or-create race in
+    // AddRefToTcrEndpoint constructs exactly one endpoint per
+    // host:port even under concurrent first-sight callers
+    // (LazyThreadSafetyMode.ExecutionAndPublication). Key uses
+    // DnsEndPoint's default equality (Host string + Port + AddressFamily);
+    // upstream callers normalise host case at SelectEndpointAsync if
+    // locator vs static-server names can disagree.
+    private readonly ConcurrentDictionary<DnsEndPoint, Lazy<TcrEndpoint>> _endpoints =
+        new();                                      // m_endpoints
 
     // ── Distribution-manager registry (m_distMngrs) ──
     private readonly List<object?> _distributionManagers = new(); // m_distMngrs (value: ThinClientBaseDM)
@@ -94,9 +110,94 @@ internal sealed class TcrConnectionManager(GeodeClientOptions options) : IAsyncD
 
     /// <summary>
     /// Snapshot of registered endpoints. Mirrors cppcache
-    /// <c>TcrConnectionManager::getGlobalEndpoints()</c>.
+    /// <c>TcrConnectionManager::getGlobalEndpoints()</c>. Lazy entries
+    /// are materialised on iteration &#x2014; safe because by the
+    /// time an entry is in the map,
+    /// <see cref="AddRefToTcrEndpoint"/> has already forced
+    /// <c>Lazy.Value</c> at least once.
     /// </summary>
-    public IReadOnlyDictionary<string, object?> GetGlobalEndpoints() => _endpoints;
+    public IReadOnlyDictionary<DnsEndPoint, TcrEndpoint> GetGlobalEndpoints()
+        => _endpoints.ToDictionary(
+            static kv => kv.Key,
+            static kv => kv.Value.Value);
+
+    /// <summary>
+    /// Get-or-create the cache-wide <see cref="TcrEndpoint"/> for
+    /// <paramref name="endpointName"/> and bump its reference count.
+    /// Mirrors cppcache
+    /// <c>TcrConnectionManager::addRefToTcrEndpoint</c>
+    /// (<c>TcrConnectionManager.cpp:200-221</c>).
+    /// </summary>
+    /// <param name="endpointName">Endpoint key, formatted as <c>"host:port"</c>.</param>
+    /// <param name="dm">
+    /// The distribution manager taking the reference. cppcache stores
+    /// this in <c>TcrEndpoint::m_baseDM</c>; it's used by the
+    /// subscription channel (Phase 2+) and the failover signal path
+    /// (Phase 1.5).
+    /// </param>
+    /// <returns>
+    /// The shared <see cref="TcrEndpoint"/> instance &#x2014; one per
+    /// unique <c>"host:port"</c> across the whole cache, even when
+    /// referenced by multiple pools / regions.
+    /// </returns>
+    /// <remarks>
+    /// cppcache locks the whole map for the get-or-create + ref-count
+    /// bump. In .NET the cheaper idiom is
+    /// <c>ConcurrentDictionary.GetOrAdd</c> with a
+    /// <c>Lazy&lt;TcrEndpoint&gt;</c> value-factory
+    /// (<c>LazyThreadSafetyMode.ExecutionAndPublication</c>) so the
+    /// race-loser doesn't construct a throwaway endpoint; the
+    /// <c>NumRegions++</c> bump then happens on the winning instance.
+    /// </remarks>
+    public async Task<TcrEndpoint> AddRefToTcrEndpointAsync(
+        DnsEndPoint endpointAddress,
+        ThinClientBaseDM dm,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(endpointAddress);
+        ArgumentNullException.ThrowIfNull(dm);
+        ct.ThrowIfCancellationRequested();
+
+        // 1. Get-or-create under Lazy so only the winning ctor actually
+        //    instantiates a TcrEndpoint; race losers reuse the winner's
+        //    instance via LazyThreadSafetyMode.ExecutionAndPublication.
+        //    ActivatorUtilities lets TcrEndpoint pull its non-positional
+        //    deps (ILogger<TcrEndpoint>, etc.) from DI directly — TCCM
+        //    forwards `endpointAddress` positionally.
+        var lazy = _endpoints.GetOrAdd(
+            endpointAddress,
+            static (ep, sp) => new Lazy<TcrEndpoint>(
+                () => ActivatorUtilities.CreateInstance<TcrEndpoint>(sp, ep),
+                LazyThreadSafetyMode.ExecutionAndPublication),
+            _serviceProvider);
+
+        // 2. Force the ctor (winner constructs; subsequent callers
+        //    hit the cached value).
+        var endpoint = lazy.Value;
+
+        // 3. Atomic ref-count bump. cppcache holds the map lock across
+        //    new + setNumRegions; we hoist the bump out of the GetOrAdd
+        //    critical section by making it interlocked instead.
+        var refs = endpoint.IncrementNumRegions();
+
+        // cppcache: LOGFINER("TCCM: incremented region reference count for endpoint %s to %d", ...)
+        _logger.LogTrace(
+            "TCCM: incremented region reference count for endpoint {Endpoint} to {Refs}",
+            endpoint.Name, refs);
+
+        // 4. Register dm into endpoint._distMgrs (Phase 1.5 failover
+        //    broadcast list). cppcache passes dm into TcrEndpoint ctor
+        //    as m_baseDM; we instead route it through registerDM (option
+        //    B) so pool / non-pool / multi-DM cases share one path.
+        await endpoint.RegisterDMAsync(
+            clientNotification: false,
+            isSecondary: false,
+            isActiveEndpoint: false,
+            distributionManager: dm,
+            ct: ct).ConfigureAwait(false);
+
+        return endpoint;
+    }
 
     /// <summary>
     /// Start background workers. Mirrors cppcache

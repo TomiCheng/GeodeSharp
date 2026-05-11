@@ -132,6 +132,14 @@ internal sealed class Cache : IGeodeCache
 
     public string Name { get; }
 
+    /// <summary>
+    /// Test-only escape hatch: expose the scoped <see cref="PoolManager"/>
+    /// so integration tests can reach <see cref="ThinClientPoolDM"/>
+    /// internals (e.g. <c>PoolSize</c>) without DI scope wrangling. Not
+    /// part of the public API — gated by <c>InternalsVisibleTo</c>.
+    /// </summary>
+    internal PoolManager PoolManager => _poolManager;
+
     public bool IsClosed { get; private set; }
 
     public async Task EnsureInitializedAsync(CancellationToken ct = default)
@@ -232,7 +240,10 @@ internal sealed class Cache : IGeodeCache
                 // ctor enforces Phase 1.5 deferred limits (multi-server
                 // / locator) internally; here we just hand it the xml
                 // pool config and the shared TCCM.
-                var pool = ActivatorUtilities.CreateInstance<ThinClientPoolDM>(_serviceProvider, xmlPool, _options, _tcrConnectionManager);
+                // Positional args match ThinClientPoolDM's primary ctor
+                // (xmlPool + options + TCCM); ILogger is filled by DI.
+                var pool = ActivatorUtilities.CreateInstance<ThinClientPoolDM>(
+                    _serviceProvider, xmlPool, _options, _tcrConnectionManager);
                 _poolManager.AddPool(xmlPool.Name, pool);
 
                 // ── 5. Init pool — real TCP / handshake fires here ──

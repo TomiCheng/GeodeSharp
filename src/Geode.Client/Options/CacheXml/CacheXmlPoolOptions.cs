@@ -25,7 +25,7 @@ public class CacheXmlPoolOptions
     public TimeSpan? LoadConditioningInterval { get; set; }
 
     /// <summary><c>min-connections</c>.</summary>
-    public int? MinConnections { get; set; }
+    public int MinConnections { get; set; } = 1;
 
     /// <summary><c>max-connections</c>.</summary>
     public int? MaxConnections { get; set; }
@@ -34,7 +34,7 @@ public class CacheXmlPoolOptions
     public int? RetryAttempts { get; set; }
 
     /// <summary><c>idle-timeout</c>.</summary>
-    public TimeSpan? IdleTimeout { get; set; }
+    public TimeSpan IdleTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
     /// <summary><c>ping-interval</c>. Same concept as
     /// <see cref="PoolOptions.PingInterval"/>.</summary>

@@ -450,6 +450,19 @@ Pulled from `cppcache/src/TcrMessage.hpp`:
    requests keyed by transaction id). The pool is a
    throughput / fault-isolation optimisation, not a baseline
    requirement.
+8. **Mirror every cppcache log call.** When porting a bucket-2 class,
+   every `LOGFINE` / `LOGINFO` / `LOGWARN` / `LOGERROR` / `LOGDEBUG`
+   /`LOGFINER` in the source becomes a `_logger.Log*` call at the
+   same point with the same severity (`LogTrace` ≈ `LOGFINER`,
+   `LogDebug` ≈ `LOGFINE`/`LOGDEBUG`, `LogInformation` ≈ `LOGINFO`,
+   `LogWarning` ≈ `LOGWARN`, `LogError` ≈ `LOGERROR`). Logs are part
+   of the observable behaviour we're porting — diagnosing a wire-
+   protocol bug against cppcache traces requires the same breadcrumbs
+   in the same order. Use `ILogger<T>` injected through DI; format
+   args with structured logging (`"Connecting to {Endpoint}"`,
+   `endpointName`), not `string.Format`. Where the cppcache message
+   text is awkward in English, paraphrase but keep the severity and
+   the key data fields.
 
 ---
 

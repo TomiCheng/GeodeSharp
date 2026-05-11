@@ -1,4 +1,6 @@
+using Geode.Client.Internal;
 using Geode.Client.Options;
+using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -88,6 +90,61 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
         await cache.CloseAsync(cts.Token); // second call: no-op, must not throw
 
         Assert.True(cache.IsClosed);
+    }
+
+    [Fact]
+    public async Task ConnManageLoop_opens_first_connection_against_real_server()
+    {
+        using var cts = new CancellationTokenSource(TestTimeout);
+
+        // Tighten IdleTimeout so the conn-management loop's first tick
+        // fires in ~100 ms instead of the 10 s default — keeps the test
+        // fast and avoids CI flakiness against the default.
+        await using var services = new ServiceCollection()
+            .AddLogging()
+            .AddGeodeClient(config => config.CacheXml = new CacheXmlOptions
+            {
+                Pools =
+                {
+                    new CacheXmlPoolOptions
+                    {
+                        Name = "testPool",
+                        Servers =
+                        {
+                            new CacheXmlHostPort
+                            {
+                                Host = _fx.LocatorHost,
+                                Port = _fx.ServerPort,
+                            },
+                        },
+                        IdleTimeout = TimeSpan.FromMilliseconds(100),
+                    },
+                },
+            })
+            .BuildServiceProvider();
+
+        var cache = services.GetRequiredService<IGeodeCache>();
+        await cache.EnsureInitializedAsync(cts.Token);
+
+        // Walk Cache → PoolManager → DefaultPool → ThinClientPoolDM to
+        // observe _poolSize. Cache.PoolManager is an internal test hook;
+        // ThinClientPoolDM.PoolSize wraps Volatile.Read(ref _poolSize).
+        var pool = (ThinClientPoolDM)((Cache)cache).PoolManager.DefaultPool!;
+
+        // Phase 1.1 walking-skeleton goal: ConnManageLoop fires →
+        // RestoreMinConnections → CreatePoolConnectionAsync → endpoint
+        // opens TCP + handshake → pool size becomes 1. Poll because the
+        // loop wakes async; 5 s is generous against a cold container.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < deadline && pool.PoolSize < 1)
+        {
+            await Task.Delay(50, cts.Token);
+        }
+        Assert.True(
+            pool.PoolSize >= 1,
+            $"Expected pool.PoolSize >= 1 within deadline, got {pool.PoolSize}.");
+
+        await cache.CloseAsync(cts.Token);
     }
 
     [Fact]

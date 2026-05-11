@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
+using System.Net;
 using System.Threading.Channels;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
+using Microsoft.Extensions.Logging;
 
 namespace Geode.Client.Internal;
 
@@ -30,20 +32,38 @@ namespace Geode.Client.Internal;
 /// transactions) is Phase 1.5 / 2+ / 4 / 6 respectively.
 /// </para>
 /// </remarks>
-internal sealed class ThinClientPoolDM : ThinClientBaseDM, IPool
+#pragma warning disable CS0169, CS0414, CS0649, CS9113 // placeholder fields mirroring ThinClientPoolDM; wired up phase by phase
+internal sealed class ThinClientPoolDM(
+    CacheXmlPoolOptions xmlPool,
+    GeodeClientOptions options,
+    TcrConnectionManager connManager,
+    ILogger<ThinClientPoolDM> logger) : ThinClientBaseDM(connManager, region: null), IPool
 {
-    private readonly CacheXmlPoolOptions _xmlPool;
-    private readonly GeodeClientOptions _options;
 
-#pragma warning disable CS0169, CS0414, CS0649 // placeholder fields mirroring ThinClientPoolDM; wired up phase by phase
+
 
     // ── Endpoint registry (ThinClientPoolDM.hpp m_endpoints) ──
-    private readonly ConcurrentDictionary<string, object?> _endpoints =
-        new(StringComparer.Ordinal);              // m_endpoints (TcrEndpoint values)
+    // Pool's view onto TCCM-owned TcrEndpoint instances. Same object
+    // identity as TcrConnectionManager._endpoints; this map tracks
+    // which endpoints THIS pool currently holds a ref on so destroy
+    // knows what to release. Key uses DnsEndPoint default equality.
+    private readonly ConcurrentDictionary<DnsEndPoint, TcrEndpoint> _endpoints =
+        new();                                    // m_endpoints
 
     // ── Idle connection queue (cppcache inherits ConnectionQueue<TcrConnection>) ──
-    private Channel<object?>? _opConnections;     // m_opConnections-equivalent (TcrConnection values)
-    private int _poolSize;                         // m_poolSize (Interlocked)
+    // Unbounded for Phase 1.1; Phase 1.5 may bound by MaxConnections.
+    // Channel auto-wakes a pending reader on WriteAsync — replaces
+    // cppcache's conn_semaphore_.release().
+    private readonly Channel<TcrConnection> _opConnections =
+        Channel.CreateUnbounded<TcrConnection>();    // m_opConnections
+    private int _poolSize;                            // m_poolSize (Interlocked)
+
+    // ── Static-server round-robin cursor (ThinClientPoolDM.cpp:608) ──
+    // Guarded by _endpointSelectionLock; mirrors cppcache m_server +
+    // m_endpointSelectionLock. SelectEndpointAsync reads + post-increments
+    // (with wrap) under the lock.
+    private int _server;                                              // m_server
+    private readonly Lock _endpointSelectionLock = new();             // m_endpointSelectionLock
 
     // ── Locator (Phase 1.5) ──
     private object? _locatorHelper;                // m_locHelper (ThinClientLocatorHelper)
@@ -84,35 +104,15 @@ internal sealed class ThinClientPoolDM : ThinClientBaseDM, IPool
     /// </summary>
     private int _initGuard;
 
-    public ThinClientPoolDM(
-        CacheXmlPoolOptions xmlPool,
-        GeodeClientOptions options,
-        TcrConnectionManager connManager)
-        : base(connManager, region: null)
-    {
-        ArgumentNullException.ThrowIfNull(xmlPool);
-        ArgumentNullException.ThrowIfNull(options);
-
-        // Phase 1.5 limits — features deferred to that phase live as
-        // ctor-time NIEs here so Cache.InitializeCoreAsync stays
-        // generic (one foreach over Pools, no inline checks).
-        if (xmlPool.Locators.Count > 0)
-        {
-            throw new NotImplementedException(
-                "TODO Phase 1.5: locator path (ThinClientLocatorHelper).");
-        }
-        if (xmlPool.Servers.Count > 1)
-        {
-            throw new NotImplementedException(
-                "TODO Phase 1.5: multi-server failover within one pool.");
-        }
-
-        _xmlPool = xmlPool;
-        _options = options;
-    }
-
-    public string Name => _xmlPool.Name;
+    public string Name => xmlPool.Name;
     public bool IsDestroyed => Volatile.Read(ref _isDestroyed) != 0;
+
+    /// <summary>
+    /// Test-only: current pool connection count (cppcache <c>m_poolSize</c>).
+    /// Bumped in <see cref="CreatePoolConnectionAsync"/> step 4 after a
+    /// fresh <see cref="TcrConnection"/> handshakes successfully.
+    /// </summary>
+    internal int PoolSize => Volatile.Read(ref _poolSize);
 
     // ── IPool ────────────────────────────────────────────────────
 
@@ -266,7 +266,7 @@ internal sealed class ThinClientPoolDM : ThinClientBaseDM, IPool
     /// </summary>
     private async Task ConnManageLoopAsync(CancellationToken ct)
     {
-        var interval = _xmlPool.IdleTimeout ?? TimeSpan.FromSeconds(10);
+        var interval = xmlPool.IdleTimeout;
         try
         {
             while (!ct.IsCancellationRequested)
@@ -309,7 +309,7 @@ internal sealed class ThinClientPoolDM : ThinClientBaseDM, IPool
     /// </remarks>
     private async Task RestoreMinConnectionsAsync(CancellationToken ct)
     {
-        var min = _xmlPool.MinConnections ?? 1;     // Phase 1.1 default
+        var min = xmlPool.MinConnections;
         while (Volatile.Read(ref _poolSize) < min)
         {
             ct.ThrowIfCancellationRequested();
@@ -321,7 +321,95 @@ internal sealed class ThinClientPoolDM : ThinClientBaseDM, IPool
                 // when every endpoint is unhealthy.
                 break;
             }
+
+            // Warm-up path enqueues; sendSyncRequest's starvation path
+            // (Phase 1.2) will consume the conn directly. Mirrors
+            // cppcache restoreMinConnections → putInQueue(conn).
+            await _opConnections.Writer.WriteAsync(conn, ct).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Pick the next endpoint name (<c>host:port</c>) to open a
+    /// connection on. Mirrors cppcache
+    /// <c>ThinClientPoolDM::selectEndpoint</c>
+    /// (<c>ThinClientPoolDM.cpp:577-632</c>) &#x2014; the locator vs
+    /// static-server-list branching point.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Priority mirrors cppcache: <c>Locators</c> wins when non-empty,
+    /// otherwise fall through to <c>Servers</c>. Phase 1.1 fills the
+    /// static-server branch with the cppcache round-robin cursor
+    /// (<c>m_server</c> + <c>m_endpointSelectionLock</c>); the locator
+    /// branch is NIE and the ctor's <c>Locators.Count &gt; 0</c>
+    /// guard rejects locator-config at construction time so
+    /// <see cref="Cache"/> init fails fast.
+    /// </para>
+    /// <para>
+    /// Phase 1.5 expansion:
+    /// (a) locator branch via
+    /// <c>ThinClientLocatorHelper.GetEndpointForNewFwdConnAsync</c>;
+    /// (b) <c>ISet&lt;ServerLocation&gt; excludeServers</c> parameter
+    /// for <see cref="CreatePoolConnectionAsync"/>'s retry loop &#x2014;
+    /// the static-server branch will gain a do-while loop that skips
+    /// excluded entries, throwing <c>NotConnectedException</c> once
+    /// every server is excluded;
+    /// (c) <c>TcrConnection? currentServer</c> parameter for sticky /
+    /// refresh paths.
+    /// </para>
+    /// </remarks>
+    private Task<DnsEndPoint> SelectEndpointAsync(CancellationToken ct = default)
+    {
+        // Locator branch (priority) — cppcache ThinClientPoolDM.cpp:579-602.
+        if (xmlPool.Locators.Count > 0)
+        {
+            // TODO Phase 1.5: await _locatorHelper.GetEndpointForNewFwdConnAsync(
+            //   excludeServers, _xmlPool.ServerGroup, currentServer, ct);
+            // then return new DnsEndPoint(outEndpoint.Host, outEndpoint.Port).
+            throw new NotImplementedException(
+                "TODO Phase 1.5: locator branch (ThinClientLocatorHelper).");
+        }
+
+        // Static server branch — cppcache ThinClientPoolDM.cpp:603-628.
+        if (xmlPool.Servers.Count > 0)
+        {
+            // Round-robin: read cursor, post-increment with wrap, all under
+            // the selection lock. Phase 1.5 will turn this into a do-while
+            // that skips entries in `excludeServers` (cppcache excludeServer
+            // helper) and throws NotConnectedException once every server is
+            // excluded.
+            int position;
+            CacheXmlHostPort server;
+            lock (_endpointSelectionLock)
+            {
+                if (_server >= xmlPool.Servers.Count)
+                {
+                    _server = 0;
+                }
+                position = _server;
+                server = xmlPool.Servers[position];
+                _server++;
+            }
+
+            // Convert from the Options-layer CacheXmlHostPort (XML/JSON
+            // bindable, mutable) to the runtime-layer DnsEndPoint (BCL,
+            // immutable, hashable). This is the single conversion point.
+            var endpoint = new DnsEndPoint(server.Host, server.Port);
+
+            // cppcache: LOGFINE("ThinClientPoolDM: Selecting endpoint [%s] from position %d", ...)
+            logger.LogDebug(
+                "ThinClientPoolDM: Selecting endpoint [{Host}:{Port}] from position {Position}",
+                endpoint.Host, endpoint.Port, position);
+
+            return Task.FromResult(endpoint);
+        }
+
+        // Unreachable: AddGeodeClient options validation rejects pools with
+        // neither Locators nor Servers. Mirrors cppcache's
+        // IllegalStateException("No locators or servers provided").
+        throw new InvalidOperationException(
+            $"Pool '{xmlPool.Name}' has neither Locators nor Servers configured.");
     }
 
     /// <summary>
@@ -332,28 +420,85 @@ internal sealed class ThinClientPoolDM : ThinClientBaseDM, IPool
     /// open the connection on it, enqueue. Returns <c>null</c> when
     /// no endpoint can currently be reached.
     /// </summary>
-    private Task<TcrConnection?> CreatePoolConnectionAsync(CancellationToken ct)
+    private async Task<TcrConnection?> CreatePoolConnectionAsync(CancellationToken ct)
     {
-        // TODO Phase 1.1 / 1.5:
-        //   1. var location = SelectEndpoint();
-        //        - Phase 1.5: locator vs server branching
-        //          (cppcache ThinClientPoolDM.cpp:577-632).
-        //        - Phase 1.1: trivially _xmlPool.Servers[0].
-        //   2. var endpoint = AddRefToTcrEndpoint(location);
-        //        - get-or-create TcrEndpoint in _endpoints (and in
-        //          TCCM's global registry — mirrors cppcache
-        //          addRefToTcrEndpoint).
-        //   3. var conn = await endpoint.CreateNewConnectionAsync(
-        //          isClientNotification: false,
-        //          isSecondary: false,
-        //          connectTimeout: _options.Pool.ConnectTimeout,
-        //          ct);
-        //   4. await _opConnections!.Writer.WriteAsync(conn, ct);
-        //        (build the Channel<TcrConnection> in ctor / lazily.)
-        //   5. Interlocked.Increment(ref _poolSize);
-        //   6. return conn;
-        throw new NotImplementedException(
-            "TODO: ThinClientPoolDM.CreatePoolConnectionAsync");
+        // Step 1: pick the endpoint to connect to (locator or static
+        // server list). cppcache: selectEndpoint(excludeServers, currentServer).
+        var location = await SelectEndpointAsync(ct).ConfigureAwait(false);
+
+        // Step 2: get-or-create the pool's reference to that endpoint.
+        // cppcache: LOGFINE("Connecting to %s", ...) + addEP(epNameStr).
+        logger.LogDebug("Connecting to {Host}:{Port}", location.Host, location.Port);
+        var endpoint = await AddEPAsync(location, ct).ConfigureAwait(false);
+
+        // Step 3: open the TCP socket + run the handshake on this
+        // endpoint. cppcache passes connectTimeout from SystemProperties;
+        // we currently let TcrEndpoint apply its own default (Phase 1.5
+        // will plumb xmlPool.ConnectTimeout / options.Pool.ConnectTimeout
+        // through here once those options surface again on this DM).
+        // Phase 1.1: a single endpoint, so on failure we let the
+        // exception bubble — Phase 1.5 will wrap this in the retry loop
+        // with excludeServers + isFatalError classification.
+        var conn = await endpoint
+            .CreateNewConnectionAsync(
+                isClientNotification: false,
+                isSecondary: false,
+                connectTimeout: null,
+                ct: ct)
+            .ConfigureAwait(false);
+
+        // Step 4: mark the endpoint healthy and grow the pool counter.
+        // cppcache (ThinClientPoolDM.cpp:1796-1801):
+        //   ep->setConnected();
+        //   if (++m_poolSize > min) getStats().incLoadCondConnects();
+        //   getStats().incPoolConnects();
+        //   getStats().setCurPoolConnections(m_poolSize);
+        // The conn_semaphore_.release() at the end of cppcache's function
+        // is unnecessary here — Channel<TcrConnection>.Writer.WriteAsync
+        // (driven by RestoreMinConnectionsAsync after we return) wakes
+        // any pending reader automatically.
+        endpoint.SetConnected(true);
+        Interlocked.Increment(ref _poolSize);
+        // TODO Phase 1.5: stats — incPoolConnects, setCurPoolConnections,
+        //   and incLoadCondConnects when _poolSize > min.
+
+        // Step 5: return the fresh conn. cppcache returns it via out
+        // param; the caller (restoreMinConnections during warm-up,
+        // sendSyncRequest during queue starvation) decides whether to
+        // enqueue or use immediately.
+        return conn;
+    }
+
+    /// <summary>
+    /// Get-or-create the pool's view of <paramref name="endpointName"/>'s
+    /// <see cref="TcrEndpoint"/>, taking a TCCM-level reference on
+    /// first sight. Mirrors cppcache
+    /// <c>ThinClientPoolDM::addEP(string)</c>.
+    /// </summary>
+    /// <remarks>
+    /// Per-pool dedupe: each pool only takes one TCCM ref per unique
+    /// <c>"host:port"</c>, even when
+    /// <see cref="CreatePoolConnectionAsync"/> is called many times for
+    /// the same endpoint (the normal case once
+    /// <c>MinConnections &gt; 1</c> or after Phase 1.2's request path
+    /// drives queue starvation). Phase 1.5 may tighten the dedupe race
+    /// (two concurrent first-sight callers) with
+    /// <see cref="Lazy{T}"/>; Phase 1.1 has only the serial
+    /// conn-management loop, so a missed dedupe is presently
+    /// unreachable.
+    /// </remarks>
+    private async Task<TcrEndpoint> AddEPAsync(DnsEndPoint endpointAddress, CancellationToken ct)
+    {
+        if (_endpoints.TryGetValue(endpointAddress, out var cached))
+        {
+            return cached;
+        }
+
+        var endpoint = await ConnManager
+            .AddRefToTcrEndpointAsync(endpointAddress, this, ct)
+            .ConfigureAwait(false);
+        _endpoints.TryAdd(endpointAddress, endpoint);
+        return endpoint;
     }
 
     // ── ThinClientBaseDM pure abstract ──────────────────────────

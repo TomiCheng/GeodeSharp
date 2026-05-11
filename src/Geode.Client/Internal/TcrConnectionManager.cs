@@ -78,7 +78,15 @@ internal sealed class TcrConnectionManager(GeodeClientOptions options) : IAsyncD
 
 #pragma warning restore CS0169, CS0414, CS0649
 
-    public bool IsDurable => _isDurable;
+    /// <summary>
+    /// 0 = <see cref="InitAsync"/> not run, 1 = ran.
+    /// Mirrors cppcache <c>m_initGuard</c>; gated by
+    /// <see cref="Interlocked.Exchange(ref int, int)"/> for
+    /// idempotency.
+    /// </summary>
+    private int _initGuard;
+
+    public bool IsDurable => Volatile.Read(ref _isDurable);
 
     public bool IsHaEnabled => _redundancyManager is not null;
 
@@ -104,10 +112,34 @@ internal sealed class TcrConnectionManager(GeodeClientOptions options) : IAsyncD
     /// </remarks>
     public Task InitAsync(bool isPool, CancellationToken ct = default)
     {
-        // TODO: pull durable flag from _options.Subscription.DurableClientId.
-        // TODO: if (!isPool) launch _failoverTask / _cleanupTask /
-        //       _redundancyTask + PeriodicTimer-driven _pingLoop.
-        throw new NotImplementedException("TODO: TcrConnectionManager.InitAsync");
+        ct.ThrowIfCancellationRequested();
+
+        // Idempotent (cppcache m_initGuard). First caller wins; later
+        // calls are a no-op even with a different `isPool` argument —
+        // matches cppcache, which only honours the first init's mode.
+        if (Interlocked.Exchange(ref _initGuard, 1) != 0)
+        {
+            return Task.CompletedTask;
+        }
+
+        // Pool mode keepalive lives in ThinClientPoolDM, so the only
+        // thing this branch does is publish the durable flag for
+        // anyone who later reads IsDurable / haEnabled. Non-pool mode
+        // additionally launches three background workers + the ping
+        // PeriodicTimer (Phase 2+).
+        Volatile.Write(
+            ref _isDurable,
+            !string.IsNullOrEmpty(_options.Subscription.DurableClientId));
+
+        if (!isPool)
+        {
+            // TODO Phase 2+: start _failoverTask / _cleanupTask /
+            // _redundancyTask, schedule the ping PeriodicTimer.
+            throw new NotImplementedException(
+                "TODO: non-pool TcrConnectionManager.InitAsync (Phase 2+)");
+        }
+
+        return Task.CompletedTask;
     }
 
     /// <summary>

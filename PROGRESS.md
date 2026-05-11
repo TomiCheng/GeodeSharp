@@ -46,6 +46,7 @@
 - [ ] `Cache.InitializeCoreAsync` 實作 path (b)：從 options 拿單一 host:port → 建 `TcrEndpoint` → 呼叫 `CreateNewConnectionAsync`
 - [ ] `Cache.CloseAsync` 送 `CloseConnection(18)` 並釋放連線（`TcrEndpoint.DisposeAsync`）
 - [ ] 確保 `EnsureInitializedAsync` 之後 `Cache` 上的 ping / 簡易往返能跑
+- [ ] **（Phase 1.1 收尾）** Options 驗證：在 `AddGeodeClient` 接 `ValidateOnStart()` + `IValidateOptions<GeodeClientOptions>`，檢 `CacheXml.Pools` 必要欄位（Name 非空、Servers/Locators 至少一個、Host/Port 範圍）。讓 `InitializeCoreAsync` 內部可省驗證，假設輸入合法
 
 **下一步入口**：[src/Geode.Client/Internal/TcrEndpoint.cs](src/Geode.Client/Internal/TcrEndpoint.cs) 的 `CreateNewConnectionAsync`。
 

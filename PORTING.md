@@ -87,7 +87,7 @@ mirror cppcache file-for-file unless explicitly noted, per the
 | --- | --- | --- | --- | --- | --- |
 | `ThinClientBaseDM` | `Geode.Client.Internal.ThinClientBaseDM` | 2 | 🔨 | 1.5 | Abstract base shell: lifecycle, chunk Channel, security hooks (default empty), pure-abstract `SendSyncRequestAsync` / `SendRequestToEndpointAsync` |
 | `ThinClientDistributionManager` | `Geode.Client.Internal.ThinClientDistributionManager` | 2 | ⏳ | 1.5 | Simple single-endpoint; used by locator path |
-| `ThinClientPoolDM` | `Geode.Client.Internal.ThinClientPoolDM` | 2 | ⏳ | 1.5 | Pool variant; multi-inheritance flattened to composition |
+| `ThinClientPoolDM` | `Geode.Client.Internal.ThinClientPoolDM` | 2 | 🔨 | 1.5 | Pool variant shell: inherits `ThinClientBaseDM`, implements `IPool`. Field placeholders for endpoint registry, connection queue, three background workers, locator helper, redundancy / sticky / metadata managers. Method prototypes throw NotImplementedException |
 | `ThinClientStickyManager` | `Geode.Client.Internal.Dm.ThinClientStickyManager` | 2 | ⏳ | 6 | `AsyncLocal<T>` instead of TSS |
 
 ### Connection / endpoint

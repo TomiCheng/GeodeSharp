@@ -36,6 +36,7 @@ namespace Geode.Client.Services;
 
 internal sealed class Cache : IGeodeCache
 {
+    private readonly IServiceProvider _serviceProvider;
     private readonly GeodeClientOptions _options;
     private readonly ClientProxyMembershipIdBuilder _membershipIdBuilder;
     private readonly PoolManager _poolManager;
@@ -121,6 +122,7 @@ internal sealed class Cache : IGeodeCache
         ArgumentNullException.ThrowIfNull(poolManager);
 
         Name = name;
+        _serviceProvider = serviceProvider;
         _options = options;
         _membershipIdBuilder = membershipIdBuilder;
         _poolManager = poolManager;
@@ -186,26 +188,67 @@ internal sealed class Cache : IGeodeCache
     /// <c>_options.CacheXml is not null</c>.
     /// </para>
     /// </remarks>
-    private Task InitializeCoreAsync(CancellationToken ct)
+    private async Task InitializeCoreAsync(CancellationToken ct)
     {
-        _ = ct; // TODO: thread into pool DM init + TCCM.InitAsync once they're wired.
+        // ── 1. Pre-check ────────────────────────────────────────
+        if (IsClosed)
+        {
+            throw new ObjectDisposedException(nameof(Cache));
+        }
 
+        // ── 2. TCCM init ────────────────────────────────────────
+        // Sets _isDurable from options.Subscription. In pool mode
+        // (our MVP) the three background workers stay parked; this
+        // is essentially a flag flip. Must complete before any pool
+        // queries TCCM.IsDurable / haEnabled.
+        await _tcrConnectionManager.InitAsync(isPool: true, ct).ConfigureAwait(false);
+
+        // ── 3-5. Build and init pools ───────────────────────────
+        // Both paths produce a sequence of CacheXmlPoolOptions; the
+        // foreach below builds + inits each one uniformly. Multi-pool /
+        // multi-server / locator gating now lives inside
+        // ThinClientPoolDM's ctor, so Cache stays generic. Required-
+        // field validation is the Options layer's job (Phase 1.1 收尾);
+        // here we trust the input.
         if (_options.CacheXml is null)
         {
-            // path (b) — Options-based
-            // TODO: foreach configured pool in options
-            //       → new ThinClientPoolDM(...) + _poolManager.AddPool(name, pool)
+            // path (b) — Options-based (programmatic, the default).
+            // TODO step 3.b: enumerate a yet-to-be-added programmatic
+            //   pool-config surface (e.g. _options.Pools) and project
+            //   into CacheXmlPoolOptions-shape items.
+            throw new NotImplementedException(
+                "TODO: Cache.InitializeCoreAsync step 3.b (path b — Options-based)");
+
+            // Step 4 and 5
         }
         else
         {
-            // path (a) — declarative xml-style
-            // TODO: walk _options.CacheXml.Pools / .Regions / .Pdx
-            //       and build the same pool / region objects.
+            // path (a) — Declarative cache.xml-style.
+            // cppcache equivalent: initializeDeclarativeCache(xml)
+            //   → xmlParser->create() builds pools from <pool> elements.
+            foreach (var xmlPool in _options.CacheXml.Pools)
+            {
+                // ── 4. Build ThinClientPoolDM + register ────────────
+                // ctor enforces Phase 1.5 deferred limits (multi-server
+                // / locator) internally; here we just hand it the xml
+                // pool config and the shared TCCM.
+                var pool = ActivatorUtilities.CreateInstance<ThinClientPoolDM>(_serviceProvider, xmlPool, _options, _tcrConnectionManager);
+                _poolManager.AddPool(xmlPool.Name, pool);
+
+                // ── 5. Init pool — real TCP / handshake fires here ──
+                // Pool.InitAsync internally:
+                //   • locator query → endpoint list, OR direct server list
+                //   • foreach endpoint → TcrEndpoint.CreateNewConnectionAsync(...)
+                //       • socket open + handshake bytes
+                //       • receive server-issued uniqueId
+                //   • mark pool ready
+                await pool.InitAsync(ct).ConfigureAwait(false);
+            }
         }
-        // After either path:
-        //   • TODO: await _tcrConnectionManager.InitAsync(isPool: true, ct);
-        //   • TODO: each pool's InitAsync triggers handshake / TCP open.
-        throw new NotImplementedException("TODO: Cache.InitializeCoreAsync");
+
+        // ── 6. PDX / serialization registration (Phase 2+) ──────
+        // TODO: if (_options.CacheXml?.Pdx is { } pdx) apply pdx
+        //   ignoreUnreadFields / readSerialized to _pdxTypeRegistry.
     }
 
     public Task CloseAsync(CancellationToken ct = default)

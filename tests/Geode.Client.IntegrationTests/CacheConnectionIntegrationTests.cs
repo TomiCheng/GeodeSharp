@@ -199,6 +199,80 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
     }
 
     [Fact]
+    public async Task PingLoop_pings_endpoint_against_real_server()
+    {
+        using var cts = new CancellationTokenSource(TestTimeout);
+
+        // Tight intervals for a fast test:
+        //   IdleTimeout=100ms → ConnManageLoop pre-fills the pool
+        //     (RestoreMinConnectionsAsync) within ~100ms.
+        //   PingInterval=200ms → 5 ticks per second, plenty within 5s.
+        //   MinConnections=1 → guarantees one conn sits in _opConnections
+        //     for SendRequestToEndpointAsync's GetFromEPAsync to borrow.
+        await using var services = new ServiceCollection()
+            .AddLogging()
+            .AddGeodeClient(config => config.CacheXml = new CacheXmlOptions
+            {
+                Pools =
+                {
+                    new CacheXmlPoolOptions
+                    {
+                        Name = "testPool",
+                        Servers =
+                        {
+                            new CacheXmlHostPort
+                            {
+                                Host = _fx.LocatorHost,
+                                Port = _fx.ServerPort,
+                            },
+                        },
+                        MinConnections = 1,
+                        IdleTimeout = TimeSpan.FromMilliseconds(100),
+                        PingInterval = TimeSpan.FromMilliseconds(200),
+                    },
+                },
+            })
+            .BuildServiceProvider();
+
+        var cache = services.GetRequiredService<IGeodeCache>();
+        await cache.EnsureInitializedAsync(cts.Token);
+
+        var pool = (ThinClientPoolDM)((Cache)cache).PoolManager.DefaultPool!;
+
+        // Two independent assertions, both must hold:
+        //   (1) PingTickCount >= 3 → ping loop is alive (PeriodicTimer
+        //       firing, foreach completing without deadlock).
+        //   (2) PingSuccessCount >= 2 → at least one PingAsync returned
+        //       without throwing AND endpoint stayed connected. Cppcache's
+        //       _msgSent / _pingSent short-circuit lets a tick count as
+        //       success without sending bytes, so >= 2 (rather than == 3)
+        //       tolerates that pattern. >= 2 still proves the first real
+        //       ping succeeded — failure would have flipped IsConnected
+        //       and zeroed the success counter.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < deadline
+               && (pool.PingTickCount < 3 || pool.PingSuccessCount < 2))
+        {
+            await Task.Delay(50, cts.Token);
+        }
+
+        Assert.True(
+            pool.PingTickCount >= 3,
+            $"Expected pool.PingTickCount >= 3 within deadline, got {pool.PingTickCount}.");
+        Assert.True(
+            pool.PingSuccessCount >= 2,
+            $"Expected pool.PingSuccessCount >= 2 within deadline, got {pool.PingSuccessCount}.");
+
+        // Sanity: pool conn was returned to the queue after each ping —
+        // PoolSize must not have drained even though ping borrowed conns.
+        Assert.True(
+            pool.PoolSize >= 1,
+            $"Expected pool.PoolSize >= 1 after ping sweeps, got {pool.PoolSize}.");
+
+        await cache.CloseAsync(cts.Token);
+    }
+
+    [Fact]
     public async Task DisposeAsync_closes_underlying_connection()
     {
         using var cts = new CancellationTokenSource(TestTimeout);

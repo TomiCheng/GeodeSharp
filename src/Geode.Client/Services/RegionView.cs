@@ -69,6 +69,22 @@ internal sealed class RegionView<TKey, TValue> : IRegion<TKey, TValue>
     public Task InvalidateAsync(TKey key, CancellationToken ct = default)
         => _inner.InvalidateAsync(key!, ct);
 
+    public Task RemoveAllAsync(IReadOnlyCollection<TKey> keys, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        // Box typed keys to object[] and forward; the inner region is
+        // non-generic so we can't pass the typed collection straight
+        // through. New array per call — bulk ops are not on the
+        // allocation-critical path.
+        var boxed = new object[keys.Count];
+        var i = 0;
+        foreach (var k in keys)
+        {
+            boxed[i++] = k!;
+        }
+        return _inner.RemoveAllAsync(boxed, ct);
+    }
+
     // ── Object-typed ops (explicit interface — forward to inner) ──
     Task IRegion.PutAsync(object key, object value, CancellationToken ct)
         => _inner.PutAsync(key, value, ct);
@@ -84,4 +100,7 @@ internal sealed class RegionView<TKey, TValue> : IRegion<TKey, TValue>
 
     Task IRegion.InvalidateAsync(object key, CancellationToken ct)
         => _inner.InvalidateAsync(key, ct);
+
+    Task IRegion.RemoveAllAsync(IReadOnlyCollection<object> keys, CancellationToken ct)
+        => _inner.RemoveAllAsync(keys, ct);
 }

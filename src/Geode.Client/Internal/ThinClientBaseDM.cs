@@ -99,14 +99,63 @@ internal abstract class ThinClientBaseDM : IAsyncDisposable
         CancellationToken ct = default);
 
     /// <summary>
+    /// Chunked-reply overload &#x2014; send a request whose reply
+    /// arrives across multiple frames (RemoveAll, PutAll, GetAll70,
+    /// Query, registerInterest, executeFunction&#x2026;). The dispatcher
+    /// registers <paramref name="chunkedResult"/> against the request's
+    /// transaction id; <see cref="TcrChunkedResult.HandleChunk"/> is
+    /// invoked once per arriving chunk and the returned
+    /// <see cref="TcrMessage"/> resolves only after the final chunk
+    /// (<c>isLastChunk=true</c>) is delivered.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Mirrors cppcache <c>sendSyncRequest(request, reply, attemptFailover,
+    /// isBGThread)</c> when <c>reply.m_chunkedResult</c> is set via
+    /// <c>TcrMessageReply::setChunkedResultHandler</c> ahead of dispatch
+    /// (<c>cppcache/src/ThinClientRegion.cpp:1830-1832</c>). The
+    /// single-message overload above (no <c>chunkedResult</c>) maps to
+    /// cppcache's <c>reply.m_chunkedResult == nullptr</c> branch.
+    /// </para>
+    /// <para>
+    /// <b>Phase 1.3.b status: declaration only.</b> Concrete dispatch
+    /// (<see cref="ThinClientPoolDM"/>) throws
+    /// <see cref="NotImplementedException"/> until the
+    /// <see cref="TcrConnection"/> reader-loop refactor lands and
+    /// <c>_pendingReplies</c> can route chunks to the registered
+    /// result.
+    /// </para>
+    /// </remarks>
+    public abstract Task<TcrMessage> SendSyncRequestAsync(
+        TcrMessage request,
+        TcrChunkedResult chunkedResult,
+        bool attemptFailover = true,
+        bool isBackgroundThread = false,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Send to a specific endpoint, bypassing DM-level routing /
     /// load-balancing / failover. Mirrors cppcache pure-virtual
     /// <c>sendRequestToEP(request, reply, endpoint)</c>; same
     /// return-vs-mutate convention as
-    /// <see cref="SendSyncRequestAsync"/>.
+    /// <see cref="SendSyncRequestAsync(TcrMessage, bool, bool, CancellationToken)"/>.
     /// </summary>
     public abstract Task<TcrMessage> SendRequestToEndpointAsync(
         TcrMessage request,
+        TcrEndpoint endpoint,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Chunked-reply variant. Same endpoint-pinned dispatch as
+    /// <see cref="SendRequestToEndpointAsync(TcrMessage, TcrEndpoint, CancellationToken)"/>
+    /// but the wire-I/O leg uses
+    /// <see cref="TcrConnection.SendRequestAsync(TcrMessage, TcrChunkedResult, CancellationToken)"/>
+    /// so each arriving chunk flows into
+    /// <paramref name="chunkedResult"/>.
+    /// </summary>
+    public abstract Task<TcrMessage> SendRequestToEndpointAsync(
+        TcrMessage request,
+        TcrChunkedResult chunkedResult,
         TcrEndpoint endpoint,
         CancellationToken ct = default);
 

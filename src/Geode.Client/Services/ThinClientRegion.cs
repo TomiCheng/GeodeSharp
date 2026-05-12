@@ -459,6 +459,93 @@ internal sealed class ThinClientRegion(
         }
     }
 
+    public override async Task RemoveAllAsync(IReadOnlyCollection<object> keys, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        if (keys.Count == 0)
+        {
+            throw new ArgumentException(
+                "RemoveAll requires at least one key.", nameof(keys));
+        }
+
+        logger.LogTrace(
+            "RemoveAllAsync: region={RegionPath}, keyCount={KeyCount}",
+            FullPath, keys.Count);
+
+        // Mirrors cppcache ThinClientRegion::multiHopRemoveAllNoThrow_remote
+        // (cppcache/src/ThinClientRegion.cpp:1810-1863) +
+        // TcrMessageRemoveAll ctor (TcrMessage.cpp:2424-2468).
+
+        // ─── Step 1+2: build request frame ────────────────────
+        // EventIdGenerator.NextRange reserves N consecutive seq ids in
+        // one Interlocked op so the server can dedup each key's event
+        // as (clientId, threadId, baseSeq+i) for i ∈ [0, N).
+        // cppcache writeEventIdPart(keys.size()-1) parity.
+        var (threadId, baseSequenceId) = eventIdGenerator.NextRange(keys.Count);
+        var request = tcrMessageBuilder.RemoveAll(
+            regionName: FullPath,
+            keys: keys,
+            eventThreadId: threadId,
+            eventSequenceId: baseSequenceId);
+
+        // ─── Step 3: register chunked-result + dispatch ──────
+        // cppcache hangs a fresh ChunkedRemoveAllResponse off the
+        // TcrMessageReply via setChunkedResultHandler before the send;
+        // our DM overload takes the handler directly. Phase 1.3 drops
+        // per-key version tags / miss flags on the floor, but the
+        // handler still has to drain chunk bodies so the reader loop
+        // terminates cleanly.
+        //
+        // TODOs still pending (each throws NotImplementedException
+        // today, surfaced through this call stack):
+        // [ ] ThinClientPoolDM.SendSyncRequestAsync(req, handler, ...)
+        //     body — currently NIE; needs SelectEndpoint → AddEP →
+        //     SendRequestToEndpointAsync(req, handler, ep, ct).
+        // [ ] SendRequestToEndpointAsync chunked overload — borrow
+        //     conn → TcrConnection.SendRequestAsync(req, handler, ct)
+        //     → put-back / disconnect-on-error.
+        // [ ] ChunkedRemoveAllResponse.HandleChunk / Reset — currently
+        //     NIE; needs VersionedCacheableObjectPartList decoder
+        //     (Phase 1.3.b step 5).
+        var chunkedResult = new ChunkedRemoveAllResponse(this);
+        var reply = await dm
+            .SendSyncRequestAsync(request, chunkedResult, ct: ct)
+            .ConfigureAwait(false);
+
+        // ─── Step 4: reply decoding ──────────────────────────
+        // cppcache reply switch (ThinClientRegion.cpp:1841-1862):
+        //   REPLY     → success (cppcache's "no chunks needed" branch)
+        //   RESPONSE  → success (chunks already consumed by handler)
+        //   EXCEPTION → throw
+        //   default   → throw
+        switch (reply.MessageType)
+        {
+            case MessageType.Reply:
+            case MessageType.Response:
+                logger.LogDebug(
+                    "Region {RegionPath} removeAll of {KeyCount} keys acked by server " +
+                    "(type={MessageType})",
+                    FullPath, keys.Count, reply.MessageType);
+                return;
+
+            case MessageType.Exception:
+                // cppcache surfaces the server-side exception text via
+                // reply.getException(); our chunked path leaves
+                // exception bytes inside the handler (Phase 1.3 doesn't
+                // decode them — the handler is RemoveAll-shaped). For
+                // now we throw with just the message type; surfacing
+                // exception text lands when an integration test
+                // demands it.
+                throw new GeodeException(
+                    $"Server exception on RemoveAll '{FullPath}' " +
+                    $"(keyCount={keys.Count}).");
+
+            default:
+                throw new GeodeException(
+                    $"Unexpected reply type {reply.MessageType} for RemoveAll on '{FullPath}'.");
+        }
+    }
+
     /// <summary>
     /// Best-effort ASCII preview of an Exception reply's Part 0. The
     /// server typically returns the Java exception class name +

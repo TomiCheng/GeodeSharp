@@ -84,6 +84,25 @@ public interface IRegion
     /// &#x2014; cppcache treats it as success; we mirror that contract.
     /// </remarks>
     Task InvalidateAsync(object key, CancellationToken ct = default);
+
+    /// <summary>
+    /// Remove every key in <paramref name="keys"/> from the region in
+    /// one server roundtrip. Mirrors cppcache <c>Region::removeAll</c>
+    /// (<c>cppcache/include/geode/Region.hpp</c>) &#x2192;
+    /// <c>ThinClientRegion::multiHopRemoveAllNoThrow_remote</c>
+    /// (<c>cppcache/src/ThinClientRegion.cpp:1810-1863</c>); wire is
+    /// <c>MessageType.RemoveAll(109)</c>.
+    /// </summary>
+    /// <remarks>
+    /// Empty <paramref name="keys"/> is rejected (cppcache's per-key
+    /// sequence-id reserve underflows on zero and the round-trip is a
+    /// no-op anyway). Per-key missing-vs-removed reporting from the
+    /// chunked reply is dropped on the floor in Phase 1.3 &#x2014; the
+    /// op returns success once the server acks the batch; the
+    /// versioned object-part list lands when client-side caching does
+    /// (Phase 4+).
+    /// </remarks>
+    Task RemoveAllAsync(IReadOnlyCollection<object> keys, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -135,6 +154,9 @@ public interface IRegion<TKey, TValue> : IRegion
 
     /// <inheritdoc cref="IRegion.InvalidateAsync(object, CancellationToken)" />
     Task InvalidateAsync(TKey key, CancellationToken ct = default);
+
+    /// <inheritdoc cref="IRegion.RemoveAllAsync(IReadOnlyCollection{object}, CancellationToken)" />
+    Task RemoveAllAsync(IReadOnlyCollection<TKey> keys, CancellationToken ct = default);
 
     // No typed ClearAsync overload — the base IRegion.ClearAsync takes
     // no key / value, nothing to specialise.

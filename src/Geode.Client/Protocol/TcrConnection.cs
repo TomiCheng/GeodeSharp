@@ -71,6 +71,27 @@ internal sealed class TcrConnection(
     private bool _deltaEnabled;
 
     /// <summary>
+    /// Stamp this connection's last-access time. Mirrors cppcache
+    /// <c>TcrConnection::touch()</c>
+    /// (<c>cppcache/src/TcrConnection.hpp:252</c>) — pool managers call
+    /// it on borrow / return so <c>cleanStaleConnections</c> can later
+    /// distinguish idle conns from active ones.
+    /// </summary>
+    /// <remarks>
+    /// Phase 1.5 — empty stub until <c>lastAccessed_</c> field + the
+    /// <c>cleanStaleConnections</c> background sweep land. Caller is
+    /// already in place: <see cref="Internal.ThinClientPoolDM.PutInQueueAsync"/>
+    /// should invoke it before writing back to the idle channel.
+    /// </remarks>
+    public void Touch()
+    {
+        // TODO Phase 1.5 — _lastAccessed = DateTime.UtcNow (or
+        // Stopwatch.GetTimestamp() for monotonic). Add the field +
+        // IsIdle(TimeSpan) / HasExpired(TimeSpan) helpers in the same
+        // change. cppcache uses std::chrono::steady_clock::now().
+    }
+
+    /// <summary>
     /// Open a TCP connection to <paramref name="host"/>:<paramref name="port"/>
     /// and run the Geode client-to-server handshake. Mirrors
     /// <c>cppcache/src/TcrConnection.cpp::initTcrConnection</c>.
@@ -521,6 +542,182 @@ internal sealed class TcrConnection(
         await SendAsync(request.Encode(), cancellationToken).ConfigureAwait(false);
         var replyBytes = await ReceiveAsync(cancellationToken).ConfigureAwait(false);
         return TcrMessage.Decode(replyBytes);
+    }
+
+    /// <summary>
+    /// Chunked-reply variant of <see cref="SendRequestAsync(TcrMessage, CancellationToken)"/>.
+    /// Sends the request, reads the first-frame header, and loops the
+    /// chunk-header / chunk-body pair until the flags byte's
+    /// <c>LAST_CHUNK</c> bit is set, handing each chunk body to
+    /// <paramref name="chunkedResult"/>. Mirrors cppcache
+    /// <c>TcrConnection::sendRequestForChunkedResponse</c> &#x2192;
+    /// <c>readMessageChunked</c>
+    /// (<c>cppcache/src/TcrConnection.cpp:755-799</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Wire-format differs from the single-message path.</b> The first
+    /// 17-byte header for a chunked reply is laid out as
+    /// <c>[msgType i32][numberOfParts i32][txId i32][chunkLength i32][flags u8]</c>
+    /// (cppcache <c>TcrConnection::readResponseHeader</c>,
+    /// <c>:810-851</c>), <b>not</b> the
+    /// <c>[msgType][msgLength][numParts][txId][earlyAck]</c> shape that
+    /// <see cref="ReceiveAsync"/> parses. Subsequent chunk headers are
+    /// 5 bytes &#x2014; <c>[chunkLength i32][flags u8]</c>
+    /// (<c>readChunkHeader</c>, <c>:853-887</c>). The server picks the
+    /// layout based on the request opcode; the client must read the
+    /// shape it asked for.
+    /// </para>
+    /// <para>
+    /// <b>Flags byte.</b> Bit 0 (<see cref="LastChunkMask"/>) marks the
+    /// final chunk &#x2014; loop exit. Bit 1 indicates a trailing secure
+    /// part (auth); cppcache reads it via
+    /// <c>readSecureObjectPart</c> inside the result handler. Phase 1.3
+    /// no auth = bit 1 always 0.
+    /// </para>
+    /// <para>
+    /// <b>Returned <see cref="TcrMessage"/>.</b> Carries the header
+    /// fields (<see cref="TcrMessage.MessageType"/> and
+    /// <see cref="TcrMessage.TransactionId"/>) so callers can branch on
+    /// <c>RESPONSE</c> / <c>REPLY</c> / <c>EXCEPTION</c>; the
+    /// <see cref="TcrMessage.Parts"/> list is empty &#x2014; chunked
+    /// payload lives in <paramref name="chunkedResult"/>. The
+    /// <c>numberOfParts</c> header field is discarded (Phase 1.3 doesn't
+    /// surface it; if a caller ever needs it, the record can grow a
+    /// <c>NumberOfParts</c> slot).
+    /// </para>
+    /// <para>
+    /// <b>Exception replies.</b> When the first-frame
+    /// <c>messageType</c> is <see cref="MessageType.Exception"/> the
+    /// loop still runs &#x2014; cppcache packs the exception payload
+    /// into chunks just like a normal response. The handler should
+    /// accumulate / inspect them as needed; this method returns
+    /// normally with the Exception message type, and the caller throws.
+    /// (Phase 1.3 callers use the message type alone for the throw
+    /// path; surfacing the actual exception text from chunk bytes lands
+    /// when integration tests demand it.)
+    /// </para>
+    /// </remarks>
+    public async Task<TcrMessage> SendRequestAsync(
+        TcrMessage request,
+        TcrChunkedResult chunkedResult,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(chunkedResult);
+
+        // Send (same path as the single-message overload).
+        await SendAsync(request.Encode(), cancellationToken).ConfigureAwait(false);
+
+        // First-frame header (different layout from non-chunked path).
+        var (msgType, numberOfParts, txId, chunkLen, flags) =
+            await ReadChunkedResponseHeaderAsync(cancellationToken).ConfigureAwait(false);
+
+        logger.LogTrace(
+            "TcrConnection chunked reply header: type={MsgType}, parts={NumParts}, " +
+            "txId={TxId}, firstChunkLen={ChunkLen}, flags=0x{Flags:X2}",
+            msgType, numberOfParts, txId, chunkLen, flags);
+
+        chunkedResult.Reset();
+
+        // Chunk loop. Read body of advertised length, hand to result,
+        // peek lastChunk flag — if not set, pull next 5-byte chunk
+        // header and repeat. Mirrors cppcache while-processChunk.
+        var stream = _stream
+            ?? throw new InvalidOperationException(
+                $"{nameof(ConnectAsync)} must complete before chunked send.");
+
+        while (true)
+        {
+            if (chunkLen < 0)
+            {
+                throw new InvalidDataException(
+                    $"Chunk header advertises negative chunkLength={chunkLen}.");
+            }
+
+            var body = new byte[chunkLen];
+            if (chunkLen > 0)
+            {
+                await stream
+                    .ReadExactlyAsync(body.AsMemory(0, chunkLen), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            var isLastChunk = (flags & LastChunkMask) != 0;
+            chunkedResult.HandleChunk(body, isLastChunk);
+
+            if (isLastChunk)
+            {
+                break;
+            }
+
+            (chunkLen, flags) = await ReadChunkHeaderAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        // Synthesise a TcrMessage carrying just the header fields the
+        // caller branches on. Body is owned by chunkedResult.
+        return new TcrMessage(
+            MessageType: (MessageType)msgType,
+            TransactionId: txId,
+            EarlyAck: 0,
+            Parts: Array.Empty<TcrPart>());
+    }
+
+    /// <summary>
+    /// <c>lastChunkAndSecurityFlags</c> bit 0 &#x2014; this is the final
+    /// chunk in the reply. Mirrors cppcache <c>LAST_CHUNK_MASK</c>
+    /// (<c>cppcache/src/TcrMessage.cpp</c>).
+    /// </summary>
+    private const byte LastChunkMask = 0x01;
+
+    /// <summary>
+    /// Read the 17-byte first-frame header for a chunked reply
+    /// (<c>msgType i32, numberOfParts i32, txId i32, chunkLength i32,
+    /// flags u8</c>). Mirrors cppcache
+    /// <c>TcrConnection::readResponseHeader</c>
+    /// (<c>cppcache/src/TcrConnection.cpp:810-851</c>).
+    /// </summary>
+    private async Task<(int MsgType, int NumberOfParts, int TxId, int ChunkLen, byte Flags)>
+        ReadChunkedResponseHeaderAsync(CancellationToken ct)
+    {
+        var stream = _stream
+            ?? throw new InvalidOperationException(
+                $"{nameof(ConnectAsync)} must complete before chunked send.");
+
+        var buffer = new byte[TcrMessage.HeaderLength];
+        await stream
+            .ReadExactlyAsync(buffer.AsMemory(0, TcrMessage.HeaderLength), ct)
+            .ConfigureAwait(false);
+
+        return (
+            MsgType: BinaryPrimitives.ReadInt32BigEndian(buffer.AsSpan(0, 4)),
+            NumberOfParts: BinaryPrimitives.ReadInt32BigEndian(buffer.AsSpan(4, 4)),
+            TxId: BinaryPrimitives.ReadInt32BigEndian(buffer.AsSpan(8, 4)),
+            ChunkLen: BinaryPrimitives.ReadInt32BigEndian(buffer.AsSpan(12, 4)),
+            Flags: buffer[16]);
+    }
+
+    /// <summary>
+    /// Read a 5-byte continuation chunk header
+    /// (<c>chunkLength i32, flags u8</c>). Mirrors cppcache
+    /// <c>TcrConnection::readChunkHeader</c>
+    /// (<c>cppcache/src/TcrConnection.cpp:853-887</c>).
+    /// </summary>
+    private async Task<(int ChunkLen, byte Flags)> ReadChunkHeaderAsync(CancellationToken ct)
+    {
+        var stream = _stream
+            ?? throw new InvalidOperationException(
+                $"{nameof(ConnectAsync)} must complete before chunked send.");
+
+        const int ChunkHeaderLength = 5;
+        var buffer = new byte[ChunkHeaderLength];
+        await stream
+            .ReadExactlyAsync(buffer.AsMemory(0, ChunkHeaderLength), ct)
+            .ConfigureAwait(false);
+
+        return (
+            ChunkLen: BinaryPrimitives.ReadInt32BigEndian(buffer.AsSpan(0, 4)),
+            Flags: buffer[4]);
     }
 
     /// <summary>

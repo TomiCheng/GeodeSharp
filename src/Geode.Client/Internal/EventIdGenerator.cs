@@ -72,4 +72,42 @@ internal sealed class EventIdGenerator
         var seq = Interlocked.Increment(ref _sequenceId);
         return (ThreadId, seq);
     }
+
+    /// <summary>
+    /// Atomically reserve <paramref name="count"/> consecutive sequence
+    /// ids and return the lowest of the reserved range as
+    /// <c>BaseSequenceId</c>. The caller logically owns the contiguous
+    /// block <c>[BaseSequenceId, BaseSequenceId + count - 1]</c> — no
+    /// concurrent <see cref="Next"/> / <see cref="NextRange"/> call can
+    /// land inside that range.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Mirrors cppcache <c>writeEventIdPart(reserveSize)</c>
+    /// (<c>cppcache/src/TcrMessage.cpp:834-842</c>) which constructs an
+    /// <c>EventId</c> with <c>reserveSize = keys.size() - 1</c> for
+    /// <c>PutAll</c> / <c>RemoveAll</c>. cppcache puts a single
+    /// <c>(threadId, baseSeq)</c> pair on the wire but bumps the
+    /// per-thread sequence by <c>N-1</c> extra so the server can dedup
+    /// each key's logical event as <c>(clientId, threadId, baseSeq+i)</c>
+    /// for <c>i &#x2208; [0, N)</c>.
+    /// </para>
+    /// <para>
+    /// Single <see cref="Interlocked.Add(ref long, long)"/> — the
+    /// caller's reserved window is guaranteed contiguous even under
+    /// concurrent bulk ops (no risk of two bulk ops interleaving their
+    /// per-key dedup keys).
+    /// </para>
+    /// </remarks>
+    /// <param name="count">Number of sequence ids to reserve. Must be
+    /// &#x2265; 1; matches the bulk-op contract (empty batches are
+    /// rejected upstream at the builder / public API).</param>
+    public (long ThreadId, long BaseSequenceId) NextRange(int count)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
+        // Atomically advance by `count`; Add returns the post-add value,
+        // so the reserved ids are [end - count + 1, end] inclusive.
+        var end = Interlocked.Add(ref _sequenceId, count);
+        return (ThreadId, end - count + 1);
+    }
 }

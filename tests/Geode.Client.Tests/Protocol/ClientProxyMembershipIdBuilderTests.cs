@@ -124,15 +124,44 @@ public class ClientProxyMembershipIdBuilderTests
     }
 
     // ====================================================================
-    //  Process-scoped uniqueTag identity
+    //  Per-cache uniqueTag identity (cppcache parity:
+    //  ClientProxyMembershipIDFactory.randString_ is an instance member)
     // ====================================================================
 
     [Fact]
-    public void Build_two_instances_share_the_same_uniqueTag()
+    public void Build_two_instances_use_different_uniqueTag()
     {
+        // Cppcache parity: ClientProxyMembershipIDFactory.randString_ is an
+        // instance member built fresh in each factory's ctor — two
+        // CacheImpl in the same process therefore see different
+        // clientIds on the server. Mirroring that here is what stops the
+        // (clientId, threadId, seq) event-dedup triple from colliding
+        // across two Caches in the same process.
         var a = MembershipBlob.Parse(NewBuilder().Build());
         var b = MembershipBlob.Parse(NewBuilder().Build());
+        Assert.NotEqual(a.UniqueTag, b.UniqueTag);
+    }
+
+    [Fact]
+    public void Build_same_instance_returns_same_uniqueTag()
+    {
+        // Inputs are immutable for the lifetime of a builder, so the
+        // result is cached and the second Build() returns the same bytes
+        // (and therefore the same uniqueTag).
+        var builder = NewBuilder();
+        var a = MembershipBlob.Parse(builder.Build());
+        var b = MembershipBlob.Parse(builder.Build());
         Assert.Equal(a.UniqueTag, b.UniqueTag);
+    }
+
+    [Fact]
+    public void UniqueTag_has_expected_format()
+    {
+        // "Native_" + 10 random alphanumerics + ProcessId — same format
+        // as cppcache ClientProxyMembershipIDFactory ctor.
+        var parsed = MembershipBlob.Parse(NewBuilder().Build());
+        Assert.StartsWith("Native_", parsed.UniqueTag);
+        Assert.EndsWith(Environment.ProcessId.ToString(), parsed.UniqueTag);
     }
 
     [Fact]

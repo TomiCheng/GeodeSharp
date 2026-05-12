@@ -42,11 +42,30 @@ internal sealed class ClientProxyMembershipIdBuilder(CacheScopeContext scopeCont
     private const int DcPort = 12334;
 
     /// <summary>
-    /// Process-scoped unique tag, generated once at type-load. cppcache
-    /// builds this in the factory constructor as
+    /// Per-cache unique tag — generated once in this builder's ctor.
+    /// Mirrors cppcache <c>ClientProxyMembershipIDFactory::randString_</c>
+    /// (<c>ClientProxyMembershipIDFactory.cpp:35-56</c>), which is an
+    /// instance member built afresh inside each
+    /// <c>CacheImpl</c>'s factory ctor. Format:
     /// <c>"Native_" + 10 random alphanumerics + ProcessId</c>.
     /// </summary>
-    private static readonly string s_uniqueTag = GenerateUniqueTag();
+    /// <remarks>
+    /// <para>
+    /// <b>Why per-cache, not process-static.</b> The server dedups
+    /// write events by <c>(clientId, threadId, sequenceId)</c> in its
+    /// <c>ClientHealthMonitor</c>. <c>clientId</c> is derived from
+    /// this tag. If the tag is process-static, two
+    /// <see cref="Services.Cache"/> instances in the same process
+    /// share one client identity from the server's perspective, and
+    /// each cache's seq-counter (which resets to 0 on cache build)
+    /// will collide with the previous cache's events on the
+    /// <c>seq=1, 2, 3...</c> values — server silently drops the
+    /// "duplicates". cppcache parity (instance member) sidesteps the
+    /// whole issue: each cache has its own random tag, so clientIds
+    /// differ and the dedup triple is naturally unique per cache.
+    /// </para>
+    /// </remarks>
+    private readonly string _uniqueTag = GenerateUniqueTag();
 
     private readonly GeodeClientOptions _options = scopeContext.Options;
 
@@ -104,8 +123,8 @@ internal sealed class ClientProxyMembershipIdBuilder(CacheScopeContext scopeCont
         // dsName — distributed system name; usually "" for clients.
         w.WriteString(_options.Name);
 
-        // uniqueTag — randomly generated per process.
-        w.WriteString(s_uniqueTag);
+        // uniqueTag — randomly generated per cache (see _uniqueTag doc).
+        w.WriteString(_uniqueTag);
 
         // Durable subscription metadata. Server's MemberIdentifierImpl.toData
         // / fromDataPre_GFE_9_0_0_0 reads BOTH unconditionally, so we must
@@ -145,7 +164,7 @@ internal sealed class ClientProxyMembershipIdBuilder(CacheScopeContext scopeCont
     }
 
     /// <summary>
-    /// Generate the process-scoped unique tag. Format matches cppcache
+    /// Generate the per-cache unique tag. Format matches cppcache
     /// <c>ClientProxyMembershipIDFactory</c> ctor exactly so server-side
     /// log scraping / tooling is interchangeable.
     /// </summary>

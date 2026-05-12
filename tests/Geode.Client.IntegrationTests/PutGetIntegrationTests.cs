@@ -33,13 +33,14 @@ public class PutGetIntegrationTests(GeodeFixture fx)
     private const string RegionPath = "/test";
 
     /// <summary>
-    /// Process-wide monotonic counter for the EventId sequence id. The
-    /// Geode server dedups events per <c>(clientId, threadId, sequenceId)</c>
-    /// and <c>ClientProxyMembershipIdBuilder.s_uniqueTag</c> is
-    /// process-static — so all tests in the same process share one
-    /// client identity. Reusing a sequence id across Puts triggers a
-    /// duplicate-event rejection (server replies with Exception). Each
-    /// Put grabs a fresh value here.
+    /// Process-wide monotonic counter for the EventId sequence id.
+    /// Defensive: each test in this file creates its own raw
+    /// <see cref="TcrConnection"/> (no <see cref="IGeodeCache"/> scope,
+    /// no <see cref="Internal.EventIdGenerator"/>), so we need our own
+    /// counter. The Geode server dedups events per
+    /// <c>(clientId, threadId, sequenceId)</c>; bumping the seq each
+    /// Put avoids any chance of the server treating two Puts as the
+    /// same event.
     /// </summary>
     private static long s_eventSeq;
 

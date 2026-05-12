@@ -28,7 +28,7 @@ namespace Geode.Client.Services;
 /// </para>
 /// </remarks>
 internal sealed class RegionView<TKey, TValue> : IRegion<TKey, TValue>
-    where TKey : notnull
+    where TKey : IEquatable<TKey>
 {
     private readonly IRegion _inner;
 

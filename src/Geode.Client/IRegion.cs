@@ -63,8 +63,32 @@ public interface IRegion
 /// non-generic <see cref="IRegion"/> ops; type mismatches surface
 /// naturally as <see cref="InvalidCastException"/> from the unbox.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <b>Key constraint <c>where TKey : IEquatable&lt;TKey&gt;</c></b>
+/// is the .NET-side enforcement of cppcache's <c>CacheableKey</c>
+/// requirement (<c>cppcache/include/geode/CacheableKey.hpp</c>) —
+/// keys must declare equality so the server-side <c>equals</c> /
+/// <c>hashCode</c> contract has a credible client-side counterpart.
+/// All built-in scalar / <see cref="DateTime"/> / <see cref="string"/>
+/// types satisfy this for free; <see cref="byte"/><c>[]</c> does
+/// not (arrays use reference equality) — exactly mirroring cppcache
+/// where <c>CacheableBytes</c> derives from
+/// <c>DataSerializablePrimitive</c>, not <c>CacheableKey</c>. User
+/// types (Phase 2 PDX) must implement <see cref="IEquatable{T}"/>
+/// explicitly; <c>record</c> / <c>record struct</c> declarations get
+/// it for free.
+/// </para>
+/// <para>
+/// The constraint does <b>not</b> catch "TKey has no registered
+/// codec" — that surfaces as <see cref="NotSupportedException"/>
+/// from the serialisation registry at the first op call. Compile-
+/// time vs runtime gap is acceptable: codec registration is dynamic
+/// (DI scope), so a static check would over-restrict.
+/// </para>
+/// </remarks>
 public interface IRegion<TKey, TValue> : IRegion
-    where TKey : notnull
+    where TKey : IEquatable<TKey>
 {
     /// <inheritdoc cref="IRegion.PutAsync(object, object, CancellationToken)" />
     Task PutAsync(TKey key, TValue value, CancellationToken ct = default);

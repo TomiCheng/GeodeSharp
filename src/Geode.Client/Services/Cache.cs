@@ -438,7 +438,7 @@ internal sealed class Cache(
     }
 
     public IRegion<TKey, TValue>? GetRegion<TKey, TValue>(string path)
-        where TKey : notnull
+        where TKey : IEquatable<TKey>
     {
         // Untyped lookup does the cppcache-faithful work (path validation,
         // sub-region recursion, destroyPending check). RegionView is a

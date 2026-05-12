@@ -185,15 +185,17 @@ public class TcrMessageBuilderDestroyTests
     [Fact]
     public void Destroy_throws_for_unregistered_key_type()
     {
+        // decimal has no built-in converter (Phase 2 PDX territory),
+        // so it's a stable unregistered-type sentinel.
         Assert.Throws<NotSupportedException>(() =>
-            NewBuilder().Destroy("/r", 3.14, ThreadId, SeqId));
+            NewBuilder().Destroy("/r", 3.14m, ThreadId, SeqId));
     }
 
     [Fact]
     public void Destroy_throws_for_unregistered_callback_type()
     {
         Assert.Throws<NotSupportedException>(() =>
-            NewBuilder().Destroy("/r", Key, ThreadId, SeqId, callbackArgument: 3.14));
+            NewBuilder().Destroy("/r", Key, ThreadId, SeqId, callbackArgument: 3.14m));
     }
 
     // ====================================================================

@@ -145,9 +145,89 @@
 
 ## Phase 1.3 — Bulk + management ops（未啟動）
 
-- [ ] `PutAll(56)` / `GetAll70(100)` / `RemoveAll(109)`
-- [ ] `Clear`
-- [ ] `Invalidate`
+### 1.3.0 — `IDataConverter` 內建型別擴充（前置）
+
+Phase 1.2 只實作 `Int32` + `Boolean` 兩個 converter；bulk ops 端到端整合測試要更有代表性的 K/V 型別。先把 MVP scalar / string / bytes 一次補齊，後面 1.3.a–1.3.c 都吃這個前置。
+
+**架構決策（已拍板）：**
+
+`IDataConverter` 介面改造（cppcache `Serializable::getDsCode()` + `Serializable::toData` 對齊）：
+
+```csharp
+interface IDataConverter
+{
+    byte[] DsCodes { get; }                              // decode 用，多 DSCode 對應同一 converter（String 4 個）
+    Type ManagedType { get; }                            // encode lookup 用
+    byte GetDsCode(object value);                                    // encode 時依 value 內容回實際 DSCode
+    void Write(BigEndianBinaryWriter w, object value, byte dsCode);  // payload only；dsCode 由 registry 傳回避免 String 掃兩次
+    object? Read(BigEndianBinaryReader r, byte dsCode);              // payload only；registry 已讀掉 DSCode byte、再傳回供 String 分支
+}
+```
+
+`SerializationRegistry` 改動：
+- `Register` 改成 loop `converter.DsCodes` 把每個都掛進 `_byDsCode`
+- `WriteObject`：`var dsCode = converter.GetDsCode(value); writer.WriteByte(dsCode); converter.Write(writer, value, dsCode);`
+- `ReadObject` 流程不變（registry 仍負責讀 DSCode byte + dict lookup）
+- Read / Write 對稱：兩邊都 registry 處理 DSCode byte、converter 只處理 payload
+
+**Tier A — Phase 1.3.0 範圍（9 個 converter + String 一 converter 多 DSCode）：**
+
+| DSCode | cppcache | CLR | 備註 | 狀態 |
+|---|---|---|---|---|
+| 53 | `CacheableBoolean` | `bool` | | ✅ Phase 1.2 |
+| 54 | `CacheableCharacter` | `char` | UTF-16 code unit, 2-byte BE | [ ] |
+| 55 | `CacheableByte` | `byte` | 故意用 unsigned（.NET 慣例），wire bit pattern 與 Java signed byte 互通；Java 端 -1 ↔ 我們 255 | [ ] |
+| 56 | `CacheableInt16` | `short` | | [ ] |
+| 57 | `CacheableInt32` | `int` | | ✅ Phase 1.2 |
+| 58 | `CacheableInt64` | `long` | | [ ] |
+| 59 | `CacheableFloat` | `float` | IEEE-754 BE, NaN/±∞ wire 形狀與 Java 一致 | [ ] |
+| 60 | `CacheableDouble` | `double` | IEEE-754 BE | [ ] |
+| 61 | `CacheableDate` | `DateTime` | 8-byte ms-since-epoch UTC. Read 回 `Kind=Utc`（偏離 clicache 的 `Local`，修 round-trip footgun）；Write `Utc` 直用 / `Local` → `ToUniversalTime` / `Unspecified` **throw `ArgumentException`**（拒絕沉默假設 Local，clicache bug 修正）；精度 truncate to ms | [ ] |
+| 46 | `CacheableBytes` | `byte[]` | VL-encoded length + raw bytes；`null` 走 NullObj、`byte[0]` 走 DSCode 46 + length=0 | [ ] |
+| 42 / 87 / 88 / 89 | `CacheableString` / `…ASCIIString` / `…ASCIIStringHuge` / `…StringHuge` | `string` | 一 converter 多 DSCode；ASCII vs Java modified UTF-8 × short(u16) vs huge(i32)；手寫 modified UTF-8 codec（`Encoding.UTF8` 不能用 — `\0` 編 `0xC0 0x80` + supplementary 拆 surrogate 兩 3-byte）；獨立 `JavaModifiedUtf8` 靜態工具 + unit test | [ ] |
+
+**Tier B — 視 demo / 測試需要再加**（不在 1.3.0 範圍）：
+- `CacheableArrayList(65)` / `CacheableHashSet(66)` / `CacheableHashMap(67)` / `CacheableObjectArray(52)`
+- primitive arrays（47–51, 26, 27, 64）
+- 一旦觸發 Tier B，要實作「encode 端介面分派」（`IList` / `IDictionary` / `ISet` 偵測 + 泛型 element 遞迴 `WriteObject`），cppcache 走 RTTI dynamic_cast 對齊。
+
+**Tier C — 不做或 Phase 2+：**
+`NullObj(41)` 已內聯；`CacheableNullString(69)` 走 41 即可；`PdxType/PDX/PDX_ENUM` Phase 2；`CacheableUserData*` Phase 2；`Properties(11)` Phase 3 auth；`JavaSerializable(44)`/`DataSerializable(45)`/`Class(43)`/`CacheableFileName(63)`/`CacheableTimeUnit(68)` 罕用，skip；`FixedID*(1–4)` 是 wire layer 內部碼，不放 `SerializationRegistry`。
+
+---
+
+### 1.3.a — Clear + Invalidate（非分片）
+
+- [ ] `ClearRegion(36)` — 3 parts（regionName / eventId / [callback]）；reply `Reply(6)` 或 `ClearRegionDataError(37)` 或 `Exception(2)`；沒有 chunked
+- [ ] `Invalidate(83)` — 3 parts（regionName / key / eventId / [callback]）；reply `Reply(6)` 或 `InvalidateError(84)` 或 `Exception(2)`；versionTag 先丟（同 `RemoveAsync`）
+- [ ] `IRegion.ClearAsync(CancellationToken)` / `IRegion.InvalidateAsync(TKey, CancellationToken)`
+- [ ] `InvalidateRegion(55)` 是 server→client only，**不暴露** `InvalidateRegionAsync`（要 region-wide 就 `ClearAsync`）
+
+### 1.3.b — Chunked-reply 基建 + RemoveAll
+
+- [ ] `TcrConnection` chunked reader（讀到 `lastChunkBit` 才結束；對齊 cppcache `TcrMessage::handleByteArrayResponse`）
+- [ ] `ChunkedResponseHandler` 抽象（對齊 cppcache `TcrChunkedResult`）
+- [ ] `VersionedCacheableObjectPartList` 解碼器（thin-client 路徑：忽略 versionTags、認 `NULL_OBJECT` / `byteArray[i]==3` miss）
+- [ ] `_pendingReplies` 改成「send 時註冊 handler」，reply reader 不再反推 chunked / 非 chunked
+- [ ] `RemoveAll(109)` — 5+keys.size parts
+- [ ] `IRegion.RemoveAllAsync(IReadOnlyCollection<TKey>, CancellationToken)`
+
+### 1.3.c — PutAll + GetAll70
+
+- [ ] `PutAll(56)` — 5+map.size*2 parts；同 1.3.b chunked 路徑
+- [ ] `IRegion.PutAllAsync(IReadOnlyDictionary<TKey,TValue>, CancellationToken)`
+- [ ] `GetAll70(100)` — 砍 tracker map / exception map，只回 `IReadOnlyDictionary<TKey, TValue?>`（exception 路徑等真的有需求再補）
+- [ ] `IRegion.GetAllAsync(IReadOnlyCollection<TKey>, CancellationToken)`
+
+### Phase 1.3 共用決策
+
+- bulk ops 進用 `IReadOnlyDictionary` / `IReadOnlyCollection`、出用新 `Dictionary` / `IReadOnlyDictionary`（.NET 慣例 + 不洩漏內部 mutable state）
+- versionTag 全部忽略（讀完丟），同 Phase 1.2 `RemoveAsync`；Phase 4 client-side cache / delta 才回填
+- **Key 型別約束**：`IRegion<TKey, TValue>` 加 `where TKey : IEquatable<TKey>`（cppcache `CacheableKey` 強制 `operator==` + `hashcode()` 的 .NET 等效）
+  - 編譯期擋住 `byte[]`（`Array` 不實作 `IEquatable<T>`）、`List<>` / `Dictionary<>` / `HashSet<>` 等集合、未實作 `IEquatable<T>` 的 user POCO
+  - PDX user class（Phase 2）必須實作 `IEquatable<T>`，強迫使用者面對 Java server 端 `equals` / `hashCode` 語意問題
+  - **沒對應 converter 的型別只能 runtime 擋**：`IRegion<MyType, ...>` 編譯過、但 `SerializationRegistry.WriteObject` 找不到 `_byType[typeof(MyType)]` 時 throw `NotSupportedException`（既有行為，不用動）
+  - 非泛型 `IRegion` 不加約束（untyped `GetRegion` 回它，cast 到泛型版時編譯期擋）
 
 ---
 

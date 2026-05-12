@@ -7,15 +7,15 @@ namespace Geode.Client.Protocol.Serialization;
 /// <c>CacheableBoolean</c> (<c>cppcache/src/CacheableBuiltins.cpp</c>
 /// <c>toData</c> / <c>fromData</c>).
 /// </summary>
-internal sealed class BooleanDataConverter : IDataConverter
+internal sealed class BooleanDataConverter : DataConverter<bool>
 {
-    public byte DsCode => DSCode.CacheableBoolean;
+    private static readonly byte[] s_dsCodes = { DSCode.CacheableBoolean };
 
-    public Type ManagedType => typeof(bool);
+    public override byte[] DsCodes => s_dsCodes;
 
-    public void Write(BigEndianBinaryWriter writer, object value) =>
-        writer.WriteByte((bool)value ? (byte)1 : (byte)0);
+    public override void Write(BigEndianBinaryWriter writer, bool value, byte dsCode) =>
+        writer.WriteByte(value ? (byte)1 : (byte)0);
 
-    public object? Read(BigEndianBinaryReader reader) =>
+    public override bool Read(BigEndianBinaryReader reader, byte dsCode) =>
         reader.ReadByte() != 0;
 }

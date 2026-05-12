@@ -68,7 +68,7 @@ public interface IRegionService : IAsyncDisposable
     /// type parameters.
     /// </exception>
     IRegion<TKey, TValue>? GetRegion<TKey, TValue>(string path)
-        where TKey : notnull;
+        where TKey : IEquatable<TKey>;
 
     /// <summary>
     /// Untyped overload of <see cref="GetRegion{TKey, TValue}"/> —

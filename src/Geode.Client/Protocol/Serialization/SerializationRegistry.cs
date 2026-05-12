@@ -19,10 +19,25 @@ namespace Geode.Client.Protocol.Serialization;
 /// dispatch by different keys.
 /// </para>
 /// <para>
+/// <b>Multi-DSCode converters.</b> A single converter can register
+/// against multiple DSCodes (one CLR type, many wire forms — see
+/// <c>StringDataConverter</c>). <see cref="Register"/> iterates
+/// <see cref="IDataConverter.DsCodes"/> and points each entry at the
+/// same instance.
+/// </para>
+/// <para>
 /// <b>Per-cache scope.</b> Registered as DI Scoped alongside
 /// <see cref="Services.Cache"/> so multi-cluster setups can have
 /// different custom-type registrations per cluster without leaking
 /// across.
+/// </para>
+/// <para>
+/// <b>DSCode byte ownership.</b> Registry writes / reads the DSCode
+/// byte on both sides of the wire and passes it back to the
+/// converter so multi-DSCode converters can branch. Mirrors cppcache
+/// <c>DataOutput::writeObject</c> calling
+/// <c>ptr-&gt;getDsCode()</c> then writing the byte then calling
+/// <c>ptr-&gt;toData(*this)</c>.
 /// </para>
 /// <para>
 /// <b>PDX path is a Phase 2+ TODO.</b> The
@@ -44,21 +59,23 @@ internal sealed class SerializationRegistry
     {
         // Built-in converters. cppcache registers ~30 of these at
         // SerializationRegistry construction; we add them as their
-        // wire formats land. Phase 1.2 starts with int32 (the
-        // walking-skeleton key type).
-        Register(new Int32DataConverter());
-        Register(new BooleanDataConverter());
+        // wire formats land. Phase 1.2 shipped int32 + boolean (the
+        // walking-skeleton minimum); Phase 1.3.0 widens to the full
+        // Tier A scalar / bytes / string set.
+        // Order: scalar (sorted by DSCode), then bytes, then string.
+        Register(new BooleanDataConverter());      // 53  CacheableBoolean   → bool
+        Register(new CharacterDataConverter());    // 54  CacheableCharacter → char
+        Register(new ByteDataConverter());         // 55  CacheableByte      → byte (unsigned, .NET convention)
+        Register(new Int16DataConverter());        // 56  CacheableInt16     → short
+        Register(new Int32DataConverter());        // 57  CacheableInt32     → int
+        Register(new Int64DataConverter());        // 58  CacheableInt64     → long
+        Register(new SingleDataConverter());       // 59  CacheableFloat     → float
+        Register(new DoubleDataConverter());       // 60  CacheableDouble    → double
+        Register(new DateTimeDataConverter());     // 61  CacheableDate      → DateTime
 
-        // TODO Phase 1.2.c: widen the built-in set —
-        //   Register(new ByteDataConverter());
-        //   Register(new Int16DataConverter());
-        //   Register(new Int64DataConverter());
-        //   Register(new SingleDataConverter());
-        //   Register(new DoubleDataConverter());
-        //   Register(new StringDataConverter());      // multi-DSCode (CacheableString / ASCII / Huge)
-        //   Register(new BytesDataConverter());       // CacheableBytes with IsObject toggle
-        //   Register(new DateTimeDataConverter());
-        //   Register(new <collection codecs>);        // List / Dictionary / HashSet / arrays
+        // TODO Phase 1.3.0: bytes + string —
+        //   Register(new BytesDataConverter());         // 46  CacheableBytes   → byte[]
+        //   Register(new StringDataConverter());        // 42/87/88/89 → string (multi-DSCode)
     }
 
     /// <summary>
@@ -66,17 +83,28 @@ internal sealed class SerializationRegistry
     /// type index (encode). Built-ins only; user extension goes
     /// through <c>RegisterPdx</c> when that surface ships.
     /// </summary>
+    /// <remarks>
+    /// Loops <paramref name="converter"/>'s <see cref="IDataConverter.DsCodes"/>
+    /// to mount every wire-form entry against the same instance —
+    /// multi-DSCode converters like <c>StringDataConverter</c> need
+    /// this. <see cref="_byType"/> still gets one entry per converter
+    /// because the encode side keys by CLR type.
+    /// </remarks>
     private void Register(IDataConverter converter)
     {
         ArgumentNullException.ThrowIfNull(converter);
-        _byDsCode[converter.DsCode] = converter;
+        foreach (var dsCode in converter.DsCodes)
+        {
+            _byDsCode[dsCode] = converter;
+        }
         _byType[converter.ManagedType] = converter;
     }
 
     /// <summary>
-    /// Encode <paramref name="value"/>: write its DSCode byte then
-    /// delegate to the registered converter for the payload. Mirrors
-    /// cppcache <c>DataOutput::writeObject(shared_ptr&lt;Serializable&gt;)</c>.
+    /// Encode <paramref name="value"/>: pick a DSCode via the
+    /// converter, write that byte, then delegate to the converter for
+    /// the payload. Mirrors cppcache
+    /// <c>DataOutput::writeObject(shared_ptr&lt;Serializable&gt;)</c>.
     /// </summary>
     /// <exception cref="NotSupportedException">
     /// <paramref name="value"/>'s runtime type has no registered
@@ -97,8 +125,9 @@ internal sealed class SerializationRegistry
         var type = value.GetType();
         if (_byType.TryGetValue(type, out var converter))
         {
-            writer.WriteByte(converter.DsCode);
-            converter.Write(writer, value);
+            var dsCode = converter.GetDsCode(value);
+            writer.WriteByte(dsCode);
+            converter.Write(writer, value, dsCode);
             return;
         }
 
@@ -116,7 +145,8 @@ internal sealed class SerializationRegistry
 
     /// <summary>
     /// Decode one object: read the DSCode byte, dispatch to the
-    /// registered converter. Mirrors cppcache
+    /// registered converter, pass the byte back so multi-DSCode
+    /// converters know which wire form to parse. Mirrors cppcache
     /// <c>DataInput::readObject()</c>.
     /// </summary>
     /// <exception cref="GeodeException">
@@ -139,7 +169,7 @@ internal sealed class SerializationRegistry
 
         if (_byDsCode.TryGetValue(dsCode, out var converter))
         {
-            return converter.Read(reader);
+            return converter.Read(reader, dsCode);
         }
 
         throw new GeodeException(

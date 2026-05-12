@@ -254,15 +254,17 @@ public class TcrMessageBuilderPutTests
     [Fact]
     public void Put_throws_for_unregistered_key_type()
     {
+        // decimal has no built-in converter (Phase 2 PDX territory),
+        // so it's a stable unregistered-type sentinel.
         Assert.Throws<NotSupportedException>(() =>
-            NewBuilder().Put("/r", 3.14, Value, null, ThreadId, SeqId));
+            NewBuilder().Put("/r", 3.14m, Value, null, ThreadId, SeqId));
     }
 
     [Fact]
     public void Put_throws_for_unregistered_value_type()
     {
         Assert.Throws<NotSupportedException>(() =>
-            NewBuilder().Put("/r", Key, 3.14, null, ThreadId, SeqId));
+            NewBuilder().Put("/r", Key, 3.14m, null, ThreadId, SeqId));
     }
 
     [Fact]
@@ -270,7 +272,7 @@ public class TcrMessageBuilderPutTests
     {
         Assert.Throws<NotSupportedException>(() =>
             NewBuilder().Put("/r", Key, Value,
-                callbackArgument: 3.14,
+                callbackArgument: 3.14m,
                 eventThreadId: ThreadId, eventSequenceId: SeqId));
     }
 

@@ -142,17 +142,18 @@ public class TcrMessageBuilderGetTests
     [Fact]
     public void Get_throws_for_unregistered_key_type()
     {
-        // SerializationRegistry has no converter for double yet — the
-        // registry surfaces the rejection as NotSupportedException.
+        // SerializationRegistry has no converter for decimal — Java's
+        // counterpart BigDecimal is Phase 2 PDX territory, so this
+        // sentinel stays stable across the Tier A built-in expansion.
         Assert.Throws<NotSupportedException>(() =>
-            NewBuilder().Get("/r", 3.14));
+            NewBuilder().Get("/r", 3.14m));
     }
 
     [Fact]
     public void Get_throws_for_unregistered_callback_type()
     {
         Assert.Throws<NotSupportedException>(() =>
-            NewBuilder().Get("/r", Key, callbackArgument: 3.14));
+            NewBuilder().Get("/r", Key, callbackArgument: 3.14m));
     }
 
     // ====================================================================

@@ -7,15 +7,15 @@ namespace Geode.Client.Protocol.Serialization;
 /// <c>CacheableInt32</c> (<c>cppcache/src/CacheableBuiltins.cpp</c>
 /// <c>toData</c> / <c>fromData</c>).
 /// </summary>
-internal sealed class Int32DataConverter : IDataConverter
+internal sealed class Int32DataConverter : DataConverter<int>
 {
-    public byte DsCode => DSCode.CacheableInt32;
+    private static readonly byte[] s_dsCodes = { DSCode.CacheableInt32 };
 
-    public Type ManagedType => typeof(int);
+    public override byte[] DsCodes => s_dsCodes;
 
-    public void Write(BigEndianBinaryWriter writer, object value) =>
-        writer.WriteInt32((int)value);
+    public override void Write(BigEndianBinaryWriter writer, int value, byte dsCode) =>
+        writer.WriteInt32(value);
 
-    public object? Read(BigEndianBinaryReader reader) =>
+    public override int Read(BigEndianBinaryReader reader, byte dsCode) =>
         reader.ReadInt32();
 }

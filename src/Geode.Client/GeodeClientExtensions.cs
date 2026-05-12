@@ -214,6 +214,12 @@ public static class GeodeClientExtensions
         // would be a captive-dependency lifetime violation).
         services.TryAddScoped<SerializationRegistry>();
         services.TryAddScoped<TcrMessageBuilder>();
+        // EventIdGenerator is per-cache (Scoped) — mirrors cppcache
+        // EventIdTSS, which sits inside CacheImpl. Each cache instance
+        // gets its own monotonic seq, so closing and rebuilding a cache
+        // resets the counter (clientId rotates anyway, so server-side
+        // dedup keys don't collide).
+        services.TryAddScoped<EventIdGenerator>();
 
         // IValidateOptions<T> is an additive abstraction: the options
         // pipeline runs every registered validator. TryAddEnumerable

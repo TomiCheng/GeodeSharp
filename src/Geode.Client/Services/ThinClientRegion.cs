@@ -17,11 +17,9 @@ namespace Geode.Client.Services;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Phase 1.2 skeleton: fields + ctor in place, all 4 IRegion ops
-/// throw <see cref="NotImplementedException"/>. Wire dispatch
-/// (<c>SendSyncRequestAsync</c> via <see cref="ThinClientBaseDM"/>)
-/// lands in Phase 1.2.e alongside the operation builders and the
-/// reply decoder.
+/// Phase 1.2 status: <see cref="ContainsKeyAsync"/>,
+/// <see cref="PutAsync"/>, <see cref="GetAsync"/>, and
+/// <see cref="RemoveAsync"/> are all end-to-end on the wire.
 /// </para>
 /// <para>
 /// Note the type is non-generic — <c>TKey, TValue</c> live only on
@@ -34,6 +32,7 @@ internal sealed class ThinClientRegion(
     ILogger<ThinClientRegion> logger,
     TcrMessageBuilder tcrMessageBuilder,
     SerializationRegistry serializationRegistry,
+    EventIdGenerator eventIdGenerator,
     string name,
     CacheXmlRegionAttributesOptions attributes,
     ThinClientBaseDM dm)
@@ -47,31 +46,254 @@ internal sealed class ThinClientRegion(
     /// </summary>
     internal ThinClientBaseDM DistributionManager => dm;
 
-    public override Task PutAsync(object key, object value, CancellationToken ct = default)
+    public override async Task PutAsync(object key, object value, CancellationToken ct = default)
     {
-        // TODO Phase 1.2.e: build TcrMessageBuilder.Put(...) with this
-        //   region's FullPath, dispatch via _dm.SendSyncRequestAsync,
-        //   inspect reply.MessageType (Reply OK / Exception → throw).
-        //   Mirrors cppcache ThinClientRegion::putNoThrow_remote
-        //   (ThinClientRegion.cpp).
-        throw new NotImplementedException("TODO Phase 1.2.e: ThinClientRegion.PutAsync");
+        ArgumentNullException.ThrowIfNull(key);
+        ArgumentNullException.ThrowIfNull(value);
+
+        logger.LogTrace("PutAsync: region={RegionPath}, key={Key}", FullPath, key);
+
+        // Mirrors cppcache ThinClientRegion::putNoThrow_remote
+        // (cppcache/src/ThinClientRegion.cpp:888-947) +
+        // TcrMessagePut ctor (TcrMessage.cpp:1989-2034).
+        //
+        // ─── Step 1+2: build request frame ────────────────────
+        // Region FullPath + DSCode-tagged key/value/callback via
+        // SerializationRegistry; EventId pair from the per-cache
+        // generator (cppcache EventIdTSS::initFromTSS). Delta is hard-
+        // coded false — Phase 4 territory.
+        var (threadId, sequenceId) = eventIdGenerator.Next();
+        var request = tcrMessageBuilder.Put(
+            regionName: FullPath,
+            key: key,
+            value: value,
+            callbackArgument: null,
+            eventThreadId: threadId,
+            eventSequenceId: sequenceId);
+
+        // ─── Step 3: dispatch via DM ─────────────────────────
+        // ThinClientPoolDM.SendSyncRequestAsync picks the (single in
+        // MVP) endpoint, routes through SendRequestToEndpointAsync
+        // (conn borrow / fallback create / send / put-back).
+        var reply = await dm
+            .SendSyncRequestAsync(request, ct: ct)
+            .ConfigureAwait(false);
+
+        // ─── Step 4: reply decoding ──────────────────────────
+        // cppcache putNoThrow_remote reply switch
+        // (ThinClientRegion.cpp:928-947): Reply OK / Exception → throw
+        // / PUT_DATA_ERROR → throw / anything else → throw.
+        switch (reply.MessageType)
+        {
+            case MessageType.Reply:
+                // cppcache REPLY branch reads versionTag here; we don't
+                // surface version tags yet (Phase 4 concurrency checks).
+                return;
+
+            case MessageType.Exception:
+                throw new GeodeException(
+                    $"Server exception on Put '{FullPath}': " +
+                    DecodeExceptionPreview(reply));
+
+            default:
+                throw new GeodeException(
+                    $"Unexpected reply type {reply.MessageType} for Put on '{FullPath}'.");
+        }
     }
 
-    public override Task<object?> GetAsync(object key, CancellationToken ct = default)
+    public override async Task<object?> GetAsync(object key, CancellationToken ct = default)
     {
-        // TODO Phase 1.2.e: TcrMessageBuilder.Get(FullPath, key) →
-        //   _dm.SendSyncRequestAsync → decode Response (DSCode-aware).
-        //   Mirrors cppcache ThinClientRegion::getNoThrow_remote.
-        throw new NotImplementedException("TODO Phase 1.2.e: ThinClientRegion.GetAsync");
+        ArgumentNullException.ThrowIfNull(key);
+
+        logger.LogTrace("GetAsync: region={RegionPath}, key={Key}", FullPath, key);
+
+        // Mirrors cppcache ThinClientRegion::getNoThrow_remote
+        // (cppcache/src/ThinClientRegion.cpp:810-850) +
+        // TcrMessageRequest ctor (TcrMessage.cpp:1858-1898).
+        //
+        // ─── Step 1+2: build request frame ────────────────────
+        var request = tcrMessageBuilder.Get(FullPath, key);
+
+        // ─── Step 3: dispatch via DM ─────────────────────────
+        var reply = await dm
+            .SendSyncRequestAsync(request, ct: ct)
+            .ConfigureAwait(false);
+
+        // ─── Step 4: reply decoding ──────────────────────────
+        // cppcache getNoThrow_remote reply switch
+        // (ThinClientRegion.cpp:826-849): Response → value /
+        // Exception → throw / REQUEST_DATA_ERROR → throw /
+        // anything else → throw.
+        switch (reply.MessageType)
+        {
+            case MessageType.Response:
+                if (reply.Parts.Count == 0)
+                {
+                    throw new GeodeException(
+                        $"Get on '{FullPath}': Response with zero parts.");
+                }
+                return DecodeValuePart(reply.Parts[0]);
+
+            case MessageType.Exception:
+                throw new GeodeException(
+                    $"Server exception on Get '{FullPath}': " +
+                    DecodeExceptionPreview(reply));
+
+            default:
+                throw new GeodeException(
+                    $"Unexpected reply type {reply.MessageType} for Get on '{FullPath}'.");
+        }
     }
 
-    public override Task<bool> RemoveAsync(object key, CancellationToken ct = default)
+    /// <summary>
+    /// Decode a value-bearing part the way cppcache
+    /// <c>TcrMessage::readObjectPart</c>
+    /// (<c>cppcache/src/TcrMessage.cpp:469-487</c>) does:
+    /// </summary>
+    /// <remarks>
+    /// <list type="bullet">
+    ///   <item><c>lenObj &gt; 0</c>, <c>IsObject=1</c> → DSCode-tagged;
+    ///         dispatch through <see cref="SerializationRegistry"/>
+    ///         (handles NullObj internally).</item>
+    ///   <item><c>lenObj &gt; 0</c>, <c>IsObject=0</c> → raw CacheableBytes
+    ///         shortcut. Not used for int32 values; throw until
+    ///         <c>BytesDataConverter</c> lands.</item>
+    ///   <item><c>lenObj == 0</c>, <c>IsObject=2</c> → empty byte[] sentinel.
+    ///         Same TODO as above.</item>
+    ///   <item><c>lenObj == 0</c>, <c>IsObject=0</c> → key absent → null.</item>
+    /// </list>
+    /// </remarks>
+    private object? DecodeValuePart(TcrPart part)
     {
-        // TODO Phase 1.2.e: TcrMessageBuilder.Destroy(FullPath, key) →
-        //   _dm.SendSyncRequestAsync → reply means key existed; absent-key
-        //   surfaces as a specific Exception subtype.
-        //   Mirrors cppcache ThinClientRegion::destroyNoThrow_remote.
-        throw new NotImplementedException("TODO Phase 1.2.e: ThinClientRegion.RemoveAsync");
+        if (part.Payload.Length == 0)
+        {
+            // lenObj==0, isObj==0: key absent. lenObj==0, isObj==2:
+            // empty byte[] (unsupported until BytesDataConverter).
+            return part.IsObject switch
+            {
+                0 => null,
+                2 => throw new NotSupportedException(
+                    "Empty CacheableBytes (IsObject=2) reply not yet supported; " +
+                    "needs BytesDataConverter (Phase 1.2.c)."),
+                _ => throw new GeodeException(
+                    $"Unexpected empty value part with IsObject={part.IsObject} " +
+                    $"on Get '{FullPath}'."),
+            };
+        }
+
+        if (part.IsObject == 1)
+        {
+            // Standard DSCode-tagged path. Registry consumes the DSCode
+            // byte and dispatches to the converter (NullObj returns null).
+            var reader = new BigEndianBinaryReader(part.Payload);
+            return serializationRegistry.ReadObject(reader);
+        }
+
+        // IsObject=0 with non-empty payload = CacheableBytes shortcut
+        // (cppcache writeObjectPart's special-case). Phase 1.2 only
+        // exercises int32 values which always use IsObject=1; the
+        // shortcut path stays NIE until BytesDataConverter lands.
+        throw new NotSupportedException(
+            $"Get '{FullPath}': IsObject=0 raw-bytes shortcut reply " +
+            "not yet supported (needs BytesDataConverter, Phase 1.2.c).");
+    }
+
+    public override async Task<bool> RemoveAsync(object key, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+
+        logger.LogTrace("RemoveAsync: region={RegionPath}, key={Key}", FullPath, key);
+
+        // Mirrors cppcache ThinClientRegion::destroyNoThrow_remote
+        // (cppcache/src/ThinClientRegion.cpp:959-999) +
+        // TcrMessageDestroy ctor value=null branch
+        // (TcrMessage.cpp:1934-1986).
+        //
+        // ─── Step 1+2: build request frame ────────────────────
+        var (threadId, sequenceId) = eventIdGenerator.Next();
+        var request = tcrMessageBuilder.Destroy(
+            regionName: FullPath,
+            key: key,
+            eventThreadId: threadId,
+            eventSequenceId: sequenceId);
+
+        // ─── Step 3: dispatch via DM ─────────────────────────
+        var reply = await dm
+            .SendSyncRequestAsync(request, ct: ct)
+            .ConfigureAwait(false);
+
+        // ─── Step 4: reply decoding ──────────────────────────
+        // cppcache destroyNoThrow_remote reply switch
+        // (ThinClientRegion.cpp:973-998):
+        //   REPLY → check entryNotFound flag → success xor "not found"
+        //   EXCEPTION → throw
+        //   DESTROY_DATA_ERROR → throw
+        //   default → throw
+        switch (reply.MessageType)
+        {
+            case MessageType.Reply:
+                {
+                    // Reply body layout for Destroy (cppcache
+                    // TcrMessage.cpp:1317-1330):
+                    //   Part flags         i32   (always present)
+                    //   Part versionTag    var   (only if flags & 0x01)
+                    //   Part prMetaData    1-2 bytes
+                    //   Part entryNotFound i32   (0 = destroyed, 1 = absent)
+                    //
+                    // Phase 1.2 doesn't drive concurrency checks (flags
+                    // stays 0 so no versionTag), so the entryNotFound
+                    // part is the last in the list — that's the
+                    // contract we read against until version-tag
+                    // handling lands and we walk parts in order.
+                    var entryNotFound = ReadDestroyEntryNotFound(reply);
+                    return entryNotFound == 0;
+                }
+
+            case MessageType.Exception:
+                throw new GeodeException(
+                    $"Server exception on Remove '{FullPath}': " +
+                    DecodeExceptionPreview(reply));
+
+            default:
+                throw new GeodeException(
+                    $"Unexpected reply type {reply.MessageType} for Remove on '{FullPath}'.");
+        }
+    }
+
+    /// <summary>
+    /// Extract the <c>entryNotFound</c> i32 from a Destroy
+    /// <see cref="MessageType.Reply"/>. Mirrors cppcache
+    /// <c>readIntPart</c> applied to the trailing Part
+    /// (<c>cppcache/src/TcrMessage.cpp:1327</c>): a 4-byte i32 with
+    /// <c>IsObject=0</c> — 0 means the entry was destroyed, 1 means
+    /// the server didn't have it.
+    /// </summary>
+    /// <remarks>
+    /// We grab the last part rather than indexing positionally because
+    /// the optional version-tag part can shift indices, and Phase 1.2
+    /// never reads version tags. When concurrency checks land we'll
+    /// walk parts in declaration order (flags → versionTag? →
+    /// prMetaData → entryNotFound) and this helper goes away.
+    /// </remarks>
+    private static int ReadDestroyEntryNotFound(TcrMessage reply)
+    {
+        if (reply.Parts.Count == 0)
+        {
+            throw new GeodeException(
+                "Destroy Reply: no parts — expected at least the " +
+                "entryNotFound int part.");
+        }
+
+        var part = reply.Parts[^1];
+        if (part.Payload.Length != 4)
+        {
+            throw new GeodeException(
+                $"Destroy Reply: expected 4-byte entryNotFound int " +
+                $"part, got {part.Payload.Length} bytes.");
+        }
+
+        var reader = new BigEndianBinaryReader(part.Payload);
+        return reader.ReadInt32();
     }
 
     public override async Task<bool> ContainsKeyAsync(object key, CancellationToken ct = default)

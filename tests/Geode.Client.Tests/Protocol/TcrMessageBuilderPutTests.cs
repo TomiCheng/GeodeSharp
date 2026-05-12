@@ -4,28 +4,41 @@ using Xunit;
 
 namespace Geode.Client.Tests.Protocol;
 
+/// <summary>
+/// Phase 1.2 walking-skeleton scope: int32 keys + int32 values (the
+/// registry ships <c>Int32DataConverter</c> + <c>BooleanDataConverter</c>).
+/// String / byte[] / Date / collection coverage lands as their
+/// converters do.
+/// </summary>
 public class TcrMessageBuilderPutTests
 {
+    private const int Key = 123;
+    private const int Value = 456;
     private const long ThreadId = 1L;
     private const long SeqId = 1L;
 
     private static TcrMessageBuilder NewBuilder() =>
         new(new TcrPartBuilder(), new SerializationRegistry());
 
+    private static byte[] EncodedInt32(int v) =>
+    [
+        DSCode.CacheableInt32,
+        (byte)((v >> 24) & 0xFF),
+        (byte)((v >> 16) & 0xFF),
+        (byte)((v >> 8) & 0xFF),
+        (byte)(v & 0xFF),
+    ];
+
     // ====================================================================
-    //  Property-level: shape of the resulting TcrMessage
+    //  Header shape
     // ====================================================================
 
     [Fact]
     public void Put_uses_MessageType_Put()
     {
         var msg = NewBuilder().Put(
-            regionName: "/test",
-            key: "k",
-            value: new byte[] { 0x76 },
-            callbackArgument: null,
-            eventThreadId: ThreadId,
-            eventSequenceId: SeqId);
+            "/test", Key, Value, callbackArgument: null,
+            ThreadId, SeqId);
 
         Assert.Equal(MessageType.Put, msg.MessageType);
     }
@@ -34,7 +47,7 @@ public class TcrMessageBuilderPutTests
     public void Put_defaults_to_meta_transaction_id()
     {
         var msg = NewBuilder().Put(
-            "/test", "k", new byte[] { 0x76 }, null, ThreadId, SeqId);
+            "/test", Key, Value, null, ThreadId, SeqId);
 
         Assert.Equal(TcrMessageBuilder.MetaTransactionId, msg.TransactionId);
     }
@@ -43,26 +56,30 @@ public class TcrMessageBuilderPutTests
     public void Put_uses_supplied_transaction_id()
     {
         var msg = NewBuilder().Put(
-            "/test", "k", new byte[] { 0x76 }, null, ThreadId, SeqId,
+            "/test", Key, Value, null, ThreadId, SeqId,
             transactionId: 42);
 
         Assert.Equal(42, msg.TransactionId);
     }
 
     [Fact]
-    public void Put_zero_EarlyAck_in_phase3()
+    public void Put_uses_zero_EarlyAck()
     {
         var msg = NewBuilder().Put(
-            "/test", "k", new byte[] { 0x76 }, null, ThreadId, SeqId);
+            "/test", Key, Value, null, ThreadId, SeqId);
 
         Assert.Equal(0, msg.EarlyAck);
     }
+
+    // ====================================================================
+    //  Part count
+    // ====================================================================
 
     [Fact]
     public void Put_without_callback_emits_7_parts()
     {
         var msg = NewBuilder().Put(
-            "/test", "k", new byte[] { 0x76 }, null, ThreadId, SeqId);
+            "/test", Key, Value, null, ThreadId, SeqId);
 
         Assert.Equal(7, msg.Parts.Count);
     }
@@ -71,8 +88,8 @@ public class TcrMessageBuilderPutTests
     public void Put_with_callback_emits_8_parts()
     {
         var msg = NewBuilder().Put(
-            "/test", "k", new byte[] { 0x76 },
-            callbackArgument: "cb", eventThreadId: ThreadId, eventSequenceId: SeqId);
+            "/test", Key, Value, callbackArgument: 7,
+            eventThreadId: ThreadId, eventSequenceId: SeqId);
 
         Assert.Equal(8, msg.Parts.Count);
     }
@@ -82,10 +99,10 @@ public class TcrMessageBuilderPutTests
     // ====================================================================
 
     [Fact]
-    public void Part1_region_is_raw_ascii_bytes_isObject_zero()
+    public void Part1_region_is_raw_ASCII_bytes_isObject_zero()
     {
         var msg = NewBuilder().Put(
-            "/test", "k", new byte[] { 0x76 }, null, ThreadId, SeqId);
+            "/test", Key, Value, null, ThreadId, SeqId);
 
         var regionPart = msg.Parts[0];
         Assert.Equal((byte)0, regionPart.IsObject);
@@ -96,7 +113,7 @@ public class TcrMessageBuilderPutTests
     public void Part2_operation_is_NullObj_DSCode()
     {
         var msg = NewBuilder().Put(
-            "/test", "k", new byte[] { 0x76 }, null, ThreadId, SeqId);
+            "/test", Key, Value, null, ThreadId, SeqId);
 
         var opPart = msg.Parts[1];
         Assert.Equal((byte)1, opPart.IsObject);
@@ -107,7 +124,7 @@ public class TcrMessageBuilderPutTests
     public void Part3_flags_is_i32_zero_isObject_zero()
     {
         var msg = NewBuilder().Put(
-            "/test", "k", new byte[] { 0x76 }, null, ThreadId, SeqId);
+            "/test", Key, Value, null, ThreadId, SeqId);
 
         var flagsPart = msg.Parts[2];
         Assert.Equal((byte)0, flagsPart.IsObject);
@@ -115,24 +132,21 @@ public class TcrMessageBuilderPutTests
     }
 
     [Fact]
-    public void Part4_key_string_is_DSCode_tagged_ASCII()
+    public void Part4_key_is_DSCode_tagged_CacheableInt32()
     {
         var msg = NewBuilder().Put(
-            "/test", "k", new byte[] { 0x76 }, null, ThreadId, SeqId);
+            "/test", Key, Value, null, ThreadId, SeqId);
 
         var keyPart = msg.Parts[3];
         Assert.Equal((byte)1, keyPart.IsObject);
-        // DSCode CacheableASCIIString(87) + u16 len(1) + 'k'(0x6B)
-        Assert.Equal(
-            new byte[] { DSCode.CacheableASCIIString, 0x00, 0x01, 0x6B },
-            keyPart.Payload.ToArray());
+        Assert.Equal(EncodedInt32(Key), keyPart.Payload.ToArray());
     }
 
     [Fact]
     public void Part5_isDelta_false_is_CacheableBoolean_zero()
     {
         var msg = NewBuilder().Put(
-            "/test", "k", new byte[] { 0x76 }, null, ThreadId, SeqId);
+            "/test", Key, Value, null, ThreadId, SeqId);
 
         var isDeltaPart = msg.Parts[4];
         Assert.Equal((byte)1, isDeltaPart.IsObject);
@@ -145,7 +159,7 @@ public class TcrMessageBuilderPutTests
     public void Part5_isDelta_true_is_CacheableBoolean_one()
     {
         var msg = NewBuilder().Put(
-            "/test", "k", new byte[] { 0x76 }, null, ThreadId, SeqId,
+            "/test", Key, Value, null, ThreadId, SeqId,
             isDelta: true);
 
         var isDeltaPart = msg.Parts[4];
@@ -155,22 +169,25 @@ public class TcrMessageBuilderPutTests
     }
 
     [Fact]
-    public void Part6_value_is_raw_bytes_isObject_zero_no_dscode()
+    public void Part6_value_is_DSCode_tagged_CacheableInt32()
     {
-        var bytes = new byte[] { 0x01, 0x02, 0x03 };
         var msg = NewBuilder().Put(
-            "/test", "k", bytes, null, ThreadId, SeqId);
+            "/test", Key, Value, null, ThreadId, SeqId);
 
+        // Phase 1.2: values flow through SerializationRegistry, so the
+        // value part is DSCode-tagged (IsObject=1), not the cppcache
+        // CacheableBytes raw-bytes shortcut (IsObject=0). The shortcut
+        // returns once BytesDataConverter lands.
         var valuePart = msg.Parts[5];
-        Assert.Equal((byte)0, valuePart.IsObject);
-        Assert.Equal(bytes, valuePart.Payload.ToArray());
+        Assert.Equal((byte)1, valuePart.IsObject);
+        Assert.Equal(EncodedInt32(Value), valuePart.Payload.ToArray());
     }
 
     [Fact]
     public void Part7_eventId_is_18_bytes_with_threadId_and_seqId()
     {
         var msg = NewBuilder().Put(
-            "/test", "k", new byte[] { 0x76 }, null,
+            "/test", Key, Value, null,
             eventThreadId: 0x0102030405060708,
             eventSequenceId: 0x090A0B0C0D0E0F10);
 
@@ -187,79 +204,74 @@ public class TcrMessageBuilderPutTests
     }
 
     [Fact]
-    public void Part8_callback_is_DSCode_tagged_string()
+    public void Part8_callback_is_DSCode_tagged_CacheableInt32()
     {
         var msg = NewBuilder().Put(
-            "/test", "k", new byte[] { 0x76 },
-            callbackArgument: "cb", eventThreadId: ThreadId, eventSequenceId: SeqId);
+            "/test", Key, Value,
+            callbackArgument: 7,
+            eventThreadId: ThreadId,
+            eventSequenceId: SeqId);
 
         var cbPart = msg.Parts[7];
         Assert.Equal((byte)1, cbPart.IsObject);
-        // DSCode CacheableASCIIString(87) + u16 len(2) + "cb"
-        Assert.Equal(
-            new byte[] { DSCode.CacheableASCIIString, 0x00, 0x02, 0x63, 0x62 },
-            cbPart.Payload.ToArray());
+        Assert.Equal(EncodedInt32(7), cbPart.Payload.ToArray());
     }
 
     // ====================================================================
-    //  Phase 3 type guards
+    //  Arg validation
     // ====================================================================
 
     [Fact]
     public void Put_throws_for_null_regionName()
     {
         Assert.Throws<ArgumentNullException>(() =>
-            NewBuilder().Put(null!, "k", new byte[] { 0x01 }, null, ThreadId, SeqId));
+            NewBuilder().Put(null!, Key, Value, null, ThreadId, SeqId));
     }
 
     [Fact]
     public void Put_throws_for_empty_regionName()
     {
         Assert.Throws<ArgumentException>(() =>
-            NewBuilder().Put("", "k", new byte[] { 0x01 }, null, ThreadId, SeqId));
+            NewBuilder().Put("", Key, Value, null, ThreadId, SeqId));
     }
 
     [Fact]
     public void Put_throws_for_null_key()
     {
         Assert.Throws<ArgumentNullException>(() =>
-            NewBuilder().Put("/r", null!, new byte[] { 0x01 }, null, ThreadId, SeqId));
+            NewBuilder().Put("/r", null!, Value, null, ThreadId, SeqId));
     }
 
     [Fact]
-    public void Put_throws_for_non_string_key_in_phase3()
+    public void Put_throws_for_null_value()
     {
-        Assert.Throws<NotSupportedException>(() =>
-            NewBuilder().Put("/r", 42, new byte[] { 0x01 }, null, ThreadId, SeqId));
+        // cppcache treats null value as Invalidate, not Put — the
+        // Invalidate op surfaces later as a dedicated public API.
+        Assert.Throws<ArgumentNullException>(() =>
+            NewBuilder().Put("/r", Key, null!, null, ThreadId, SeqId));
     }
 
     [Fact]
-    public void Put_throws_for_null_value_in_phase3()
+    public void Put_throws_for_unregistered_key_type()
     {
         Assert.Throws<NotSupportedException>(() =>
-            NewBuilder().Put("/r", "k", null, null, ThreadId, SeqId));
+            NewBuilder().Put("/r", 3.14, Value, null, ThreadId, SeqId));
     }
 
     [Fact]
-    public void Put_throws_for_non_byteArray_value_in_phase3()
+    public void Put_throws_for_unregistered_value_type()
     {
         Assert.Throws<NotSupportedException>(() =>
-            NewBuilder().Put("/r", "k", "string-value", null, ThreadId, SeqId));
+            NewBuilder().Put("/r", Key, 3.14, null, ThreadId, SeqId));
     }
 
     [Fact]
-    public void Put_throws_for_empty_byteArray_value_in_phase3()
+    public void Put_throws_for_unregistered_callback_type()
     {
         Assert.Throws<NotSupportedException>(() =>
-            NewBuilder().Put("/r", "k", Array.Empty<byte>(), null, ThreadId, SeqId));
-    }
-
-    [Fact]
-    public void Put_throws_for_non_string_callback_in_phase3()
-    {
-        Assert.Throws<NotSupportedException>(() =>
-            NewBuilder().Put("/r", "k", new byte[] { 0x01 },
-                callbackArgument: 42, eventThreadId: ThreadId, eventSequenceId: SeqId));
+            NewBuilder().Put("/r", Key, Value,
+                callbackArgument: 3.14,
+                eventThreadId: ThreadId, eventSequenceId: SeqId));
     }
 
     // ====================================================================
@@ -270,12 +282,9 @@ public class TcrMessageBuilderPutTests
     public void Put_roundtrips_through_encode_decode()
     {
         var original = NewBuilder().Put(
-            "/test", "hello", new byte[] { 0x77, 0x6F, 0x72, 0x6C, 0x64 }, null,
-            eventThreadId: 1L, eventSequenceId: 1L);
+            "/test", Key, Value, null, ThreadId, SeqId);
 
-        var bytes = original.Encode();
-        var decoded = TcrMessage.Decode(bytes);
-
+        var decoded = TcrMessage.Decode(original.Encode());
         Assert.Equal(original, decoded);
     }
 
@@ -283,15 +292,14 @@ public class TcrMessageBuilderPutTests
     public void Put_with_callback_roundtrips_through_encode_decode()
     {
         var original = NewBuilder().Put(
-            "/test", "k", new byte[] { 0x01 },
-            callbackArgument: "callback-arg",
+            "/test", Key, Value,
+            callbackArgument: 7,
             eventThreadId: 0x0102030405060708,
             eventSequenceId: 0x090A0B0C0D0E0F10,
             transactionId: 42,
             isDelta: true);
 
         var decoded = TcrMessage.Decode(original.Encode());
-
         Assert.Equal(original, decoded);
     }
 }

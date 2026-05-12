@@ -159,4 +159,47 @@ public class BigEndianBinaryReaderTests
         Assert.Equal(5, r.Position);
         Assert.Equal(0, r.Remaining);
     }
+
+    // ====================================================================
+    //  ReadArrayLen — variable-length array length encoding
+    // ====================================================================
+
+    [Theory]
+    [InlineData(new byte[] { 0x00 }, 0)]
+    [InlineData(new byte[] { 0x01 }, 1)]
+    [InlineData(new byte[] { 0x7F }, 127)]   // i8 boundary — must still be unsigned
+    [InlineData(new byte[] { 0x80 }, 128)]   // first byte that goes negative as sbyte
+    [InlineData(new byte[] { 0xFB }, 251)]
+    [InlineData(new byte[] { 0xFC }, 252)]   // top of inline range
+    public void ReadArrayLen_inline_byte_is_unsigned(byte[] wire, int expected)
+    {
+        // Inline-length wire byte was originally read as signed, which
+        // mis-decoded 0x80..0xFC as -128..-4. The byte must be read
+        // unsigned to match the writer (WriteByte((byte)length)).
+        var r = new BigEndianBinaryReader(wire);
+        Assert.Equal(expected, r.ReadArrayLen());
+    }
+
+    [Fact]
+    public void ReadArrayLen_u16_marker_reads_two_more_bytes()
+    {
+        // 0xFE + u16 BE 0x012C = 300.
+        var r = new BigEndianBinaryReader(new byte[] { 0xFE, 0x01, 0x2C });
+        Assert.Equal(300, r.ReadArrayLen());
+    }
+
+    [Fact]
+    public void ReadArrayLen_i32_marker_reads_four_more_bytes()
+    {
+        // 0xFD + i32 BE 0x00011170 = 70000.
+        var r = new BigEndianBinaryReader(new byte[] { 0xFD, 0x00, 0x01, 0x11, 0x70 });
+        Assert.Equal(70000, r.ReadArrayLen());
+    }
+
+    [Fact]
+    public void ReadArrayLen_null_sentinel_returns_minus_one()
+    {
+        var r = new BigEndianBinaryReader(new byte[] { 0xFF });
+        Assert.Equal(-1, r.ReadArrayLen());
+    }
 }

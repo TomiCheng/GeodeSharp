@@ -143,11 +143,17 @@
 
 ---
 
-## Phase 1.3 — Bulk + management ops（未啟動）
+## Phase 1.3 — Bulk + management ops
 
-### 1.3.0 — `IDataConverter` 內建型別擴充（前置）
+### 1.3.0 — `IDataConverter` 內建型別擴充 ✅
 
 Phase 1.2 只實作 `Int32` + `Boolean` 兩個 converter；bulk ops 端到端整合測試要更有代表性的 K/V 型別。先把 MVP scalar / string / bytes 一次補齊，後面 1.3.a–1.3.c 都吃這個前置。
+
+**完工狀態**：
+- 11 個 Tier A converter src + unit tests + integration tests 全綠（292 unit + 17 integration）
+- `IDataConverter` API 改造完成（`DsCodes[]` / `GetDsCode(value)` / `Write(w, v, dsCode)` / `Read(r, dsCode)`），cppcache `Serializable::getDsCode()` 對齊
+- `IRegion<TKey, TValue>` constraint `where TKey : IEquatable<TKey>`（編譯期擋集合 / `byte[]` / 無 IEquatable POCO）
+- 順手修了 `BigEndianBinaryReader.ReadArrayLen` signed/unsigned bug（phase 1.1 留下來的潛在問題，length 128..252 被誤判負數）
 
 **架構決策（已拍板）：**
 
@@ -183,7 +189,7 @@ interface IDataConverter
 | 59 | `CacheableFloat` | `float` | IEEE-754 BE, NaN/±∞ wire 形狀與 Java 一致 | [ ] |
 | 60 | `CacheableDouble` | `double` | IEEE-754 BE | [ ] |
 | 61 | `CacheableDate` | `DateTime` | 8-byte ms-since-epoch UTC. Read 回 `Kind=Utc`（偏離 clicache 的 `Local`，修 round-trip footgun）；Write `Utc` 直用 / `Local` → `ToUniversalTime` / `Unspecified` **throw `ArgumentException`**（拒絕沉默假設 Local，clicache bug 修正）；精度 truncate to ms | [ ] |
-| 46 | `CacheableBytes` | `byte[]` | VL-encoded length + raw bytes；`null` 走 NullObj、`byte[0]` 走 DSCode 46 + length=0 | [ ] |
+| 46 | `CacheableBytes` | `byte[]` | VL-encoded length + raw bytes（1/3/5 byte prefix）；`null` 走 NullObj、`byte[0]` 走 DSCode 46 + length=0；**不可當 Key**（`Array` 不實作 `IEquatable<T>`、cppcache `CacheableArrayPrimitive` 不繼承 `CacheableKey`，編譯期被 `where TKey : IEquatable<TKey>` 擋掉）；**順手修了 `ReadArrayLen` signed/unsigned bug**（length 128..252 範圍原本被誤判為負數） | ✅ |
 | 42 / 87 / 88 / 89 (+69 read-only) | `CacheableString` / `…ASCIIString` / `…ASCIIStringHuge` / `…StringHuge` (+`CacheableNullString`) | `string` | 一 converter 多 DSCode；ASCII vs modified UTF-8 × short(u16) vs huge(u32) — 但 huge UTF 路徑用 **UTF-16 BE** 不是 modified UTF-8 huge（對齊 cppcache `writeUtf16Huge`）；69 是 read-only null sentinel；`BigEndianBinaryReader.ReadJavaModifiedUtf8` 從 stub 補成實作 | ✅ |
 
 **Tier B — 視 demo / 測試需要再加**（不在 1.3.0 範圍）：

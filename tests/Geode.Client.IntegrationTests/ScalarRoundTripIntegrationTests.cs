@@ -320,6 +320,62 @@ public class ScalarRoundTripIntegrationTests(GeodeFixture fx)
     }
 
     // ────────────────────────────────────────────────────────────
+    //  byte[] value — VL-encoded length (inline / u16 / i32) + raw bytes
+    // ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Bytes_value_round_trips()
+    {
+        var (services, region, ct, cts) = await OpenAsync<int, byte[]>();
+        await using (services)
+        using (cts)
+        {
+            const int key = 4001;
+            var value = new byte[] { 0x00, 0x7F, 0x80, 0xFF, 0xDE, 0xAD, 0xBE, 0xEF };
+
+            await region.PutAsync(key, value, ct);
+            Assert.Equal(value, await region.GetAsync(key, ct));
+        }
+    }
+
+    [Fact]
+    public async Task Bytes_empty_value_round_trips_as_empty_not_null()
+    {
+        // Distinct from null: byte[0] writes [46, 0x00] (DSCode + VL
+        // length 0), Get returns a zero-length array, not null.
+        var (services, region, ct, cts) = await OpenAsync<int, byte[]>();
+        await using (services)
+        using (cts)
+        {
+            const int key = 4002;
+            var value = Array.Empty<byte>();
+
+            await region.PutAsync(key, value, ct);
+            var result = await region.GetAsync(key, ct);
+
+            Assert.NotNull(result);
+            Assert.Empty(result);
+        }
+    }
+
+    [Fact]
+    public async Task Bytes_huge_value_round_trips_via_i32_length()
+    {
+        // > 65535 bytes → VL length uses the 5-byte i32 prefix.
+        var (services, region, ct, cts) = await OpenAsync<int, byte[]>();
+        await using (services)
+        using (cts)
+        {
+            const int key = 4003;
+            var value = new byte[100000];
+            new Random(42).NextBytes(value);
+
+            await region.PutAsync(key, value, ct);
+            Assert.Equal(value, await region.GetAsync(key, ct));
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────
     //  Key-side round-trips (smoke check: non-int key types work on the wire)
     // ────────────────────────────────────────────────────────────
 

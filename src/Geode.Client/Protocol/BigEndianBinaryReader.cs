@@ -172,16 +172,20 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
     ///   <item>First byte = <c>0xFD</c>            → next i32 BE is the length.</item>
     ///   <item>First byte ≤ <c>252</c> (0xFC)      → that byte is the length.</item>
     /// </list>
+    /// The first byte is read as <b>unsigned</b> (matching
+    /// <see cref="BigEndianBinaryWriter.WriteArrayLen"/>'s
+    /// <c>WriteByte((byte)length)</c> on the inline path) — reading it
+    /// signed misinterprets lengths 128..252 as negative numbers.
     /// </remarks>
     public int ReadArrayLen()
     {
-        var first = ReadSByte();
+        var first = ReadByte();
         return first switch
         {
-            -1 => -1,            // 0xFF — null sentinel
-            -2 => ReadUInt16(),  // 0xFE — u16 follows
-            -3 => ReadInt32(),   // 0xFD — i32 follows
-            _ => first,          // 0–252 — literal length
+            0xFF => -1,            // null sentinel
+            0xFE => ReadUInt16(),  // u16 follows
+            0xFD => ReadInt32(),   // i32 follows
+            _ => first,            // 0..252 — literal length
         };
     }
 

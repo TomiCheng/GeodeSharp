@@ -72,10 +72,8 @@ internal sealed class SerializationRegistry
         Register(new SingleDataConverter());       // 59  CacheableFloat     → float
         Register(new DoubleDataConverter());       // 60  CacheableDouble    → double
         Register(new DateTimeDataConverter());     // 61  CacheableDate      → DateTime
+        Register(new BytesDataConverter());        // 46  CacheableBytes     → byte[]
         Register(new StringDataConverter());       // 42/87/88/89 (+69 read-only) → string
-
-        // TODO Phase 1.3.0: bytes —
-        //   Register(new BytesDataConverter());         // 46  CacheableBytes   → byte[]
     }
 
     /// <summary>

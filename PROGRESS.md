@@ -184,7 +184,7 @@ interface IDataConverter
 | 60 | `CacheableDouble` | `double` | IEEE-754 BE | [ ] |
 | 61 | `CacheableDate` | `DateTime` | 8-byte ms-since-epoch UTC. Read 回 `Kind=Utc`（偏離 clicache 的 `Local`，修 round-trip footgun）；Write `Utc` 直用 / `Local` → `ToUniversalTime` / `Unspecified` **throw `ArgumentException`**（拒絕沉默假設 Local，clicache bug 修正）；精度 truncate to ms | [ ] |
 | 46 | `CacheableBytes` | `byte[]` | VL-encoded length + raw bytes；`null` 走 NullObj、`byte[0]` 走 DSCode 46 + length=0 | [ ] |
-| 42 / 87 / 88 / 89 | `CacheableString` / `…ASCIIString` / `…ASCIIStringHuge` / `…StringHuge` | `string` | 一 converter 多 DSCode；ASCII vs Java modified UTF-8 × short(u16) vs huge(i32)；手寫 modified UTF-8 codec（`Encoding.UTF8` 不能用 — `\0` 編 `0xC0 0x80` + supplementary 拆 surrogate 兩 3-byte）；獨立 `JavaModifiedUtf8` 靜態工具 + unit test | [ ] |
+| 42 / 87 / 88 / 89 (+69 read-only) | `CacheableString` / `…ASCIIString` / `…ASCIIStringHuge` / `…StringHuge` (+`CacheableNullString`) | `string` | 一 converter 多 DSCode；ASCII vs modified UTF-8 × short(u16) vs huge(u32) — 但 huge UTF 路徑用 **UTF-16 BE** 不是 modified UTF-8 huge（對齊 cppcache `writeUtf16Huge`）；69 是 read-only null sentinel；`BigEndianBinaryReader.ReadJavaModifiedUtf8` 從 stub 補成實作 | ✅ |
 
 **Tier B — 視 demo / 測試需要再加**（不在 1.3.0 範圍）：
 - `CacheableArrayList(65)` / `CacheableHashSet(66)` / `CacheableHashMap(67)` / `CacheableObjectArray(52)`

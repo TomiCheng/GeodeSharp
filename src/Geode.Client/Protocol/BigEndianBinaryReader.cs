@@ -187,16 +187,87 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
 
     /// <summary>
     /// Read a Java modified UTF-8 string with a u16 byte-length prefix.
-    /// Mirrors cppcache <c>DataInput::readUTF</c>.
+    /// Mirrors cppcache <c>DataInput::readJavaModifiedUtf8</c>.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Modified UTF-8 differs from standard UTF-8: <c>0xC0 0x80</c> decodes
     /// to <c>\0</c>, and supplementary codepoints arrive as a surrogate pair
     /// of two 3-byte sequences (6 bytes total) rather than the 4-byte UTF-8
-    /// form.
+    /// form. We decode per UTF-16 code unit (matching how the writer
+    /// encoded) — unpaired surrogates round-trip intact.
+    /// </para>
+    /// <para>
+    /// Empty payload (u16 length = 0) returns <see cref="string.Empty"/>,
+    /// not <c>null</c>. Null strings travel as a separate DSCode
+    /// (<see cref="DSCode.CacheableNullString"/> or
+    /// <see cref="DSCode.NullObj"/>) handled by the registry, not here.
+    /// </para>
     /// </remarks>
-    public string? ReadJavaModifiedUtf8() =>
-        throw new NotImplementedException("Phase 4 string values.");
+    /// <exception cref="FormatException">
+    /// The byte sequence is not valid modified UTF-8 (lead byte outside
+    /// known ranges, or a continuation byte missing its <c>0x80..0xBF</c>
+    /// mask).
+    /// </exception>
+    public string ReadJavaModifiedUtf8()
+    {
+        var byteLen = ReadUInt16();
+        if (byteLen == 0)
+        {
+            return string.Empty;
+        }
+
+        EnsureAvailable(byteLen);
+        var span = buffer.Span.Slice(_position, byteLen);
+        _position += byteLen;
+
+        // Char-count upper bound = byte-count (1-byte chars max it out);
+        // typical strings allocate less.
+        var chars = new char[byteLen];
+        var charPos = 0;
+        var bytePos = 0;
+
+        while (bytePos < byteLen)
+        {
+            var b1 = span[bytePos++];
+            if ((b1 & 0x80) == 0)
+            {
+                // 0xxxxxxx — 1-byte ASCII char (excludes 0x00 in modified UTF-8).
+                chars[charPos++] = (char)b1;
+            }
+            else if ((b1 & 0xE0) == 0xC0)
+            {
+                // 110xxxxx 10xxxxxx — 2-byte char (covers 0x0000–0x07FF
+                // including the special 0xC0 0x80 = \0 encoding).
+                if (bytePos >= byteLen) throw MalformedUtf8(bytePos);
+                var b2 = span[bytePos++];
+                if ((b2 & 0xC0) != 0x80) throw MalformedUtf8(bytePos - 1);
+                chars[charPos++] = (char)(((b1 & 0x1F) << 6) | (b2 & 0x3F));
+            }
+            else if ((b1 & 0xF0) == 0xE0)
+            {
+                // 1110xxxx 10xxxxxx 10xxxxxx — 3-byte char (covers
+                // 0x0800–0xFFFF and surrogate halves).
+                if (bytePos + 1 >= byteLen) throw MalformedUtf8(bytePos);
+                var b2 = span[bytePos++];
+                var b3 = span[bytePos++];
+                if ((b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80)
+                    throw MalformedUtf8(bytePos - 2);
+                chars[charPos++] = (char)(((b1 & 0x0F) << 12)
+                                          | ((b2 & 0x3F) << 6)
+                                          | (b3 & 0x3F));
+            }
+            else
+            {
+                throw MalformedUtf8(bytePos - 1);
+            }
+        }
+
+        return new string(chars, 0, charPos);
+
+        static FormatException MalformedUtf8(int byteOffset) =>
+            new($"Malformed Java modified UTF-8 byte sequence at offset {byteOffset}.");
+    }
 
     /// <summary>
     /// Read a UTF-16 big-endian string with an i32 byte-length prefix.

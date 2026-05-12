@@ -247,7 +247,80 @@ public class ScalarRoundTripIntegrationTests(GeodeFixture fx)
     }
 
     // ────────────────────────────────────────────────────────────
-    //  Key-side round-trip (smoke check: non-int key type works on the wire)
+    //  String value — exercises all four CacheableString DSCode variants
+    //  (ASCII short / ASCII huge / mod-UTF-8 short / UTF-16 huge)
+    // ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task String_ascii_value_round_trips()
+    {
+        // ASCII content + length ≤ 65535 → DSCode 87 (CacheableASCIIString).
+        var (services, region, ct, cts) = await OpenAsync<int, string>();
+        await using (services)
+        using (cts)
+        {
+            const int key = 3001;
+            const string value = "Hello, Geode!";
+
+            await region.PutAsync(key, value, ct);
+            Assert.Equal(value, await region.GetAsync(key, ct));
+        }
+    }
+
+    [Fact]
+    public async Task String_non_ascii_value_round_trips_via_modified_utf8()
+    {
+        // Non-ASCII content (CJK + accented) + modified-UTF-8 byte length
+        // well under 65535 → DSCode 42 (CacheableString). Verifies the
+        // round-trip survives \0, modified-UTF-8 encoding, and the
+        // surrogate-pair handling for the emoji.
+        var (services, region, ct, cts) = await OpenAsync<int, string>();
+        await using (services)
+        using (cts)
+        {
+            const int key = 3002;
+            const string value = "中文 mixed Aé 你好\0 \U0001F600";
+
+            await region.PutAsync(key, value, ct);
+            Assert.Equal(value, await region.GetAsync(key, ct));
+        }
+    }
+
+    [Fact]
+    public async Task String_huge_ascii_value_round_trips()
+    {
+        // > 65535 chars, all ASCII → DSCode 88 (CacheableASCIIStringHuge).
+        var (services, region, ct, cts) = await OpenAsync<int, string>();
+        await using (services)
+        using (cts)
+        {
+            const int key = 3003;
+            var value = new string('x', 70000);
+
+            await region.PutAsync(key, value, ct);
+            Assert.Equal(value, await region.GetAsync(key, ct));
+        }
+    }
+
+    [Fact]
+    public async Task String_huge_non_ascii_value_round_trips_via_utf16()
+    {
+        // 35000 × '中' = 105000 modified-UTF-8 bytes > 65535 → encoding
+        // switches to DSCode 89 (CacheableStringHuge, UTF-16 BE).
+        var (services, region, ct, cts) = await OpenAsync<int, string>();
+        await using (services)
+        using (cts)
+        {
+            const int key = 3004;
+            var value = new string('中', 35000);
+
+            await region.PutAsync(key, value, ct);
+            Assert.Equal(value, await region.GetAsync(key, ct));
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────
+    //  Key-side round-trips (smoke check: non-int key types work on the wire)
     // ────────────────────────────────────────────────────────────
 
     [Fact]
@@ -262,6 +335,22 @@ public class ScalarRoundTripIntegrationTests(GeodeFixture fx)
 
             await region.PutAsync(key, 99, ct);
             Assert.Equal(99, await region.GetAsync(key, ct));
+            Assert.True(await region.ContainsKeyAsync(key, ct));
+        }
+    }
+
+    [Fact]
+    public async Task String_key_round_trips_with_int_value()
+    {
+        // Smoke test: most common real-world Key shape (string ID).
+        var (services, region, ct, cts) = await OpenAsync<string, int>();
+        await using (services)
+        using (cts)
+        {
+            const string key = "order:42-中文";
+
+            await region.PutAsync(key, 7, ct);
+            Assert.Equal(7, await region.GetAsync(key, ct));
             Assert.True(await region.ContainsKeyAsync(key, ct));
         }
     }

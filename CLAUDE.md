@@ -463,6 +463,15 @@ Pulled from `cppcache/src/TcrMessage.hpp`:
    `endpointName`), not `string.Format`. Where the cppcache message
    text is awkward in English, paraphrase but keep the severity and
    the key data fields.
+9. **Constant naming follows source.** Wire-protocol constants that
+   mirror a cppcache `static const` keep cppcache's
+   `SCREAMING_SNAKE_CASE` verbatim (`FLAG_NULL_TAG`,
+   `HAS_MEMBER_ID`, `LAST_CHUNK_MASK`); diagnostics and grep
+   round-trip cleanly between sources. Constants we invent on the
+   C# side (`MetaTransactionId`, `ThreadId`) use standard C#
+   `PascalCase`. `.editorconfig` doesn't enforce — the two
+   conventions coexist by intent, distinguished by whether the
+   constant has a 1:1 cppcache origin.
 
 ---
 

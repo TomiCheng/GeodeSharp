@@ -1,3 +1,5 @@
+using Geode.Client.Internal;
+
 namespace Geode.Client.Protocol;
 
 /// <summary>
@@ -28,7 +30,7 @@ namespace Geode.Client.Protocol;
 // wire decoder + ctors that actually populate them land in Phase 4+.
 #pragma warning disable CS0169 // field never used — see remarks above
 #pragma warning disable CS0414 // field assigned but never used — same
-internal class CacheableObjectPartList
+internal class CacheableObjectPartList(RegionInternal region)
 {
     /// <summary>cppcache <c>m_keys</c>
     /// (<c>const std::vector&lt;CacheableKey&gt;*</c>). Keys are
@@ -51,10 +53,11 @@ internal class CacheableObjectPartList
 
     /// <summary>cppcache <c>m_exceptions</c>
     /// (<c>HashMapOfException</c>) — key→exception map for the
-    /// failed entries in a partial-result reply. Element type
-    /// <see cref="object"/>? until we have an <c>Exception</c>
-    /// wire-decoder class.</summary>
-    protected Dictionary<object, object?>? Exceptions;
+    /// failed entries in a partial-result reply. cppcache wraps
+    /// the wire-decoded class name in <c>CacheServerException</c>
+    /// (or <c>NotAuthorizedException</c>); our port unifies on
+    /// <see cref="GeodeException"/>.</summary>
+    protected Dictionary<object, GeodeException?>? Exceptions;
 
     /// <summary>cppcache <c>m_resultKeys</c>
     /// (<c>std::shared_ptr&lt;std::vector&lt;CacheableKey&gt;&gt;</c>).
@@ -65,8 +68,11 @@ internal class CacheableObjectPartList
     /// <summary>cppcache <c>m_region</c>
     /// (<c>ThinClientRegion*</c>) — back-ref so the decoder can
     /// look up region attributes (cachingEnabled, concurrency
-    /// checks). Our port uses the public <see cref="IRegion"/>.</summary>
-    protected IRegion? Region;
+    /// checks) and dispatch local-cache writes (<c>putLocal</c>).
+    /// Typed as <see cref="RegionInternal"/> (not public
+    /// <see cref="IRegion"/>) so Phase 4+ <c>PutLocal</c> calls
+    /// reach without a downcast.</summary>
+    protected RegionInternal Region { get; } = region;
 
     /// <summary>cppcache <c>m_updateCountMap</c>
     /// (<c>MapOfUpdateCounters*</c>) — per-key update counters

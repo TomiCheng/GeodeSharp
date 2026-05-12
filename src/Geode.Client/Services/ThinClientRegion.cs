@@ -3,6 +3,7 @@ using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
 using Geode.Client.Protocol.Serialization;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Geode.Client.Services;
@@ -29,6 +30,7 @@ namespace Geode.Client.Services;
 /// </para>
 /// </remarks>
 internal sealed class ThinClientRegion(
+    IServiceProvider serviceProvider,
     ILogger<ThinClientRegion> logger,
     TcrMessageBuilder tcrMessageBuilder,
     SerializationRegistry serializationRegistry,
@@ -507,7 +509,7 @@ internal sealed class ThinClientRegion(
         // [ ] ChunkedRemoveAllResponse.HandleChunk / Reset — currently
         //     NIE; needs VersionedCacheableObjectPartList decoder
         //     (Phase 1.3.b step 5).
-        var chunkedResult = new ChunkedRemoveAllResponse(this);
+        var chunkedResult = ActivatorUtilities.CreateInstance<ChunkedRemoveAllResponse>(serviceProvider, this);
         var reply = await dm
             .SendSyncRequestAsync(request, chunkedResult, ct: ct)
             .ConfigureAwait(false);

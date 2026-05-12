@@ -214,6 +214,7 @@ public static class GeodeClientExtensions
         // would be a captive-dependency lifetime violation).
         services.TryAddScoped<SerializationRegistry>();
         services.TryAddScoped<TcrMessageBuilder>();
+        services.TryAddScoped<TcrMessageHelper>();
         // EventIdGenerator is per-cache (Scoped) — mirrors cppcache
         // EventIdTSS, which sits inside CacheImpl. Each cache instance
         // gets its own monotonic seq, so closing and rebuilding a cache

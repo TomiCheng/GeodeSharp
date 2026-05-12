@@ -128,6 +128,74 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
         return value;
     }
 
+    /// <summary>
+    /// Read a Java-formatted string. Mirrors cppcache
+    /// <c>DataInput::readString</c>: 1-byte type header (
+    /// <see cref="DSCode.CacheableASCIIString"/> /
+    /// <see cref="DSCode.CacheableString"/> /
+    /// <see cref="DSCode.CacheableStringHuge"/> / NullObj) followed
+    /// by length + content (UTF-8 modified or UTF-16 BE depending on
+    /// variant).
+    /// </summary>
+    /// <remarks>
+    /// Phase 1.3.b stub &#x2014; NIE until the
+    /// <c>VersionedCacheableObjectPartList::readObjectPart</c>
+    /// exception branch is reachable (Phase 1.3.c GetAll with
+    /// server-side exceptions). Body can dispatch through the
+    /// existing <see cref="Serialization.StringDataConverter"/>.
+    /// </remarks>
+    public string? ReadString()
+    {
+        throw new NotImplementedException(
+            "BigEndianBinaryReader.ReadString pending Phase 1.3.c.");
+    }
+
+    /// <summary>
+    /// Skip <paramref name="count"/> bytes forward. Mirrors cppcache
+    /// <c>DataInput::advanceCursor</c>.
+    /// </summary>
+    public void AdvanceCursor(int count)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        EnsureAvailable(count);
+        _position += count;
+    }
+
+    /// <summary>
+    /// Read a Java variable-length-encoded unsigned long (1-9 bytes).
+    /// Mirrors cppcache <c>DataInput::readUnsignedVL</c> /
+    /// Java <c>DataSerializer.readUnsignedVL</c>: 7-bit-per-byte
+    /// little-endian with the top bit set on all bytes except the
+    /// last.
+    /// </summary>
+    /// <remarks>
+    /// Algorithm: read bytes, accumulate <c>(b &amp; 0x7F) &lt;&lt; shift</c>;
+    /// stop when the top bit is clear. <c>shift</c> increments by 7
+    /// per byte and caps at 64 bits &#x2014; anything longer is
+    /// malformed.
+    /// </remarks>
+    /// <exception cref="InvalidDataException">
+    /// More than 9 bytes consumed without seeing a terminator (the
+    /// VL encoding for a 64-bit value never exceeds 9 bytes).
+    /// </exception>
+    public ulong ReadUnsignedVL()
+    {
+        ulong result = 0;
+        var shift = 0;
+        while (shift < 64)
+        {
+            var b = ReadByte();
+            result |= ((ulong)(b & 0x7F)) << shift;
+            if ((b & 0x80) == 0)
+            {
+                return result;
+            }
+            shift += 7;
+        }
+        throw new InvalidDataException(
+            "ReadUnsignedVL: malformed VL encoding (no terminator within 64 bits).");
+    }
+
     /// <summary>Read an IEEE 754 single-precision float in big-endian byte order.</summary>
     public float ReadFloat()
     {

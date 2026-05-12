@@ -139,7 +139,7 @@
   影響範圍：`IRegion` / `IRegion<TKey,TValue>` / `RegionInternal`（把 callback 版設 abstract、no-callback 版 forward 過去）/ `ThinClientRegion`（callback 改 canonical 實作）/ `RegionView`（typed + 顯式 IRegion 兩組 overload）。Builder 端不用動。
 - Fresh-conn race（[memory](C:\Users\c_tom\.claude\projects\D--projects-tomi-GeodeSharp\memory\geode-fresh-conn-race.md)）— 用 `Task.Delay(3s)` 在測試端規避；正式 fix（pool warmup / readiness probe）留給 Phase 1.5
 
-**下一步入口**：Phase 1.3 — Bulk + management ops。1.3.0（converter 擴充）+ 1.3.a（Clear / Invalidate）已完工；下一格是 1.3.b（chunked-reply 基建 + RemoveAll）。
+**下一步入口**：Phase 1.3.c — PutAll(56) + GetAll70(100)。Chunked-reply 基建已在 1.3.b 落地，1.3.c 主要是新 wire 訊息 + `GetAll` 端 keys-section / objects-section 真路徑（1.3.b 已寫的 decoder 第一次被「真實 hasObjects」打到）。
 
 ---
 
@@ -221,14 +221,82 @@ interface IDataConverter
 
 **不暴露**：`InvalidateRegion(55)` 是 server→client only，要 region-wide 就 `ClearAsync`
 
-### 1.3.b — Chunked-reply 基建 + RemoveAll
+### 1.3.b — Chunked-reply 基建 + RemoveAll ✅
 
-- [ ] `TcrConnection` chunked reader（讀到 `lastChunkBit` 才結束；對齊 cppcache `TcrMessage::handleByteArrayResponse`）
-- [ ] `ChunkedResponseHandler` 抽象（對齊 cppcache `TcrChunkedResult`）
-- [ ] `VersionedCacheableObjectPartList` 解碼器（thin-client 路徑：忽略 versionTags、認 `NULL_OBJECT` / `byteArray[i]==3` miss）
-- [ ] `_pendingReplies` 改成「send 時註冊 handler」，reply reader 不再反推 chunked / 非 chunked
-- [ ] `RemoveAll(109)` — 5+keys.size parts
-- [ ] `IRegion.RemoveAllAsync(IReadOnlyCollection<TKey>, CancellationToken)`
+**完工狀態**：5/5 RemoveAll integration tests 通過對 `apachegeode/geode` 真機。Chunked-reply 解碼整條 wire 跑通（含 versioned region 的 `VersionTag.FromData` 路徑）。
+
+#### Wire 請求 + 入口
+
+- [x] `RemoveAll(109)` — 5+keys.Count parts（region / eventId / flags=0 / callback-or-NullObj / keyCount / N keys）；對齊 cppcache `TcrMessageRemoveAll` (`TcrMessage.cpp:2424-2468`)
+  - [Protocol/TcrMessageBuilder.RemoveAll.cs](src/Geode.Client/Protocol/TcrMessageBuilder.RemoveAll.cs)
+- [x] `EventIdGenerator.NextRange(int count)` — Interlocked.Add 一次保留 N 個連續 seq id（cppcache `writeEventIdPart(keys.size()-1)` 對應）
+- [x] `IRegion.RemoveAllAsync(IReadOnlyCollection<object>, ct)` + `IRegion<TKey,TValue>.RemoveAllAsync(IReadOnlyCollection<TKey>, ct)` + `RegionView` typed forward（reference TKey 走 covariance、value TKey box 進 `object[]`）
+- [x] `ThinClientRegion.RemoveAllAsync` body — build → `EventIdGenerator.NextRange(N)` → dispatch → REPLY/RESPONSE/EXCEPTION switch
+
+#### DM / 連線層 chunked 路徑
+
+- [x] `ThinClientBaseDM.SendSyncRequestAsync(TcrMessage, TcrChunkedResult, ...)` abstract overload
+- [x] `ThinClientPoolDM.SendSyncRequestAsync(req, chunkedResult, ...)` — SelectEndpoint → AddEP → forward
+- [x] `ThinClientPoolDM.SendRequestToEndpointAsync` chunked overload — borrow conn → 呼 `TcrConnection.SendRequestAsync(req, chunkedResult, ct)` → put-back / disconnect-on-error，整體跟非 chunked overload 形狀對齊
+- [x] `TcrConnection.SendRequestAsync(req, TcrChunkedResult, ct)` overload — **inline chunked-reply 迴圈**（cppcache `readMessageChunked` 對應）：17-byte 首 frame header + 5-byte 後續 chunk header + last-chunk bit
+- [x] `TcrConnection.Touch()` 空殼 + `PutInQueueAsync` 呼叫（Phase 1.5 `cleanStaleConnections` 用 `_lastAccessed` 真填）
+
+**關鍵設計校正**：cppcache `m_pendingReplies` / 背景 reader 那層**我們不需要**。cppcache chunked 路徑是 **inline** 同步讀（`readMessageChunked` 在發送 thread 上接著跑），一條 connection 一次只服務一個 request。Audit 前期誤判要做 `_pendingReplies` 表跟背景 reader，看 cppcache 真碼後刪掉。
+
+#### Chunked-result handler 階層
+
+- [x] `TcrChunkedResult` abstract base（[Protocol/TcrChunkedResult.cs](src/Geode.Client/Protocol/TcrChunkedResult.cs)）— `HandleChunk(payload, isLastChunk)` + `Reset()`；cppcache 的 `finalize` / `binary_semaphore` / `m_ex` / `m_dsmemId` 槽位全部砍掉（Task/await + exception 自然冒泡 + Phase 4 才需要 dsmemId）
+- [x] `ChunkedRemoveAllResponse` ([Services/ChunkedRemoveAllResponse.cs](src/Geode.Client/Services/ChunkedRemoveAllResponse.cs)) — `Reset` 對齊 cppcache 2 步（null+size guard → clear versionTags）；`HandleChunk` 5 步：
+  - Step 1：wrap payload 進 `BigEndianBinaryReader`（via `ActivatorUtilities`）
+  - Step 2：`TcrMessageHelper.ReadChunkPartHeader` 分類 chunk
+  - Step 3a：`NullObject` → return（空 reply）
+  - Step 3b：`Object` → `new VersionedCacheableObjectPartList` + `FromData` + `list?.AddAll`
+  - Step 3c：`Bytes` → 讀 2 bytes（single-hop metadata，Phase 4 真用）
+  - fallthrough：`Exception` / unknown → throw `GeodeException`
+- [x] `TcrMessageHelper.ReadChunkPartHeader` — 9 步完整 impl（partLen + isObj → NullObject / Exception 早出；DSCode 分支 JavaSerializable / NullObj / FixedIDByte+compId / 不符 → throw）
+- [x] `ChunkObjectType` enum（`NullObject` / `Object` / `Exception` / `Bytes`）
+
+#### VersionedObjectPartList 解碼器（真實作）
+
+- [x] `CacheableObjectPartList` base（cppcache 對齊；primary ctor 收 `RegionInternal region`；9 個 protected 欄位 mirror cppcache `m_*`）
+- [x] `VersionedCacheableObjectPartList` — primary ctor `(IServiceProvider, SerializationRegistry, ILogger, RegionInternal)`；
+  - 7 個 wire 欄位 + 4 個 FLAG_* 常數 + `VersionTags` accessor + `Size` 屬性（cppcache `size()` 對應）
+  - `FromData` 7 步真實作（在 `lock(_responseLock)` 內）：flags byte parse / init Values / 空訊息 LogDebug / keys section（`_hasKeys` 真讀 keys → tempKeys/ResultKeys/localKeys） / objects section（`hasObjects` → `ReadObjectPart` 進 _byteArray+Values） / version tags section（`_hasTags` switch on 4 FLAG_*） / putLocal merge（Phase 4+ NIE）
+  - `AddAll(other)` 真實作（cppcache `addAll` 3 步：merge keys / OR-in regionIsVersioned / merge versionTags）
+  - `ReadObjectPart` 真實作（3 分支：exception=2 → wrap `GeodeException` 進 `Exceptions` / `_serializeValues=true` → raw bytes / 一般 → `serializationRegistry.ReadObject`）
+- [x] `BigEndianBinaryReader.ReadUnsignedVL` 真實作（Java VL unsigned u64，1-9 bytes、9-byte cap throw `InvalidDataException`）
+- [x] `BigEndianBinaryReader.AdvanceCursor(int)` 真實作 / `ReadString` 暫 NIE（exception part 才呼到）
+
+#### VersionTag + DiskVersionTag
+
+- [x] `VersionTag` — primary ctor `(IServiceProvider, ILogger, MemberListForVersionStamp?)`；7 個欄位（`_bits` / `_entryVersion` / `_regionVersionHighBytes` / `_regionVersionLowBytes` / `_internalMemId` / `_previousMemId` / `_timeStamp`）+ 5 個 `HAS_*`/`VERSION_TWO_BYTES`/`DUPLICATE_MEMBER_IDS` 常數 + 3 個 `BITS_*` 常數
+  - `FromData` 8 步真實作（flags / bits / skip distributedSystemId / entryVersion 16-or-32 / regionVersionHighBytes optional / regionVersionLowBytes / timeStamp VL / virtual `ReadMembers` 派發）
+  - `ReadMembers` 2 步真實作（`HAS_MEMBER_ID` → `ClientProxyMembershipID.ReadEssentialData` + `MemberListForVersionStamp.Add` → `_internalMemId`；`HAS_PREVIOUS_MEMBER_ID` 含 `DUPLICATE_MEMBER_IDS` 短路）
+  - `ReplaceNullMemberId(memId)` 真實作（4 行 if-設值）
+- [x] `DiskVersionTag` (`internal sealed : VersionTag`) — `ReadMembers` override NIE（persistent region 才碰到 DiskStoreId 解碼，Phase 4+）
+- [x] `ClientProxyMembershipID` — primary ctor 收 `SerializationRegistry`（DI 注入）；`ReadEssentialData` 真實作（cppcache 7-field wire format：array length + hostAddr bytes + hostPort + skip flag + vmKind + uniqueTag/vmViewIdStr（loner 分支） + dsName）
+- [x] `MemberListForVersionStamp` — `Add` 真實作（簡化版：monotonic id 不做 hashKey dedup，Phase 4 補）；`GetDsMember` 真實作（dict lookup + lock）
+- [x] `DSFid` enum（25 個 entry，含 `VersionedObjectPartList = 7` / `DiskVersionTag = 2131` 等，跟 cppcache 1:1）
+
+#### 命名 / 型別注入慣例
+
+- [x] CLAUDE.md 第 9 條原則：**cppcache wire 鏡像常數用 `SCREAMING_SNAKE_CASE`**（`FLAG_NULL_TAG` / `HAS_MEMBER_ID`）；自製 C# 常數 PascalCase（`MetaTransactionId` / `ThreadId`）。`.editorconfig` 不強制
+- [x] **Internal 類別注入「最具體必要型別」而非介面**：`ChunkedRemoveAllResponse` 收 `ThinClientRegion`、`VersionedCacheableObjectPartList` / `CacheableObjectPartList` 收 `RegionInternal`——避免 future downcast 風險
+- [x] **`ActivatorUtilities.CreateInstance` 廣泛採用**：`ChunkedRemoveAllResponse` / `VersionedCacheableObjectPartList` / `VersionTag` / `DiskVersionTag` / `ClientProxyMembershipID` / `BigEndianBinaryReader` 都走 ActivatorUtilities，DI 依賴自動注入
+
+#### 測試
+
+- [x] [RegionRemoveAllIntegrationTests](tests/Geode.Client.IntegrationTests/RegionRemoveAllIntegrationTests.cs) — 5 cases（4-key batch / mixed present+missing / empty arg / null arg / single-key N=1 邊界）全綠對 `apachegeode/geode` 真機，15 秒
+- [ ] Unit tests — `TcrMessageBuilderRemoveAllTests`（頭尾 shape / 5+N parts / per-part payload / arg validation / encode round-trip）尚未寫；整合測試已覆蓋 happy path
+
+#### Deferred / 留待後續
+
+- **NIE 仍存在但 RemoveAll 不踩**：`DiskVersionTag.ReadMembers`（persistent region，Phase 4+）/ `BigEndianBinaryReader.ReadString`（exception chunk，Phase 1.3.c GetAll 才可能）/ Step 7 `putLocal` merge（`AddToLocalCache`，Phase 4+ client-side caching）
+- **欄位仍 placeholder**：`_endpointMemId` / `_msg`（pragma CS0649 包住）—— Phase 3 auth / Phase 4 single-hop 才寫入
+- `MemberListForVersionStamp.Add` 的 hashKey dedup 跳過——需要 `ClientProxyMembershipID.HashKey`，Phase 4 補
+- **架構決策已收進 memory 或 CLAUDE.md**：
+  - constants naming convention（CLAUDE.md #9）
+  - internal class 注入最具體型別（待 memory）
 
 ### 1.3.c — PutAll + GetAll70
 

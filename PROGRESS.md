@@ -139,7 +139,7 @@
   影響範圍：`IRegion` / `IRegion<TKey,TValue>` / `RegionInternal`（把 callback 版設 abstract、no-callback 版 forward 過去）/ `ThinClientRegion`（callback 改 canonical 實作）/ `RegionView`（typed + 顯式 IRegion 兩組 overload）。Builder 端不用動。
 - Fresh-conn race（[memory](C:\Users\c_tom\.claude\projects\D--projects-tomi-GeodeSharp\memory\geode-fresh-conn-race.md)）— 用 `Task.Delay(3s)` 在測試端規避；正式 fix（pool warmup / readiness probe）留給 Phase 1.5
 
-**下一步入口**：Phase 1.3 — Bulk + management ops（PutAll / GetAll70 / RemoveAll / Clear / Invalidate）。
+**下一步入口**：Phase 1.3 — Bulk + management ops。1.3.0（converter 擴充）+ 1.3.a（Clear / Invalidate）已完工；下一格是 1.3.b（chunked-reply 基建 + RemoveAll）。
 
 ---
 
@@ -202,12 +202,24 @@ interface IDataConverter
 
 ---
 
-### 1.3.a — Clear + Invalidate（非分片）
+### 1.3.a — Clear + Invalidate（非分片）✅
 
-- [ ] `ClearRegion(36)` — 3 parts（regionName / eventId / [callback]）；reply `Reply(6)` 或 `ClearRegionDataError(37)` 或 `Exception(2)`；沒有 chunked
-- [ ] `Invalidate(83)` — 3 parts（regionName / key / eventId / [callback]）；reply `Reply(6)` 或 `InvalidateError(84)` 或 `Exception(2)`；versionTag 先丟（同 `RemoveAsync`）
-- [ ] `IRegion.ClearAsync(CancellationToken)` / `IRegion.InvalidateAsync(TKey, CancellationToken)`
-- [ ] `InvalidateRegion(55)` 是 server→client only，**不暴露** `InvalidateRegionAsync`（要 region-wide 就 `ClearAsync`）
+**完工狀態**：323 unit tests（先前 292 + 新增 31）+ 22 integration tests（先前 17 + 新增 5）全綠對 `apachegeode/geode` 真機。
+
+- [x] `IRegion.ClearAsync(CancellationToken)` / `IRegion.InvalidateAsync(object, CancellationToken)` + typed `IRegion<TKey,TValue>.InvalidateAsync(TKey, CancellationToken)`（無 typed `ClearAsync` overload — 無 K/V 參數）
+- [x] `RegionInternal` 加 2 個 abstract；`RegionView` typed forward + 顯式 `IRegion.InvalidateAsync` 實作
+- [x] `ClearRegion(36)` — 2 parts（regionName / eventId）或 3 parts（含 callback）；對齊 cppcache `TcrMessageClearRegion` (`TcrMessage.cpp:1644-1682`)；reply `Reply(6)` / `ClearRegionDataError(37)` / `Exception(2)` / 其他 → throw；沒有 chunked
+  - [Protocol/TcrMessageBuilder.ClearRegion.cs](src/Geode.Client/Protocol/TcrMessageBuilder.ClearRegion.cs)
+  - `millisecondsResponseTimeout` part **不實作** — cppcache `ThinClientRegion::clear` (`ThinClientRegion.cpp:777`) 寫死傳 `-1`，正常路徑從不發
+  - `localClearNoThrow` + `invokeCacheListenerForRegionEvent(AFTER_REGION_CLEAR)` 略過（Phase 2+ caching-enabled 才需要）
+- [x] `Invalidate(83)` — 3 parts（regionName / key / eventId）或 4 parts（含 callback）；對齊 cppcache `TcrMessageInvalidate` (`TcrMessage.cpp:1896-1932`)；reply `Reply(6)` / `Exception(2)` / `InvalidateError(84)` / 其他 → throw；versionTag 先丟（同 `RemoveAsync`）
+  - [Protocol/TcrMessageBuilder.Invalidate.cs](src/Geode.Client/Protocol/TcrMessageBuilder.Invalidate.cs)
+  - 比 Destroy 少 `expectedOldValue` / `Operation` 兩個 NullObj part（Invalidate 沒有 conditional overload 共用 ctor）
+- [x] `ThinClientRegion.ClearAsync` / `InvalidateAsync` 端到端 — 日誌對齊 cppcache `LOGFINE` / `LOGERROR` 嚴重度
+- [x] Unit tests — `TcrMessageBuilderClearRegionTests`（15 cases）+ `TcrMessageBuilderInvalidateTests`（16 cases）
+- [x] [RegionInvalidateClearIntegrationTests](tests/Geode.Client.IntegrationTests/RegionInvalidateClearIntegrationTests.cs) — 5 cases（Invalidate keeps key clears value / missing-key invalidate OK / Put after Invalidate restores / Clear removes-all keeps-region / Clear on empty region OK）
+
+**不暴露**：`InvalidateRegion(55)` 是 server→client only，要 region-wide 就 `ClearAsync`
 
 ### 1.3.b — Chunked-reply 基建 + RemoveAll
 

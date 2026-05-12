@@ -53,6 +53,37 @@ public interface IRegion
     /// Mirrors cppcache <c>Region::containsKeyOnServer(key)</c>.
     /// </summary>
     Task<bool> ContainsKeyAsync(object key, CancellationToken ct = default);
+
+    /// <summary>
+    /// Clear every entry from the region on the server (region itself
+    /// stays). Mirrors cppcache <c>Region::clear()</c>
+    /// (<c>cppcache/include/geode/Region.hpp</c>) &#x2192;
+    /// <c>ThinClientRegion::clearNoThrow_remote</c>
+    /// (<c>cppcache/src/ThinClientRegion.cpp</c>); wire is
+    /// <c>MessageType.ClearRegion(36)</c>.
+    /// </summary>
+    /// <remarks>
+    /// Server-driven only — there is no region-wide <c>InvalidateRegion</c>
+    /// counterpart on the public surface (cppcache <c>InvalidateRegion(55)</c>
+    /// is server-&#x2192;client notification, not a client op). Use
+    /// <see cref="ClearAsync"/> when you want to drop all entries.
+    /// </remarks>
+    Task ClearAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Invalidate <paramref name="key"/> on the server &#x2014; the key
+    /// stays, the value becomes <c>null</c>. Mirrors cppcache
+    /// <c>Region::invalidate(key)</c> &#x2192;
+    /// <c>ThinClientRegion::invalidateNoThrow_remote</c>; wire is
+    /// <c>MessageType.Invalidate(83)</c>.
+    /// </summary>
+    /// <remarks>
+    /// After invalidate, <see cref="ContainsKeyAsync"/> returns <c>true</c>
+    /// and <see cref="GetAsync"/> returns <c>null</c> (until the next
+    /// <see cref="PutAsync"/>). Missing-key behaviour is server-decided
+    /// &#x2014; cppcache treats it as success; we mirror that contract.
+    /// </remarks>
+    Task InvalidateAsync(object key, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -101,4 +132,10 @@ public interface IRegion<TKey, TValue> : IRegion
 
     /// <inheritdoc cref="IRegion.ContainsKeyAsync(object, CancellationToken)" />
     Task<bool> ContainsKeyAsync(TKey key, CancellationToken ct = default);
+
+    /// <inheritdoc cref="IRegion.InvalidateAsync(object, CancellationToken)" />
+    Task InvalidateAsync(TKey key, CancellationToken ct = default);
+
+    // No typed ClearAsync overload — the base IRegion.ClearAsync takes
+    // no key / value, nothing to specialise.
 }

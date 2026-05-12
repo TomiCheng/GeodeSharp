@@ -63,6 +63,12 @@ internal sealed class RegionView<TKey, TValue> : IRegion<TKey, TValue>
     public Task<bool> ContainsKeyAsync(TKey key, CancellationToken ct = default)
         => _inner.ContainsKeyAsync(key, ct);
 
+    public Task ClearAsync(CancellationToken ct = default)
+        => _inner.ClearAsync(ct);
+
+    public Task InvalidateAsync(TKey key, CancellationToken ct = default)
+        => _inner.InvalidateAsync(key!, ct);
+
     // ── Object-typed ops (explicit interface — forward to inner) ──
     Task IRegion.PutAsync(object key, object value, CancellationToken ct)
         => _inner.PutAsync(key, value, ct);
@@ -75,4 +81,7 @@ internal sealed class RegionView<TKey, TValue> : IRegion<TKey, TValue>
 
     Task<bool> IRegion.ContainsKeyAsync(object key, CancellationToken ct)
         => _inner.ContainsKeyAsync(key, ct);
+
+    Task IRegion.InvalidateAsync(object key, CancellationToken ct)
+        => _inner.InvalidateAsync(key, ct);
 }

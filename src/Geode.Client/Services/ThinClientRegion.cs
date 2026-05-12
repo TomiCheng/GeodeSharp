@@ -351,6 +351,114 @@ internal sealed class ThinClientRegion(
         }
     }
 
+    public override async Task ClearAsync(CancellationToken ct = default)
+    {
+        logger.LogTrace("ClearAsync: region={RegionPath}", FullPath);
+
+        // Mirrors cppcache ThinClientRegion::clear
+        // (cppcache/src/ThinClientRegion.cpp:767-808) +
+        // TcrMessageClearRegion ctor (TcrMessage.cpp:1644-1682).
+        // localClearNoThrow + post-clear listener invocation are
+        // local-cache machinery — Phase 2+ when caching-enabled lands.
+        //
+        // ─── Step 1+2: build request frame ────────────────────
+        var (threadId, sequenceId) = eventIdGenerator.Next();
+        var request = tcrMessageBuilder.ClearRegion(
+            regionName: FullPath,
+            eventThreadId: threadId,
+            eventSequenceId: sequenceId);
+
+        // ─── Step 3: dispatch via DM ─────────────────────────
+        var reply = await dm
+            .SendSyncRequestAsync(request, ct: ct)
+            .ConfigureAwait(false);
+
+        // ─── Step 4: reply decoding ──────────────────────────
+        // cppcache clear reply switch
+        // (ThinClientRegion.cpp:782-802):
+        //   REPLY                    → success + LogDebug breadcrumb
+        //   EXCEPTION                → throw
+        //   CLEAR_REGION_DATA_ERROR  → throw (cppcache LogError "endpoint X")
+        //   default                  → throw
+        switch (reply.MessageType)
+        {
+            case MessageType.Reply:
+                logger.LogDebug(
+                    "Region {RegionPath} clear message sent to server successfully",
+                    FullPath);
+                return;
+
+            case MessageType.Exception:
+                throw new GeodeException(
+                    $"Server exception on Clear '{FullPath}': " +
+                    DecodeExceptionPreview(reply));
+
+            case MessageType.ClearRegionDataError:
+                logger.LogError(
+                    "Region clear read error occurred on endpoint for region {RegionPath}",
+                    FullPath);
+                throw new GeodeException(
+                    $"Server returned ClearRegionDataError on '{FullPath}'.");
+
+            default:
+                logger.LogError(
+                    "Unknown message type {MessageType} during region clear on {RegionPath}",
+                    reply.MessageType, FullPath);
+                throw new GeodeException(
+                    $"Unexpected reply type {reply.MessageType} for Clear on '{FullPath}'.");
+        }
+    }
+
+    public override async Task InvalidateAsync(object key, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+
+        logger.LogTrace("InvalidateAsync: region={RegionPath}, key={Key}", FullPath, key);
+
+        // Mirrors cppcache ThinClientRegion::invalidateNoThrow_remote
+        // (cppcache/src/ThinClientRegion.cpp:852-886) +
+        // TcrMessageInvalidate ctor (TcrMessage.cpp:1896-1932).
+        //
+        // ─── Step 1+2: build request frame ────────────────────
+        var (threadId, sequenceId) = eventIdGenerator.Next();
+        var request = tcrMessageBuilder.Invalidate(
+            regionName: FullPath,
+            key: key,
+            eventThreadId: threadId,
+            eventSequenceId: sequenceId);
+
+        // ─── Step 3: dispatch via DM ─────────────────────────
+        var reply = await dm
+            .SendSyncRequestAsync(request, ct: ct)
+            .ConfigureAwait(false);
+
+        // ─── Step 4: reply decoding ──────────────────────────
+        // cppcache invalidateNoThrow_remote reply switch
+        // (ThinClientRegion.cpp:865-884):
+        //   REPLY            → success (versionTag dropped Phase 1.2-style)
+        //   EXCEPTION        → throw
+        //   INVALIDATE_ERROR → throw
+        //   default          → throw
+        switch (reply.MessageType)
+        {
+            case MessageType.Reply:
+                return;
+
+            case MessageType.Exception:
+                throw new GeodeException(
+                    $"Server exception on Invalidate '{FullPath}': " +
+                    DecodeExceptionPreview(reply));
+
+            case MessageType.InvalidateError:
+                throw new GeodeException(
+                    $"Server returned InvalidateError on '{FullPath}'.");
+
+            default:
+                throw new GeodeException(
+                    $"Unexpected reply type {reply.MessageType} for Invalidate on '{FullPath}'.");
+        }
+    }
+
     /// <summary>
     /// Best-effort ASCII preview of an Exception reply's Part 0. The
     /// server typically returns the Java exception class name +

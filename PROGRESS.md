@@ -75,29 +75,71 @@
 
 ---
 
-## Phase 1.2 — Single-key CRUD（進行中）
+## Phase 1.2 — Single-key CRUD ✅（int32 KV walking-skeleton）
 
-依 [CLAUDE.md](CLAUDE.md) Phase 1.2 計畫展開：
+**目標**：`IRegion<int,int>` 的 4 個基本 op（Put / Get / Remove / ContainsKey）端到端通過真實 Apache Geode server。CRUD 完備之後就有第一個 demo-able milestone。
+
+### Region lookup 路徑
 
 - [x] `IRegionService.GetRegion(string)` / `GetRegion<TKey,TValue>(string)` interface 殼（lookup-only，找不到回 null，對齊 cppcache `CacheImpl::getRegion`）
 - [x] `Cache.GetRegion(string)`（untyped）實作完成 — line-for-line 對齊 cppcache `CacheImpl::getRegion` (`CacheImpl.cpp:475-518`)：throwIfClosed / `_destroyPending` / 空字串 / `"/"` 驗證 / leading-slash strip / first-segment lookup ；sub-region 路徑（中間有 `/`）目前 NIE，留 sub-region phase
 - [x] `Cache.GetRegion<TKey,TValue>(string)` typed overload — `region is null ? null : new RegionView<TKey,TValue>(region)`
 - [x] `RegionView<TKey,TValue>` typed wrapper（[Services/RegionView.cs](src/Geode.Client/Services/RegionView.cs)）— compile-time-only typed view，每次 `GetRegion<K,V>` 都 new 一個；K/V 純編譯期保護，runtime 不追蹤；型別錯靠 unbox 自然噴 `InvalidCastException`
 - [x] `IRegion` 加 `Name` / `FullPath` / 4 個 `object`-typed op；`IRegion<TKey,TValue>` 加 4 個 typed overload（無 `new` 修飾，純 overload）
-- [x] `RegionInternal` / `LocalRegion` / `ThinClientRegion` 三層空殼建立（鏡像 cppcache `Region → RegionInternal → LocalRegion → ThinClientRegion`）：
-  - [Internal/RegionInternal.cs](src/Geode.Client/Internal/RegionInternal.cs) — abstract，holds `Attributes`，`PoolName` 從 attr 取
-  - [Internal/LocalRegion.cs](src/Geode.Client/Internal/LocalRegion.cs) — abstract，holds `Name` / `FullPath` / `Parent`，FullPath 自動串「`/parent/.../child`」
-  - [Services/ThinClientRegion.cs](src/Geode.Client/Services/ThinClientRegion.cs) — sealed，ctor 吃 `ThinClientBaseDM`，4 ops 全 NIE（待 Phase 1.2.e 填）
-- [ ] Built-in DSFID 型別 codec（string / byte[] / int / long / short / byte / bool / float / double / DateTime / null / List / Dictionary / array / HashSet）— 從原 Phase 1.1 移過來
-- [ ] `Put(7)` / `Request(0)` / `Destroy(9)` / `ContainsKey(38)` 訊息建構
-- [ ] `Response(1)` / `Exception(2)` 回覆解析
-- [ ] 解開 `PutGetIntegrationTests` / `GetDiagnosticTests` 五個 Skip
-- [ ] 整合測試：put / get / remove / contains
+- [x] `RegionInternal` / `LocalRegion` / `ThinClientRegion` 三層空殼建立（鏡像 cppcache `Region → RegionInternal → LocalRegion → ThinClientRegion`）
+- [x] `Cache.InitializeCoreAsync` 從 `CacheXml.Regions` 預建 `ThinClientRegion` 寫入 `_regions`（含 refid 模板解析；commit `c830494`）
+
+### Serialization
+
+- [x] `Protocol/Serialization/IDataConverter` + 泛型版 + `SerializationRegistry`（per-cache Scoped；DSCode ↔ converter 雙向索引；`WriteObject` / `ReadObject` 中央 dispatch；對齊 cppcache `SerializationRegistry`）
+- [x] `Int32DataConverter`（DSCode `CacheableInt32` = 57，4-byte BE）
+- [x] `BooleanDataConverter`（DSCode `CacheableBoolean` = 53，1-byte）
+- [x] `EventIdGenerator`（Scoped；`ThreadId=1` 常數 + 實例 seq；對齊 cppcache `EventIdTSS` instance scope，不能 static — 詳見「踩過的坑」）
+
+### Wire 訊息 + region op 實作
+
+- [x] `Put(7)` / `Request(0)` / `Destroy(9)` / `ContainsKey(38)` 全部走 `SerializationRegistry`（key / value / callbackArgument 一致路徑；no inline type guards）
+  - [Protocol/TcrMessageBuilder.Put.cs](src/Geode.Client/Protocol/TcrMessageBuilder.Put.cs)
+  - [Protocol/TcrMessageBuilder.Get.cs](src/Geode.Client/Protocol/TcrMessageBuilder.Get.cs)
+  - [Protocol/TcrMessageBuilder.Destroy.cs](src/Geode.Client/Protocol/TcrMessageBuilder.Destroy.cs) — `value=null, isUserNullValue=false` 分支（unconditional destroy）；conditional `remove(key, value)` 留以後
+  - [Protocol/TcrMessageBuilder.ContainsKey.cs](src/Geode.Client/Protocol/TcrMessageBuilder.ContainsKey.cs)
+- [x] `ThinClientRegion` 4 個 op 全部 end-to-end：
+  - `ContainsKeyAsync` — Response part 0 → `bool`（commit `23f9f73`）
+  - `PutAsync` — Reply OK / Exception
+  - `GetAsync` — Response part 0 via `SerializationRegistry.ReadObject`（含 cppcache `readObjectPart` 對應的 lenObj/isObj 4 種情況：missing key → null）
+  - `RemoveAsync` — Reply 最後一個 part 讀 entryNotFound i32（Phase 1.2 沒 versionTag 所以最後一個 part 一定是 entryNotFound；versionTag 落地時改順序解析）
+
+### 踩過的坑（cppcache scope parity）
+
+**Symptom**：`RegionCrudIntegrationTests` 第一次跑 3/5 過、2/5 fail — Put 看似成功（無 exception），但 Get 回 0、ContainsKey 回 false，像 server 把 Put 默默吃掉。
+
+**Root cause**：`ClientProxyMembershipIdBuilder.s_uniqueTag` 我寫成 `static readonly`（process-wide singleton），但 cppcache `ClientProxyMembershipIDFactory::randString_` 是 **instance member**（每個 `CacheImpl` 一份）。同 process 內兩個 `Cache` 共用 clientId → 加上各自 `EventIdGenerator` 從 seq=1 開始 → server 的 `ClientHealthMonitor` 把 `(clientId, threadId=1, seq=1)` 第二次出現視為 duplicate event **靜默丟棄**。
+
+**Fix**：
+- [Protocol/ClientProxyMembershipIdBuilder.cs](src/Geode.Client/Protocol/ClientProxyMembershipIdBuilder.cs) — `s_uniqueTag` → `_uniqueTag` (instance field, ctor 生)
+- [Internal/EventIdGenerator.cs](src/Geode.Client/Internal/EventIdGenerator.cs) — `_sequenceId` 維持 instance（uniqueTag per-cache 之後 clientId 跨 cache 不同 → seq 跨 cache 從 1 重來不會撞）
+
+教訓寫進 [memory/cppcache-scope-parity.md](C:\Users\c_tom\.claude\projects\D--projects-tomi-GeodeSharp\memory\cppcache-scope-parity.md)：bucket-2 cppcache class 每個欄位的 `instance` / `static` / `thread_local` 都要鏡像，不要自作主張 optimize 成 static。
+
+### 測試
+
+- [x] Unit tests — 161/161 通過（含 `TcrMessageBuilderGetTests` / `PutTests` / `DestroyTests` 全部改成 int32 KV，外加 `ClientProxyMembershipIdBuilderTests` 加上 per-cache uniqueTag 驗證）
+- [x] [RegionCrudIntegrationTests](tests/Geode.Client.IntegrationTests/RegionCrudIntegrationTests.cs) — 5 個 case（Put→Get、Get missing、ContainsKey 軌跡、Remove missing、Put 覆蓋）全綠對 `apachegeode/geode` 真機，含 3s `FreshConnectionSettleDelay` 防 cold-container race
 
 ### Deferred / 留待後續
 
-- 寫入端：`_regions` 目前完全空，`GetRegion` 一律回 null。`ThinClientRegion` skeleton 已建好，下一步是 `Cache.InitializeCoreAsync` 從 `CacheXml.Regions` 預建 `ThinClientRegion` 寫入 `_regions`
-- `RegionView` 跟 `IRegion` op 殼 unit test 還沒寫
+- Built-in DSFID 型別 codec 擴充（string / byte[] / int64 / int16 / byte / float / double / DateTime / null / List / Dictionary / array / HashSet）— int32 + bool 已落地，其他 codec 等真的有 demo 需要時再補
+- `PutGetIntegrationTests` / `GetDiagnosticTests` 五個 Skip — 是上 phase 用 byte[]/string 經由 raw `TcrConnection.SendRequestAsync` 的舊測試，等 String / Bytes codec 落地或乾脆刪掉（已被 RegionCrudIntegrationTests 涵蓋大半）
+- `RegionView` 跟 `IRegion` op 殼的 unit test 還沒寫（行為已被整合測試蓋到，補 unit 是 nice-to-have）
+- **`callbackArgument` overload**：cppcache `Region::put/get/destroy` 都收 `aCallbackArgument`（forward 給 server 端 CacheListener / CacheWriter / CacheLoader / PartitionResolver）。`TcrMessageBuilder.*` 已經接這個欄位（wire 對齊），但 `IRegion` / `IRegion<TKey,TValue>` 還沒暴露。等真的有需求或要對齊 cppcache public surface 時，加 overload：
+  - `PutAsync(key, value, object? callbackArgument, CancellationToken)`
+  - `GetAsync(key, object? callbackArgument, CancellationToken)`
+  - `RemoveAsync(key, object? callbackArgument, CancellationToken)`
+  - `ContainsKey` 不加（cppcache `containsKeyOnServer` 也沒收 callback）
+  影響範圍：`IRegion` / `IRegion<TKey,TValue>` / `RegionInternal`（把 callback 版設 abstract、no-callback 版 forward 過去）/ `ThinClientRegion`（callback 改 canonical 實作）/ `RegionView`（typed + 顯式 IRegion 兩組 overload）。Builder 端不用動。
+- Fresh-conn race（[memory](C:\Users\c_tom\.claude\projects\D--projects-tomi-GeodeSharp\memory\geode-fresh-conn-race.md)）— 用 `Task.Delay(3s)` 在測試端規避；正式 fix（pool warmup / readiness probe）留給 Phase 1.5
+
+**下一步入口**：Phase 1.3 — Bulk + management ops（PutAll / GetAll70 / RemoveAll / Clear / Invalidate）。
 
 ---
 

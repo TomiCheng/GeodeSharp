@@ -13,4 +13,13 @@ public class TxOptions
     /// default 30 seconds.
     /// </summary>
     public TimeSpan SuspendedTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>Deep clone. TimeSpan-only — MemberwiseClone is sufficient.</summary>
+    public TxOptions DeepClone() => (TxOptions)MemberwiseClone();
+
+    /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
+    public IEnumerable<string> Validate(string prefix)
+    {
+        yield break;
+    }
 }

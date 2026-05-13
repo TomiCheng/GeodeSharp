@@ -65,4 +65,13 @@ public class LogOptions
     /// unlimited).
     /// </summary>
     public uint DiskSpaceLimit { get; set; }
+
+    /// <summary>Deep clone. Only primitives / string / enum — MemberwiseClone is sufficient.</summary>
+    public LogOptions DeepClone() => (LogOptions)MemberwiseClone();
+
+    /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
+    public IEnumerable<string> Validate(string prefix)
+    {
+        yield break;
+    }
 }

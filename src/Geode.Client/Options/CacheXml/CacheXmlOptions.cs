@@ -40,19 +40,22 @@ public class CacheXmlOptions
     /// (<c>&lt;pool&gt;</c>). cppcache stores these in
     /// <c>PoolManager</c>, keyed by <see cref="CacheXmlPoolOptions.Name"/>.
     /// </summary>
-    public List<CacheXmlPoolOptions> Pools { get; } = new();
+    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
+    public List<CacheXmlPoolOptions> Pools { get; set; } = new();
 
     /// <summary>
     /// Top-level regions declared in the XML
     /// (<c>&lt;region&gt;</c>). Regions can nest via
     /// <see cref="CacheXmlRegionOptions.ChildRegions"/>.
     /// </summary>
-    public List<CacheXmlRegionOptions> Regions { get; } = new();
+    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
+    public List<CacheXmlRegionOptions> Regions { get; set; } = new();
 
     /// <summary>
     /// PDX defaults declared in the XML (<c>&lt;pdx&gt;</c>).
     /// </summary>
-    public CacheXmlPdxOptions Pdx { get; } = new();
+    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
+    public CacheXmlPdxOptions Pdx { get; set; } = new();
 
     /// <summary>
     /// Reusable region-attributes templates, keyed by name. A
@@ -72,5 +75,45 @@ public class CacheXmlOptions
     /// today; only the outer <see cref="CacheXmlRegionOptions.RefId"/>
     /// triggers resolution.
     /// </remarks>
-    public Dictionary<string, CacheXmlRegionAttributesOptions> NamedAttributes { get; } = new();
+    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
+    public Dictionary<string, CacheXmlRegionAttributesOptions> NamedAttributes { get; set; } = new();
+
+    /// <summary>Deep clone. Lists / dict / nested <see cref="CacheXmlPdxOptions"/> are deep-copied.</summary>
+    public CacheXmlOptions DeepClone()
+    {
+        var clone = (CacheXmlOptions)MemberwiseClone();
+        clone.Pools = Pools.Select(p => p.DeepClone()).ToList();
+        clone.Regions = Regions.Select(r => r.DeepClone()).ToList();
+        clone.Pdx = Pdx.DeepClone();
+        clone.NamedAttributes = NamedAttributes.ToDictionary(kv => kv.Key, kv => kv.Value.DeepClone());
+        return clone;
+    }
+
+    /// <summary>
+    /// Validate. Rules migrated from <c>GeodeClientOptionsValidator</c>:
+    /// <see cref="Pools"/> must contain at least one entry; each region's
+    /// <see cref="CacheXmlRegionOptions.RefId"/> must reference a key in
+    /// <see cref="NamedAttributes"/>. Recurses into pools and regions.
+    /// </summary>
+    public IEnumerable<string> Validate(string prefix)
+    {
+        if (Pools.Count == 0)
+            yield return $"{prefix}.Pools must contain at least one pool.";
+
+        for (var i = 0; i < Pools.Count; i++)
+            foreach (var f in Pools[i].Validate($"{prefix}.Pools[{i}]"))
+                yield return f;
+
+        for (var i = 0; i < Regions.Count; i++)
+        {
+            foreach (var f in Regions[i].Validate($"{prefix}.Regions[{i}]")) yield return f;
+
+            // Cross-ref check needs NamedAttributes — done here, not in
+            // CacheXmlRegionOptions.Validate (which doesn't see siblings).
+            // Mirrors cppcache CacheXmlParser.cpp:777-786.
+            var refId = Regions[i].RefId;
+            if (!string.IsNullOrEmpty(refId) && !NamedAttributes.ContainsKey(refId))
+                yield return $"{prefix}.Regions[{i}].RefId='{refId}' does not match any key in {prefix}.NamedAttributes.";
+        }
+    }
 }

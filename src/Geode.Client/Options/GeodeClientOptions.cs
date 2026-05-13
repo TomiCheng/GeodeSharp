@@ -65,34 +65,43 @@ public class GeodeClientOptions
     public bool EnableChunkHandlerThread { get; set; }
 
     /// <summary>Connection-pool tuning. See <see cref="PoolOptions"/>.</summary>
-    public PoolOptions Pool { get; } = new();
+    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
+    public PoolOptions Pool { get; set; } = new();
 
     /// <summary>TLS / SSL settings. See <see cref="TlsOptions"/>.</summary>
-    public TlsOptions Tls { get; } = new();
+    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
+    public TlsOptions Tls { get; set; } = new();
 
     /// <summary>
     /// Subscription / durable-client / event-notification settings.
     /// See <see cref="SubscriptionOptions"/>.
     /// </summary>
-    public SubscriptionOptions Subscription { get; } = new();
+    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
+    public SubscriptionOptions Subscription { get; set; } = new();
 
     /// <summary>File-logging settings. See <see cref="LogOptions"/>.</summary>
-    public LogOptions Log { get; } = new();
+    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
+    public LogOptions Log { get; set; } = new();
 
     /// <summary>Statistics-archive settings. See <see cref="StatisticsOptions"/>.</summary>
-    public StatisticsOptions Statistics { get; } = new();
+    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
+    public StatisticsOptions Statistics { get; set; } = new();
 
     /// <summary>Security / auth settings. See <see cref="SecurityOptions"/>.</summary>
-    public SecurityOptions Security { get; } = new();
+    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
+    public SecurityOptions Security { get; set; } = new();
 
     /// <summary>Transaction settings. See <see cref="TxOptions"/>.</summary>
-    public TxOptions Tx { get; } = new();
+    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
+    public TxOptions Tx { get; set; } = new();
 
     /// <summary>Heap-LRU / tombstone settings. See <see cref="HeapOptions"/>.</summary>
-    public HeapOptions Heap { get; } = new();
+    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
+    public HeapOptions Heap { get; set; } = new();
 
     /// <summary>PDX-serialisation settings. See <see cref="PdxOptions"/>.</summary>
-    public PdxOptions Pdx { get; } = new();
+    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
+    public PdxOptions Pdx { get; set; } = new();
 
     /// <summary>
     /// Wire-serialisation safety bounds (depth limit etc.). See
@@ -100,7 +109,8 @@ public class GeodeClientOptions
     /// added independently to defend against malicious / pathological
     /// server payloads.
     /// </summary>
-    public SerializationOptions Serialization { get; } = new();
+    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
+    public SerializationOptions Serialization { get; set; } = new();
 
     /// <summary>
     /// Declarative <c>cache.xml</c> contents — named pools, region
@@ -121,4 +131,51 @@ public class GeodeClientOptions
     /// </para>
     /// </remarks>
     public CacheXmlOptions? CacheXml { get; set; }
+
+    /// <summary>
+    /// Deep clone the entire options tree. Each sub-options class
+    /// implements its own <c>DeepClone()</c>; this method delegates so
+    /// the clone is fully detached from <paramref name="this"/> (mutating
+    /// the clone via <see cref="IGeodeCacheFactory.Create"/>'s
+    /// <c>action</c> callback does not affect the registered config).
+    /// </summary>
+    public GeodeClientOptions DeepClone()
+    {
+        var clone = (GeodeClientOptions)MemberwiseClone();
+        clone.Pool = Pool.DeepClone();
+        clone.Tls = Tls.DeepClone();
+        clone.Subscription = Subscription.DeepClone();
+        clone.Log = Log.DeepClone();
+        clone.Statistics = Statistics.DeepClone();
+        clone.Security = Security.DeepClone();
+        clone.Tx = Tx.DeepClone();
+        clone.Heap = Heap.DeepClone();
+        clone.Pdx = Pdx.DeepClone();
+        clone.Serialization = Serialization.DeepClone();
+        clone.CacheXml = CacheXml?.DeepClone();
+        return clone;
+    }
+
+    /// <summary>
+    /// Validate the entire options tree. Each sub-options class
+    /// contributes its own failures, prefixed with its property path.
+    /// The caller (typically <c>GeodeClientOptionsValidator</c> or
+    /// <c>IGeodeCacheFactory.Create</c>) wraps the result in a
+    /// <c>ValidateOptionsResult</c>.
+    /// </summary>
+    public IEnumerable<string> Validate(string prefix)
+    {
+        foreach (var f in Pool.Validate($"{prefix}.Pool")) yield return f;
+        foreach (var f in Tls.Validate($"{prefix}.Tls")) yield return f;
+        foreach (var f in Subscription.Validate($"{prefix}.Subscription")) yield return f;
+        foreach (var f in Log.Validate($"{prefix}.Log")) yield return f;
+        foreach (var f in Statistics.Validate($"{prefix}.Statistics")) yield return f;
+        foreach (var f in Security.Validate($"{prefix}.Security")) yield return f;
+        foreach (var f in Tx.Validate($"{prefix}.Tx")) yield return f;
+        foreach (var f in Heap.Validate($"{prefix}.Heap")) yield return f;
+        foreach (var f in Pdx.Validate($"{prefix}.Pdx")) yield return f;
+        foreach (var f in Serialization.Validate($"{prefix}.Serialization")) yield return f;
+        if (CacheXml is not null)
+            foreach (var f in CacheXml.Validate($"{prefix}.CacheXml")) yield return f;
+    }
 }

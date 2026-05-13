@@ -26,4 +26,13 @@ public class HeapOptions
     /// default 480 seconds.
     /// </summary>
     public TimeSpan TombstoneTimeout { get; set; } = TimeSpan.FromSeconds(480);
+
+    /// <summary>Deep clone. Only primitives / TimeSpan — MemberwiseClone is sufficient.</summary>
+    public HeapOptions DeepClone() => (HeapOptions)MemberwiseClone();
+
+    /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
+    public IEnumerable<string> Validate(string prefix)
+    {
+        yield break;
+    }
 }

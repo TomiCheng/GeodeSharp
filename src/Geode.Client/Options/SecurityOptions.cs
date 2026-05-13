@@ -34,5 +34,25 @@ public class SecurityOptions
     /// Mirrors cppcache's <c>security-*</c> property prefix bucket
     /// (<c>m_securityPropertiesPtr</c>).
     /// </summary>
-    public Dictionary<string, string> Properties { get; } = new();
+    /// <remarks>
+    /// Settable (rather than init-only) so <see cref="DeepClone"/> can
+    /// reassign with a new dict instance — <see cref="object.MemberwiseClone"/>
+    /// copies the reference only, leaving the clone aliased to the
+    /// original until we replace it.
+    /// </remarks>
+    public Dictionary<string, string> Properties { get; set; } = new();
+
+    /// <summary>Deep clone. Strings + Dictionary&lt;string,string&gt; — shallow MemberwiseClone then dict copy.</summary>
+    public SecurityOptions DeepClone()
+    {
+        var clone = (SecurityOptions)MemberwiseClone();
+        clone.Properties = new Dictionary<string, string>(Properties);
+        return clone;
+    }
+
+    /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
+    public IEnumerable<string> Validate(string prefix)
+    {
+        yield break;
+    }
 }

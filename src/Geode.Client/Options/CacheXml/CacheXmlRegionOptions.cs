@@ -14,8 +14,38 @@ public class CacheXmlRegionOptions
     public string RefId { get; set; } = string.Empty;
 
     /// <summary><c>&lt;region-attributes&gt;</c> child.</summary>
-    public CacheXmlRegionAttributesOptions Attributes { get; } = new();
+    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
+    public CacheXmlRegionAttributesOptions Attributes { get; set; } = new();
 
     /// <summary>Nested <c>&lt;region&gt;</c> children.</summary>
-    public List<CacheXmlRegionOptions> ChildRegions { get; } = new();
+    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
+    public List<CacheXmlRegionOptions> ChildRegions { get; set; } = new();
+
+    /// <summary>Deep clone. Recurses into <see cref="Attributes"/> and each child region.</summary>
+    public CacheXmlRegionOptions DeepClone()
+    {
+        var clone = (CacheXmlRegionOptions)MemberwiseClone();
+        clone.Attributes = Attributes.DeepClone();
+        clone.ChildRegions = ChildRegions.Select(r => r.DeepClone()).ToList();
+        return clone;
+    }
+
+    /// <summary>
+    /// Validate. Rule migrated from <c>GeodeClientOptionsValidator</c>:
+    /// <see cref="Name"/> non-empty. RefId cross-reference is checked at
+    /// <see cref="CacheXmlOptions.Validate"/> (needs sibling
+    /// <c>NamedAttributes</c> context). Recurses into <see cref="Attributes"/>
+    /// and each child region.
+    /// </summary>
+    public IEnumerable<string> Validate(string prefix)
+    {
+        if (string.IsNullOrWhiteSpace(Name))
+            yield return $"{prefix}.Name must not be null, empty, or whitespace.";
+
+        foreach (var f in Attributes.Validate($"{prefix}.Attributes")) yield return f;
+
+        for (var i = 0; i < ChildRegions.Count; i++)
+            foreach (var f in ChildRegions[i].Validate($"{prefix}.ChildRegions[{i}]"))
+                yield return f;
+    }
 }

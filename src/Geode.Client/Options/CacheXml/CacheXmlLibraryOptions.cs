@@ -18,4 +18,29 @@ public class CacheXmlLibraryOptions
 
     /// <summary><c>library-function-name</c> attribute (required).</summary>
     public string LibraryFunctionName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Deep clone. Virtual so subclasses (e.g.
+    /// <see cref="CacheXmlPersistenceManagerOptions"/>) can extend
+    /// it; properties typed as <see cref="CacheXmlLibraryOptions"/>
+    /// will clone polymorphically.
+    /// </summary>
+    public virtual CacheXmlLibraryOptions DeepClone()
+    {
+        // Only primitives + string at this level — MemberwiseClone
+        // preserves the runtime type, so subclass-only fields come
+        // along (subclasses override DeepClone to deep-copy their
+        // own reference-typed members).
+        return (CacheXmlLibraryOptions)MemberwiseClone();
+    }
+
+    /// <summary>
+    /// Validate. No structural rules at this level (cppcache parity
+    /// stub — see CLAUDE.md "mirror then prune"). Subclasses override
+    /// to add their own checks.
+    /// </summary>
+    public virtual IEnumerable<string> Validate(string prefix)
+    {
+        yield break;
+    }
 }

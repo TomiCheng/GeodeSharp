@@ -31,4 +31,13 @@ public class TlsOptions
     /// chain. Mirrors cppcache <c>ssl-truststore</c>; default empty.
     /// </summary>
     public string TrustStorePath { get; set; } = string.Empty;
+
+    /// <summary>Deep clone. Only primitives / string — MemberwiseClone is sufficient.</summary>
+    public TlsOptions DeepClone() => (TlsOptions)MemberwiseClone();
+
+    /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
+    public IEnumerable<string> Validate(string prefix)
+    {
+        yield break;
+    }
 }

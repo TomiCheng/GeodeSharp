@@ -79,4 +79,48 @@ public class CacheXmlRegionAttributesOptions
 
     /// <summary><c>&lt;persistence-manager&gt;</c>.</summary>
     public CacheXmlPersistenceManagerOptions? PersistenceManager { get; set; }
+
+    /// <summary>
+    /// Deep clone. All nested options are nullable — clone each
+    /// independently. Library options dispatch polymorphically (a slot
+    /// holding a <see cref="CacheXmlPersistenceManagerOptions"/> clones
+    /// as that subtype).
+    /// </summary>
+    public CacheXmlRegionAttributesOptions DeepClone()
+    {
+        var clone = (CacheXmlRegionAttributesOptions)MemberwiseClone();
+        clone.RegionTimeToLive = RegionTimeToLive?.DeepClone();
+        clone.RegionIdleTime = RegionIdleTime?.DeepClone();
+        clone.EntryTimeToLive = EntryTimeToLive?.DeepClone();
+        clone.EntryIdleTime = EntryIdleTime?.DeepClone();
+        clone.PartitionResolver = PartitionResolver?.DeepClone();
+        clone.CacheLoader = CacheLoader?.DeepClone();
+        clone.CacheListener = CacheListener?.DeepClone();
+        clone.CacheWriter = CacheWriter?.DeepClone();
+        clone.PersistenceManager = (CacheXmlPersistenceManagerOptions?)PersistenceManager?.DeepClone();
+        return clone;
+    }
+
+    /// <summary>Validate. Delegates to non-null nested options; this class has no own structural rules.</summary>
+    public IEnumerable<string> Validate(string prefix)
+    {
+        if (RegionTimeToLive is not null)
+            foreach (var f in RegionTimeToLive.Validate($"{prefix}.RegionTimeToLive")) yield return f;
+        if (RegionIdleTime is not null)
+            foreach (var f in RegionIdleTime.Validate($"{prefix}.RegionIdleTime")) yield return f;
+        if (EntryTimeToLive is not null)
+            foreach (var f in EntryTimeToLive.Validate($"{prefix}.EntryTimeToLive")) yield return f;
+        if (EntryIdleTime is not null)
+            foreach (var f in EntryIdleTime.Validate($"{prefix}.EntryIdleTime")) yield return f;
+        if (PartitionResolver is not null)
+            foreach (var f in PartitionResolver.Validate($"{prefix}.PartitionResolver")) yield return f;
+        if (CacheLoader is not null)
+            foreach (var f in CacheLoader.Validate($"{prefix}.CacheLoader")) yield return f;
+        if (CacheListener is not null)
+            foreach (var f in CacheListener.Validate($"{prefix}.CacheListener")) yield return f;
+        if (CacheWriter is not null)
+            foreach (var f in CacheWriter.Validate($"{prefix}.CacheWriter")) yield return f;
+        if (PersistenceManager is not null)
+            foreach (var f in PersistenceManager.Validate($"{prefix}.PersistenceManager")) yield return f;
+    }
 }

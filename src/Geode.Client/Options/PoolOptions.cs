@@ -196,4 +196,13 @@ public class PoolOptions
     /// cppcache audit window.</para>
     /// </remarks>
     public TimeSpan BucketWaitTimeout { get; set; } = TimeSpan.Zero;
+
+    /// <summary>Deep clone. Only primitives / TimeSpan / bool — MemberwiseClone is sufficient.</summary>
+    public PoolOptions DeepClone() => (PoolOptions)MemberwiseClone();
+
+    /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
+    public IEnumerable<string> Validate(string prefix)
+    {
+        yield break;
+    }
 }

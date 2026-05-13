@@ -11,4 +11,13 @@ public class CacheXmlExpirationOptions
 
     /// <summary><c>action</c> attribute (optional).</summary>
     public CacheXmlExpirationAction? Action { get; set; }
+
+    /// <summary>Deep clone. TimeSpan + nullable enum — MemberwiseClone is sufficient.</summary>
+    public CacheXmlExpirationOptions DeepClone() => (CacheXmlExpirationOptions)MemberwiseClone();
+
+    /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
+    public IEnumerable<string> Validate(string prefix)
+    {
+        yield break;
+    }
 }

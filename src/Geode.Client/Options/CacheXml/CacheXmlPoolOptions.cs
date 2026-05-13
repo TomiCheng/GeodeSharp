@@ -83,11 +83,54 @@ public class CacheXmlPoolOptions
     /// <c>&lt;locator&gt;</c> children. Pool must have at least one of
     /// <see cref="Locators"/> or <see cref="Servers"/> per XSD.
     /// </summary>
-    public List<CacheXmlHostPort> Locators { get; } = new();
+    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
+    public List<CacheXmlHostPort> Locators { get; set; } = new();
 
     /// <summary>
     /// <c>&lt;server&gt;</c> children. Direct server endpoints for
     /// pools that bypass locators.
     /// </summary>
-    public List<CacheXmlHostPort> Servers { get; } = new();
+    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
+    public List<CacheXmlHostPort> Servers { get; set; } = new();
+
+    /// <summary>Deep clone. Nested HostPort lists are deep-copied.</summary>
+    public CacheXmlPoolOptions DeepClone()
+    {
+        var clone = (CacheXmlPoolOptions)MemberwiseClone();
+        clone.Locators = Locators.Select(h => h.DeepClone()).ToList();
+        clone.Servers = Servers.Select(h => h.DeepClone()).ToList();
+        return clone;
+    }
+
+    /// <summary>
+    /// Validate. Rules migrated from <c>GeodeClientOptionsValidator</c>:
+    /// <see cref="Name"/> non-empty; at least one locator or server entry;
+    /// <see cref="MinConnections"/> &gt;= 0; <see cref="MaxConnections"/>
+    /// (when set) &gt;= <see cref="MinConnections"/>. Recurses into each
+    /// <see cref="CacheXmlHostPort"/>.
+    /// </summary>
+    public IEnumerable<string> Validate(string prefix)
+    {
+        if (string.IsNullOrWhiteSpace(Name))
+            yield return $"{prefix}.Name must not be null, empty, or whitespace.";
+
+        if (Locators.Count + Servers.Count == 0)
+            yield return $"{prefix} must have at least one locator or server.";
+
+        // MinConnections == 0 is allowed (cppcache permits 0 = pure lazy).
+        if (MinConnections < 0)
+            yield return $"{prefix}.MinConnections must be >= 0 (got {MinConnections}).";
+
+        // MaxConnections == null means "unbounded" — skip the comparison.
+        if (MaxConnections is int max && max < MinConnections)
+            yield return $"{prefix}.MaxConnections ({max}) must be >= MinConnections ({MinConnections}).";
+
+        for (var i = 0; i < Locators.Count; i++)
+            foreach (var f in Locators[i].Validate($"{prefix}.Locators[{i}]"))
+                yield return f;
+
+        for (var i = 0; i < Servers.Count; i++)
+            foreach (var f in Servers[i].Validate($"{prefix}.Servers[{i}]"))
+                yield return f;
+    }
 }

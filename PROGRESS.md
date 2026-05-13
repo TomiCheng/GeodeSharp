@@ -441,6 +441,93 @@ VCOPL.FromData Step 7 gate: if (hasObjects && AddToLocalCache) → Phase 4+ NIE
 
 ---
 
+## DI surface 重塑 — `IGeodeCacheFactory` + `GeodeClientExtensions`（未啟動）
+
+**性質**：Phase 0 既有設計的回頭重塑，不算新 phase。範圍 `src/Geode.Client/IGeodeCacheFactory.cs` + `src/Geode.Client/Services/GeodeCacheFactory.cs` + `src/Geode.Client/GeodeClientExtensions.cs` + 全部 options class（加 `DeepClone`）+ 對應測試。
+
+### 背景
+
+Phase 0 的設計：`AddGeodeClient` 三個 overload（unnamed + optional `name`）；`IGeodeCacheFactory.Get(name)` 一個方法走 lazy build；DI 容器同時暴露 `IGeodeCache` (unnamed alias) 跟 `[FromKeyedServices(name)] IGeodeCache` (keyed)。對 Phase 0 來說可以動，但有幾個累積的問題：
+
+- `Get(name)` lazy build 行為跟「找不到丟例外」直覺衝突
+- DI keyed singleton 一旦資源 dispose（例如未來加 `RemoveAsync`）就持著 stale instance
+- 沒有 cacheName / configName 的解耦概念，多 cluster 共用 config 或 runtime 覆蓋 config 都做不到
+- `IGeodeCacheFactory` 只有 `Get`，沒有列舉 / 移除 / 顯式建構入口
+
+### 討論流程的關鍵分歧點
+
+1. **`Get` 找不到怎麼辦** — `null` / `bool` / `KeyNotFoundException` 三選。最終：`Get` 丟 `KeyNotFoundException`、`TryGet` 回 bool。對齊 `IServiceProvider.GetRequiredService` / `GetService`。
+2. **Cache 是否該由 factory 統一管理** — 一度收斂到「完全只走 factory，砍掉 `IGeodeCache` 直接注入」。後來考慮到 95% 使用者只有一個 cluster + EF Core 的雙注入 pattern，改成兩層：簡易層直接注入 `IGeodeCache`、進階層走 `IGeodeCacheFactory`。
+3. **Manual Create 還是 auto Create** — 選 manual。`AddGeodeClient` 只負責註冊 config 與 `IGeodeCache` 注入點；`factory.Create()` 必須由使用者啟動時呼叫。`IGeodeCache` 注入若先於 `Create` 觸發 → `KeyNotFoundException`，fail fast 不 silent magic。production / 測試行為一致。
+4. **cacheName / configName 解耦** — 加進 `Create` 簽章。同一份 config 可給多個 cache 用（讀寫分流、tenant 隔離）。`Get` / `RemoveAsync` 只認 cacheName。
+5. **`Action<sp, opts>` 的 cascade 語意** — `Create` 的 `action` 是「lookup configName → DeepClone → action 在 clone 上改 → validator 重跑 → 用 clone 建 cache」。原 config 不污染。
+6. **DeepClone 方案** — 否決 `ICloneable`（MS 反對）跟 JSON round-trip（怕未來 options 加非 JSON 屬性）。選方案 B：每個 options class 自己加 `DeepClone()` 方法，不走 interface。
+7. **`AddGeodeClient` / `AddGeodeFactory` 分層** — 兩個 method 各 3 overload。`AddGeodeClient` 永遠 unnamed、會註冊 `IGeodeCache` 直接注入；`AddGeodeFactory` name 在最後（有 default `""`），只往 factory 加 entry、不註冊 `IGeodeCache` alias。
+8. **驗證邏輯搬進 `GeodeClientOptions` 本身** — 在 options class 加一個 `Validate(string? name = null)` 方法，回 `ValidateOptionsResult`。原 `GeodeClientOptionsValidator` 縮成一行轉發 `opts.Validate(name)`。好處：(a) `factory.Create(action)` 在 DeepClone + action 後直接 `clone.Validate(configName)` 一行檢查，不用從 sp 撈 `IValidateOptions<T>`；(b) options 自己負責自己合法性，cohesion 高；(c) 測試可繞過 DI 直接驗。子 options class 同樣加 `Validate()`，root 跑時遞迴呼叫子物件。
+
+### 最終定稿
+
+```csharp
+public static class GeodeClientExtensions
+{
+    public static IServiceCollection AddGeodeClient(this IServiceCollection services);
+    public static IServiceCollection AddGeodeClient(this IServiceCollection services, IConfiguration cfg);
+    public static IServiceCollection AddGeodeClient(this IServiceCollection services, Action<GeodeClientOptions> configure);
+
+    public static IServiceCollection AddGeodeFactory(this IServiceCollection services, string name = "");
+    public static IServiceCollection AddGeodeFactory(this IServiceCollection services, IConfiguration cfg, string name = "");
+    public static IServiceCollection AddGeodeFactory(this IServiceCollection services, Action<GeodeClientOptions> configure, string name = "");
+}
+
+public interface IGeodeCacheFactory
+{
+    IGeodeCache Get(string cacheName = "");                                   // KeyNotFoundException if missing
+    bool TryGet(string cacheName, [NotNullWhen(true)] out IGeodeCache? cache);
+    IGeodeCache Create(                                                       // InvalidOperationException if cacheName exists
+        string cacheName = "",
+        string configName = "",
+        Action<IServiceProvider, GeodeClientOptions>? action = null);
+    IReadOnlyCollection<string> CacheNames { get; }
+    ValueTask<bool> RemoveAsync(string cacheName);
+}
+```
+
+行為契約：
+
+- 95% 使用者：`AddGeodeClient(cfg)` → 啟動時 `factory.Create()` → 各處 `public class S(IGeodeCache cache)`
+- 5% 使用者：`AddGeodeFactory(cfg, "legacy")` → `factory.Create("legacy", "legacy")` → `factory.Get("legacy")`
+- DI keyed `[FromKeyedServices]` 注入完全不支援（避免 `RemoveAsync` stale instance 雷區）
+
+### 撤回的決定（討論過但決定不做）
+
+- ❌ Validator 收緊 `CacheXml == null` ── 保留 nullable（手動建立路徑落地後再回頭審）
+- ❌ `Register` / `Unregister` runtime options（透過 `IOptionsMonitorCache<T>.TryAdd`）── 不需要,`Create(action)` 已涵蓋
+- ❌ `RegisteredNames` / `IsRegistered` 查詢介面 ── 「能不能查 config 組態」放棄
+- ❌ `GeodeClientRegistry` sidecar ── 不需要
+- ❌ `ICloneable` ── MS 反對的設計（type erasure + deep/shallow 語意不明）
+- ❌ `IDeepCloneable<T>` interface ── 過度抽象,簡化成方案 B
+- ❌ `[FromKeyedServices]` keyed 注入 ── 全部走 factory（簡化 + 避免 stale instance 雷）
+- ❌ `AddGeodeClient` 自動 Create（hosted service）── manual,保持 production / 測試行為一致
+- ❌ `GetOrCreate(name, action)` 三合一 ── silent-ignore on second call 雷區
+- ❌ `IGeodeCache?` Get（nullable 回傳）── 改丟例外,不要強迫 caller 處理 null
+
+### 實施順序
+
+1. 列 `CacheXml*` 巢狀類別,補完 options class 完整名單
+2. 每個 options class 加 `DeepClone()` + `Validate(name)` 兩個方法
+3. options unit tests（每個 class round-trip + mutation isolation + Validate 正反向）
+4. `GeodeClientOptionsValidator` 縮成轉發 `opts.Validate(name)` 的 thin wrapper(保留 DI 註冊以維持 `ValidateOnStart` pipeline)
+5. 重塑 `IGeodeCacheFactory` interface（5 個成員）
+6. 重塑 `GeodeCacheFactory` 實作（含 Get/Dispose race 修 — 用 `DisposeEntryAsync` helper 跟 `RemoveAsync` 共用；`Create(action)` 在 DeepClone + action 後呼叫 `clone.Validate(configName)`）
+7. `GeodeClientExtensions` 改 6 個 overload + 拿掉 keyed/unnamed `IGeodeCache` 註冊以外的東西 + 重寫 XML doc
+8. 既有測試呼叫點更新（grep `[FromKeyedServices]` + `IGeodeCacheFactory.Get` 影響範圍）
+9. 補新測試：Create 重複丟、Create+action mutation isolation、Create+action validator fail、Get/TryGet 找不到、RemoveAsync 後再 Create 同名、CacheNames snapshot 行為
+10. build + test 全綠後 commit
+
+每步做完停下來給 review，按 memory 規則。
+
+---
+
 ## Phase 1.4 — OQL Query（未啟動）
 
 - [ ] `IQueryService.NewQuery<T>(oql)` / `IQuery<T>.ExecuteAsync(ct)` 介面

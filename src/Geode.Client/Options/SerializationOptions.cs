@@ -151,4 +151,30 @@ public class SerializationOptions
     /// </para>
     /// </remarks>
     public int MaxStringLength { get; set; } = 1_000_000;
+
+    /// <summary>Deep clone. Only primitives — MemberwiseClone is sufficient.</summary>
+    public SerializationOptions DeepClone() => (SerializationOptions)MemberwiseClone();
+
+    /// <summary>
+    /// Validate this section. Rules migrated from
+    /// <c>GeodeClientOptionsValidator</c>:
+    /// <see cref="MaxDepth"/> must be &gt;= 1 (zero/negative rejects every payload
+    /// including top-level scalars);
+    /// <see cref="MaxArrayLength"/> / <see cref="MaxBytesLength"/> /
+    /// <see cref="MaxStringLength"/> must be &gt;= 0 (zero is legal — empty only).
+    /// </summary>
+    public IEnumerable<string> Validate(string prefix)
+    {
+        if (MaxDepth < 1)
+            yield return $"{prefix}.MaxDepth must be >= 1 (got {MaxDepth}).";
+
+        if (MaxArrayLength < 0)
+            yield return $"{prefix}.MaxArrayLength must be >= 0 (got {MaxArrayLength}).";
+
+        if (MaxBytesLength < 0)
+            yield return $"{prefix}.MaxBytesLength must be >= 0 (got {MaxBytesLength}).";
+
+        if (MaxStringLength < 0)
+            yield return $"{prefix}.MaxStringLength must be >= 0 (got {MaxStringLength}).";
+    }
 }

@@ -85,7 +85,7 @@ public class CollectionRoundTripIntegrationTests(GeodeFixture fx)
             .AddGeodeClient(ConfigureCacheXml)
             .BuildServiceProvider();
 
-        var cache = services.GetRequiredService<IGeodeCache>();
+        var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();
         await cache.EnsureInitializedAsync(cts.Token);
 
         await Task.Delay(FreshConnectionSettleDelay, cts.Token);

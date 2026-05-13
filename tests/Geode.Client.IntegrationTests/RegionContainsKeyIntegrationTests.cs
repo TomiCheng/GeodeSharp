@@ -66,7 +66,7 @@ public class RegionContainsKeyIntegrationTests(GeodeFixture fx)
             .AddGeodeClient(ConfigureCacheXml)
             .BuildServiceProvider();
 
-        var cache = services.GetRequiredService<IGeodeCache>();
+        var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();
         await cache.EnsureInitializedAsync(cts.Token);
 
         // Look up the XML-declared region. Returns null if init didn't

@@ -69,4 +69,13 @@ public class SubscriptionOptions
     /// way to express the same three states in C#.
     /// </summary>
     public bool? ConflateEvents { get; set; }
+
+    /// <summary>Deep clone. Only primitives / string / TimeSpan / nullable — MemberwiseClone is sufficient.</summary>
+    public SubscriptionOptions DeepClone() => (SubscriptionOptions)MemberwiseClone();
+
+    /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
+    public IEnumerable<string> Validate(string prefix)
+    {
+        yield break;
+    }
 }

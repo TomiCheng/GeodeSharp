@@ -49,4 +49,13 @@ public class StatisticsOptions
     /// cppcache <c>enable-time-statistics</c>; default <c>false</c>.
     /// </summary>
     public bool TimeStatisticsEnabled { get; set; }
+
+    /// <summary>Deep clone. Only primitives / string / TimeSpan — MemberwiseClone is sufficient.</summary>
+    public StatisticsOptions DeepClone() => (StatisticsOptions)MemberwiseClone();
+
+    /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
+    public IEnumerable<string> Validate(string prefix)
+    {
+        yield break;
+    }
 }

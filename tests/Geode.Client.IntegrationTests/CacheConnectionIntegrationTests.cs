@@ -56,7 +56,7 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
             .AddGeodeClient(ConfigureCacheXml)
             .BuildServiceProvider();
 
-        var cache = services.GetRequiredService<IGeodeCache>();
+        var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();
         Assert.False(cache.IsClosed);
 
         // Phase 1.1 goal: open a single TCP connection, run handshake,
@@ -83,7 +83,7 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
             .AddGeodeClient(ConfigureCacheXml)
             .BuildServiceProvider();
 
-        var cache = services.GetRequiredService<IGeodeCache>();
+        var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();
         await cache.EnsureInitializedAsync(cts.Token);
 
         await cache.CloseAsync(cts.Token);
@@ -123,7 +123,7 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
             })
             .BuildServiceProvider();
 
-        var cache = services.GetRequiredService<IGeodeCache>();
+        var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();
         await cache.EnsureInitializedAsync(cts.Token);
 
         // Walk Cache → PoolManager → DefaultPool → ThinClientPoolDM to
@@ -181,7 +181,7 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
             })
             .BuildServiceProvider();
 
-        var cache = services.GetRequiredService<IGeodeCache>();
+        var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();
         await cache.EnsureInitializedAsync(cts.Token);
 
         var pool = (ThinClientPoolDM)((Cache)cache).PoolManager.DefaultPool!;
@@ -234,7 +234,7 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
             })
             .BuildServiceProvider();
 
-        var cache = services.GetRequiredService<IGeodeCache>();
+        var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();
         await cache.EnsureInitializedAsync(cts.Token);
 
         var pool = (ThinClientPoolDM)((Cache)cache).PoolManager.DefaultPool!;
@@ -283,7 +283,7 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
                          .AddGeodeClient(ConfigureCacheXml)
                          .BuildServiceProvider())
         {
-            cache = services.GetRequiredService<IGeodeCache>();
+            cache = services.GetRequiredService<IGeodeCacheFactory>().Create();
             await cache.EnsureInitializedAsync(cts.Token);
         }
         // ServiceProvider disposal cascades into the

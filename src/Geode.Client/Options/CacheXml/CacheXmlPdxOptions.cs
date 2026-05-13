@@ -20,4 +20,13 @@ public class CacheXmlPdxOptions
     /// form on read (useful for OQL-only consumers).
     /// </summary>
     public bool? ReadSerialized { get; set; }
+
+    /// <summary>Deep clone. Nullable bools — MemberwiseClone is sufficient.</summary>
+    public CacheXmlPdxOptions DeepClone() => (CacheXmlPdxOptions)MemberwiseClone();
+
+    /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
+    public IEnumerable<string> Validate(string prefix)
+    {
+        yield break;
+    }
 }

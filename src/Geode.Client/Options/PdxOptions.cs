@@ -14,4 +14,13 @@ public class PdxOptions
     /// <c>false</c>.
     /// </summary>
     public bool ClearTypeIdsOnDisconnect { get; set; }
+
+    /// <summary>Deep clone. Single bool — MemberwiseClone is sufficient.</summary>
+    public PdxOptions DeepClone() => (PdxOptions)MemberwiseClone();
+
+    /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
+    public IEnumerable<string> Validate(string prefix)
+    {
+        yield break;
+    }
 }

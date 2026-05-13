@@ -1,3 +1,5 @@
+using Geode.Client.Internal;
+
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -36,14 +38,33 @@ namespace Geode.Client.Protocol.Serialization;
 /// as <see cref="Array.Empty{T}"/>.
 /// </para>
 /// </remarks>
-internal sealed class BooleanArrayDataConverter : DataConverter<bool[]>
+internal sealed class BooleanArrayDataConverter(CacheScopeContext cacheScopeContext)
+    : DataConverter<bool[]>
 {
     private static readonly byte[] s_dsCodes = { DSCode.BooleanArray };
+
+    /// <summary>
+    /// Snapshot of <see cref="Options.SerializationOptions.MaxArrayLength"/>
+    /// at construction. The per-cache options bag is one-shot
+    /// (<see cref="CacheScopeContext.Initialize"/> runs before any
+    /// consumer resolves) so caching the value avoids a property-chain
+    /// walk on every wire op.
+    /// </summary>
+    private readonly int _maxArrayLength
+        = cacheScopeContext.Options.Serialization.MaxArrayLength;
 
     public override byte[] DsCodes => s_dsCodes;
 
     public override void Write(BigEndianBinaryWriter writer, bool[] value, byte dsCode, int depth)
     {
+        if (value.Length > _maxArrayLength)
+        {
+            throw new InvalidOperationException(
+                $"BooleanArrayDataConverter: cannot serialise an array of {value.Length} elements "
+                + $"— exceeds Serialization.MaxArrayLength ({_maxArrayLength}). "
+                + "Tune GeodeClientOptions.Serialization.MaxArrayLength if the workload "
+                + "genuinely warrants larger payloads.");
+        }
         writer.WriteArrayLen(value.Length);
         foreach (var element in value)
         {
@@ -57,6 +78,14 @@ internal sealed class BooleanArrayDataConverter : DataConverter<bool[]>
         if (length <= 0)
         {
             return Array.Empty<bool>();
+        }
+        if (length > _maxArrayLength)
+        {
+            throw new GeodeException(
+                $"BooleanArrayDataConverter: wire array length {length} exceeds "
+                + $"Serialization.MaxArrayLength ({_maxArrayLength}) — refusing to allocate. "
+                + "Treat as a hostile / buggy payload unless a legitimate workload "
+                + "warrants raising the limit.");
         }
         var array = new bool[length];
         for (var i = 0; i < length; i++)

@@ -71,6 +71,12 @@ internal sealed class StringArrayDataConverter : DataConverter<string[]>
 
     public override void Write(BigEndianBinaryWriter writer, string[] value, byte dsCode, int depth)
     {
+        if (value.Length > _registry.MaxArrayLength)
+        {
+            throw new InvalidOperationException(
+                $"StringArrayDataConverter: cannot serialise an array of {value.Length} elements "
+                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+        }
         writer.WriteArrayLen(value.Length);
         foreach (var element in value)
         {
@@ -90,6 +96,12 @@ internal sealed class StringArrayDataConverter : DataConverter<string[]>
         if (length <= 0)
         {
             return Array.Empty<string>();
+        }
+        if (length > _registry.MaxArrayLength)
+        {
+            throw new GeodeException(
+                $"StringArrayDataConverter: wire array length {length} exceeds "
+                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) — refusing to allocate.");
         }
         // Element type is string?[] in spirit (nulls survive), but the
         // CLR Type is the same string[] either way — nullable

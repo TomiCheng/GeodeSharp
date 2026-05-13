@@ -62,6 +62,12 @@ internal sealed class LinkedListDataConverter : IDataConverter
         // is O(1), no scratch list needed (unlike HashSet<T>).
         // foreach yields head→tail, matching the cppcache wire order.
         var source = (ICollection)value;
+        if (source.Count > _registry.MaxArrayLength)
+        {
+            throw new InvalidOperationException(
+                $"LinkedListDataConverter: cannot serialise a list of {source.Count} elements "
+                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+        }
         writer.WriteArrayLen(source.Count);
         foreach (var item in source)
         {
@@ -76,6 +82,12 @@ internal sealed class LinkedListDataConverter : IDataConverter
         if (length <= 0)
         {
             return list;
+        }
+        if (length > _registry.MaxArrayLength)
+        {
+            throw new GeodeException(
+                $"LinkedListDataConverter: wire list length {length} exceeds "
+                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) — refusing to allocate.");
         }
 
         for (var i = 0; i < length; i++)

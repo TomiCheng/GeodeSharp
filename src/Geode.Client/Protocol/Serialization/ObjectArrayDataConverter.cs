@@ -81,6 +81,12 @@ internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
 
     public override void Write(BigEndianBinaryWriter writer, object[] value, byte dsCode, int depth)
     {
+        if (value.Length > _registry.MaxArrayLength)
+        {
+            throw new InvalidOperationException(
+                $"ObjectArrayDataConverter: cannot serialise an array of {value.Length} elements "
+                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+        }
         writer.WriteArrayLen(value.Length);
 
         // Java class header: one DSCode.Class byte + the literal
@@ -107,6 +113,12 @@ internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
         if (length <= 0)
         {
             return Array.Empty<object>();
+        }
+        if (length > _registry.MaxArrayLength)
+        {
+            throw new GeodeException(
+                $"ObjectArrayDataConverter: wire array length {length} exceeds "
+                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) — refusing to allocate.");
         }
 
         // Discard the class header — its information is redundant

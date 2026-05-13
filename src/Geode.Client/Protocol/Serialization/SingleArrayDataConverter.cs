@@ -1,3 +1,5 @@
+using Geode.Client.Internal;
+
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -13,14 +15,24 @@ namespace Geode.Client.Protocol.Serialization;
 /// pattern. Same key / null / empty rules as
 /// <see cref="BooleanArrayDataConverter"/>.
 /// </remarks>
-internal sealed class SingleArrayDataConverter : DataConverter<float[]>
+internal sealed class SingleArrayDataConverter(CacheScopeContext cacheScopeContext)
+    : DataConverter<float[]>
 {
     private static readonly byte[] s_dsCodes = { DSCode.CacheableFloatArray };
+
+    private readonly int _maxArrayLength
+        = cacheScopeContext.Options.Serialization.MaxArrayLength;
 
     public override byte[] DsCodes => s_dsCodes;
 
     public override void Write(BigEndianBinaryWriter writer, float[] value, byte dsCode, int depth)
     {
+        if (value.Length > _maxArrayLength)
+        {
+            throw new InvalidOperationException(
+                $"SingleArrayDataConverter: cannot serialise an array of {value.Length} elements "
+                + $"— exceeds Serialization.MaxArrayLength ({_maxArrayLength}).");
+        }
         writer.WriteArrayLen(value.Length);
         foreach (var element in value)
         {
@@ -34,6 +46,12 @@ internal sealed class SingleArrayDataConverter : DataConverter<float[]>
         if (length <= 0)
         {
             return Array.Empty<float>();
+        }
+        if (length > _maxArrayLength)
+        {
+            throw new GeodeException(
+                $"SingleArrayDataConverter: wire array length {length} exceeds "
+                + $"Serialization.MaxArrayLength ({_maxArrayLength}) — refusing to allocate.");
         }
         var array = new float[length];
         for (var i = 0; i < length; i++)

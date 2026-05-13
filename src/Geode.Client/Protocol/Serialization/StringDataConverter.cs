@@ -1,3 +1,5 @@
+using Geode.Client.Internal;
+
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -63,7 +65,8 @@ namespace Geode.Client.Protocol.Serialization;
 /// <see cref="BigEndianBinaryReader.ReadJavaModifiedUtf8"/>.
 /// </para>
 /// </remarks>
-internal sealed class StringDataConverter : DataConverter<string>
+internal sealed class StringDataConverter(CacheScopeContext cacheScopeContext)
+    : DataConverter<string>
 {
     // 87/88/42/89 cover the four encode forms; 69 is read-only
     // tolerance for null-string sentinels coming from the server.
@@ -75,6 +78,16 @@ internal sealed class StringDataConverter : DataConverter<string>
         DSCode.CacheableStringHuge,         // 89
         DSCode.CacheableNullString,         // 69 — decode-only
     };
+
+    /// <summary>
+    /// Snapshot of <see cref="Options.SerializationOptions.MaxStringLength"/>.
+    /// Unit is whichever length the chosen DSCode encodes (chars for
+    /// 87 / 88 / 89, modified-UTF-8 bytes for 42); same numeric cap
+    /// applies to all four for simplicity. Snapshotted at ctor for
+    /// the same reason as the array converters' <c>_maxArrayLength</c>.
+    /// </summary>
+    private readonly int _maxStringLength
+        = cacheScopeContext.Options.Serialization.MaxStringLength;
 
     public override byte[] DsCodes => s_dsCodes;
 
@@ -121,6 +134,16 @@ internal sealed class StringDataConverter : DataConverter<string>
 
     public override void Write(BigEndianBinaryWriter writer, string value, byte dsCode, int depth)
     {
+        // Top-level cap covers all four DSCode branches. Unit differs
+        // (chars for 87/88/89, modified-UTF-8 bytes for 42), but the
+        // configured limit is one number applied uniformly — caller
+        // can tune up if a legitimate workload needs longer payloads.
+        if (value.Length > _maxStringLength)
+        {
+            throw new InvalidOperationException(
+                $"StringDataConverter: cannot serialise a string of {value.Length} chars "
+                + $"— exceeds Serialization.MaxStringLength ({_maxStringLength}).");
+        }
         switch (dsCode)
         {
             case DSCode.CacheableASCIIString:
@@ -161,18 +184,38 @@ internal sealed class StringDataConverter : DataConverter<string>
         switch (dsCode)
         {
             case DSCode.CacheableASCIIString:
-                return ReadAsciiBytes(reader, reader.ReadUInt16());
+            {
+                // u16 length is wire-bounded to 65535 (already a
+                // ~130KB allocation max). Still apply MaxStringLength
+                // so a user who tightened the cap to e.g. 100 sees
+                // it honoured on every variant.
+                int length = reader.ReadUInt16();
+                EnsureStringLength(length);
+                return ReadAsciiBytes(reader, length);
+            }
 
             case DSCode.CacheableASCIIStringHuge:
-                return ReadAsciiBytes(reader, reader.ReadInt32());
+            {
+                // i32 length is the primary attack surface — can be
+                // pinned at int.MaxValue by a hostile server.
+                int length = reader.ReadInt32();
+                EnsureStringLength(length);
+                return ReadAsciiBytes(reader, length);
+            }
 
             case DSCode.CacheableString:
+                // u16 byte-length is wire-bounded to 65535 → at most
+                // a ~130KB char[] inside ReadJavaModifiedUtf8. Below
+                // any reasonable MaxStringLength so we skip the check
+                // here rather than refactor ReadJavaModifiedUtf8 to
+                // surface its internal length.
                 return reader.ReadJavaModifiedUtf8();
 
             case DSCode.CacheableStringHuge:
             {
-                var charCount = reader.ReadInt32();
+                int charCount = reader.ReadInt32();
                 if (charCount == 0) return string.Empty;
+                EnsureStringLength(charCount);
                 var chars = new char[charCount];
                 for (var i = 0; i < charCount; i++)
                 {
@@ -192,6 +235,16 @@ internal sealed class StringDataConverter : DataConverter<string>
                     nameof(dsCode),
                     dsCode,
                     $"StringDataConverter cannot read payload for DSCode {dsCode}.");
+        }
+    }
+
+    private void EnsureStringLength(int length)
+    {
+        if (length > _maxStringLength)
+        {
+            throw new GeodeException(
+                $"StringDataConverter: wire string length {length} exceeds "
+                + $"Serialization.MaxStringLength ({_maxStringLength}) — refusing to allocate.");
         }
     }
 

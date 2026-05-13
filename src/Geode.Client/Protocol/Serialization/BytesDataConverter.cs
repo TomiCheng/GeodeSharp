@@ -1,3 +1,5 @@
+using Geode.Client.Internal;
+
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -42,15 +44,40 @@ namespace Geode.Client.Protocol.Serialization;
 ///   </item>
 /// </list>
 /// </remarks>
-internal sealed class BytesDataConverter : DataConverter<byte[]>
+internal sealed class BytesDataConverter(CacheScopeContext cacheScopeContext)
+    : DataConverter<byte[]>
 {
     private static readonly byte[] s_dsCodes = { DSCode.CacheableBytes };
 
+    private readonly int _maxBytesLength
+        = cacheScopeContext.Options.Serialization.MaxBytesLength;
+
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, byte[] value, byte dsCode, int depth) =>
+    public override void Write(BigEndianBinaryWriter writer, byte[] value, byte dsCode, int depth)
+    {
+        if (value.Length > _maxBytesLength)
+        {
+            throw new InvalidOperationException(
+                $"BytesDataConverter: cannot serialise a byte[] of {value.Length} bytes "
+                + $"— exceeds Serialization.MaxBytesLength ({_maxBytesLength}).");
+        }
         writer.WriteBytes(value);
+    }
 
-    public override byte[]? Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>
-        reader.ReadBytes();
+    public override byte[]? Read(BigEndianBinaryReader reader, byte dsCode, int depth)
+    {
+        // Inline the length read so we can bounds-check before
+        // allocating. reader.ReadBytes() does the same two steps
+        // internally; we just split them to insert the limit gate.
+        var length = reader.ReadArrayLen();
+        if (length == -1) return null;
+        if (length > _maxBytesLength)
+        {
+            throw new GeodeException(
+                $"BytesDataConverter: wire byte[] length {length} exceeds "
+                + $"Serialization.MaxBytesLength ({_maxBytesLength}) — refusing to allocate.");
+        }
+        return reader.ReadBytesOnly(length).ToArray();
+    }
 }

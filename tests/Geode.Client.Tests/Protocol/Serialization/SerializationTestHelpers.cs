@@ -3,6 +3,7 @@ using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
 using Geode.Client.Protocol.Serialization;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Tests.Protocol.Serialization;
 
@@ -19,24 +20,58 @@ internal static class SerializationTestHelpers
 {
     /// <summary>
     /// Spin up a fresh <see cref="SerializationRegistry"/> wired to a
-    /// freshly-initialised <see cref="CacheScopeContext"/>. Production
-    /// resolves the registry through DI; tests build one directly via
-    /// this helper so each test gets a clean instance without
-    /// bootstrapping the whole DI container.
+    /// freshly-initialised <see cref="CacheScopeContext"/> and a
+    /// minimal <see cref="IServiceProvider"/> that the registry uses
+    /// to <see cref="ActivatorUtilities.CreateInstance{T}(IServiceProvider, object[])"/>
+    /// its length-prefixed converters. Production resolves both via
+    /// DI; tests build them directly so each case gets a clean,
+    /// isolated registry without bootstrapping the whole container.
     /// </summary>
     /// <param name="maxDepth">
-    /// Override for <see cref="SerializationOptions.MaxDepth"/>. Default
-    /// matches production (<c>64</c>); depth-enforcement tests pass
-    /// small values like <c>2</c> / <c>3</c> so the limit fires on a
-    /// realistically small nested payload.
+    /// Override for <see cref="SerializationOptions.MaxDepth"/>.
+    /// Default matches production (<c>64</c>); depth-enforcement tests
+    /// pass small values like <c>2</c> / <c>3</c> so the limit fires
+    /// on a realistically small nested payload.
     /// </param>
-    public static SerializationRegistry CreateRegistry(int maxDepth = 64)
+    /// <param name="maxArrayLength">
+    /// Override for <see cref="SerializationOptions.MaxArrayLength"/>.
+    /// Default matches production (<c>1_000_000</c>); array-limit
+    /// tests pass small values to exercise the check without building
+    /// gigabyte payloads.
+    /// </param>
+    /// <param name="maxBytesLength">
+    /// Override for <see cref="SerializationOptions.MaxBytesLength"/>.
+    /// Default matches production (<c>10_000_000</c>); covers
+    /// <c>byte[]</c> only.
+    /// </param>
+    /// <param name="maxStringLength">
+    /// Override for <see cref="SerializationOptions.MaxStringLength"/>.
+    /// Same default + same testing rationale as
+    /// <paramref name="maxArrayLength"/>.
+    /// </param>
+    public static SerializationRegistry CreateRegistry(
+        int maxDepth = 64,
+        int maxArrayLength = 1_000_000,
+        int maxBytesLength = 10_000_000,
+        int maxStringLength = 1_000_000)
     {
         var scope = new CacheScopeContext();
         var opts = new GeodeClientOptions();
         opts.Serialization.MaxDepth = maxDepth;
+        opts.Serialization.MaxArrayLength = maxArrayLength;
+        opts.Serialization.MaxBytesLength = maxBytesLength;
+        opts.Serialization.MaxStringLength = maxStringLength;
         scope.Initialize(string.Empty, opts);
-        return new SerializationRegistry(scope);
+
+        // Minimum DI container: just the CacheScopeContext we just
+        // initialised, so ActivatorUtilities-constructed converters
+        // inside the registry resolve the same scoped instance the
+        // registry itself sees.
+        var sp = new ServiceCollection()
+            .AddSingleton(scope)
+            .BuildServiceProvider();
+
+        return new SerializationRegistry(sp, scope);
     }
 
     /// <summary>

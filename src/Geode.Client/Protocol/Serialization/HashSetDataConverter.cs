@@ -84,6 +84,12 @@ internal sealed class HashSetDataConverter : IDataConverter
             items.Add(item);
         }
 
+        if (items.Count > _registry.MaxArrayLength)
+        {
+            throw new InvalidOperationException(
+                $"HashSetDataConverter: cannot serialise a set of {items.Count} elements "
+                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+        }
         writer.WriteArrayLen(items.Count);
         foreach (var item in items)
         {
@@ -99,6 +105,12 @@ internal sealed class HashSetDataConverter : IDataConverter
         if (length <= 0)
         {
             return new HashSet<object?>();
+        }
+        if (length > _registry.MaxArrayLength)
+        {
+            throw new GeodeException(
+                $"HashSetDataConverter: wire set length {length} exceeds "
+                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) — refusing to allocate.");
         }
 
         var set = new HashSet<object?>(capacity: length);

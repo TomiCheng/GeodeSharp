@@ -80,6 +80,12 @@ internal sealed class ListDataConverter : IDataConverter
         // runtime type maps to this converter via the open-generic
         // fallback.
         var source = (IList)value;
+        if (source.Count > _registry.MaxArrayLength)
+        {
+            throw new InvalidOperationException(
+                $"ListDataConverter: cannot serialise a list of {source.Count} elements "
+                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+        }
         writer.WriteArrayLen(source.Count);
         foreach (var item in source)
         {
@@ -99,6 +105,12 @@ internal sealed class ListDataConverter : IDataConverter
         if (length <= 0)
         {
             return new List<object?>(0);
+        }
+        if (length > _registry.MaxArrayLength)
+        {
+            throw new GeodeException(
+                $"ListDataConverter: wire list length {length} exceeds "
+                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) — refusing to allocate.");
         }
 
         var list = new List<object?>(length);

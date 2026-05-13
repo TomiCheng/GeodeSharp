@@ -101,6 +101,27 @@ internal sealed class GeodeClientOptionsValidator : IValidateOptions<GeodeClient
                 $"{prefix}.Serialization.MaxDepth must be >= 1 (got {options.Serialization.MaxDepth}).");
         }
 
+        // SerializationOptions.MaxArrayLength / MaxStringLength —
+        // must be >= 0. Zero is legal (only empty arrays / strings
+        // accepted, semantically weird but mathematically consistent
+        // with the `length > Max…` check). Negative is nonsense and
+        // would refuse every payload including empty.
+        if (options.Serialization.MaxArrayLength < 0)
+        {
+            failures.Add(
+                $"{prefix}.Serialization.MaxArrayLength must be >= 0 (got {options.Serialization.MaxArrayLength}).");
+        }
+        if (options.Serialization.MaxBytesLength < 0)
+        {
+            failures.Add(
+                $"{prefix}.Serialization.MaxBytesLength must be >= 0 (got {options.Serialization.MaxBytesLength}).");
+        }
+        if (options.Serialization.MaxStringLength < 0)
+        {
+            failures.Add(
+                $"{prefix}.Serialization.MaxStringLength must be >= 0 (got {options.Serialization.MaxStringLength}).");
+        }
+
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);

@@ -83,6 +83,12 @@ internal sealed class DictionaryDataConverter : IDataConverter
         // therefore non-generic ICollection with Count) — unlike
         // HashSet<T>, no scratch list needed.
         var source = (IDictionary)value;
+        if (source.Count > _registry.MaxArrayLength)
+        {
+            throw new InvalidOperationException(
+                $"DictionaryDataConverter: cannot serialise a map of {source.Count} entries "
+                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+        }
         writer.WriteArrayLen(source.Count);
         foreach (DictionaryEntry entry in source)
         {
@@ -100,6 +106,12 @@ internal sealed class DictionaryDataConverter : IDataConverter
         if (length <= 0)
         {
             return new Dictionary<object, object?>();
+        }
+        if (length > _registry.MaxArrayLength)
+        {
+            throw new GeodeException(
+                $"DictionaryDataConverter: wire map length {length} exceeds "
+                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) — refusing to allocate.");
         }
 
         var dict = new Dictionary<object, object?>(capacity: length);

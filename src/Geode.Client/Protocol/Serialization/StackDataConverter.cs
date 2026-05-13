@@ -61,6 +61,12 @@ internal sealed class StackDataConverter : IDataConverter
         // Stack<T> implements non-generic ICollection — Count is
         // O(1), no scratch list needed.
         var source = (ICollection)value;
+        if (source.Count > _registry.MaxArrayLength)
+        {
+            throw new InvalidOperationException(
+                $"StackDataConverter: cannot serialise a stack of {source.Count} elements "
+                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+        }
         writer.WriteArrayLen(source.Count);
 
         // Reverse the foreach output (top→bottom) into bottom→top for
@@ -87,6 +93,12 @@ internal sealed class StackDataConverter : IDataConverter
         if (length <= 0)
         {
             return stack;
+        }
+        if (length > _registry.MaxArrayLength)
+        {
+            throw new GeodeException(
+                $"StackDataConverter: wire stack length {length} exceeds "
+                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) — refusing to allocate.");
         }
 
         // Wire is bottom→top order; pushing in wire order places

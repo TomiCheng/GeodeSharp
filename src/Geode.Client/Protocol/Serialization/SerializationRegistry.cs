@@ -1,4 +1,6 @@
+using System;
 using Geode.Client.Internal;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol.Serialization;
 
@@ -50,8 +52,9 @@ namespace Geode.Client.Protocol.Serialization;
 /// </remarks>
 internal sealed class SerializationRegistry
 {
-    private readonly Dictionary<byte, IDataConverter> _byDsCode = new();
-    private readonly Dictionary<Type, IDataConverter> _byType = new();
+    private readonly IServiceProvider _serviceProvider;
+    private readonly Dictionary<byte, IDataConverter> _byDsCode = [];
+    private readonly Dictionary<Type, IDataConverter> _byType = [];
 
     // TODO Phase 2+: PDX path —
     //   private readonly Dictionary<string, IPdxConverter> _pdxByName = new();
@@ -67,10 +70,33 @@ internal sealed class SerializationRegistry
     /// </summary>
     internal int MaxDepth { get; }
 
-    public SerializationRegistry(CacheScopeContext scopeContext)
+    /// <summary>
+    /// Snapshot of <see cref="Options.SerializationOptions.MaxArrayLength"/>.
+    /// Used by the recursive collection / object-array / string-array
+    /// converters, which already hold a registry reference for
+    /// re-entry; the non-recursive primitive-array converters inject
+    /// <see cref="CacheScopeContext"/> directly via primary ctor and
+    /// snapshot independently.
+    /// </summary>
+    internal int MaxArrayLength { get; }
+
+    /// <summary>
+    /// Snapshot of <see cref="Options.SerializationOptions.MaxStringLength"/>.
+    /// Same snapshot rationale as <see cref="MaxArrayLength"/>;
+    /// consumed today only by <see cref="StringDataConverter"/> via
+    /// the direct-CacheScopeContext path, but exposed here for any
+    /// future recursive converter that wants to bound a nested
+    /// string slot.
+    /// </summary>
+    internal int MaxStringLength { get; }
+
+    public SerializationRegistry(IServiceProvider serviceProvider, CacheScopeContext scopeContext)
     {
+        _serviceProvider = serviceProvider;
         ArgumentNullException.ThrowIfNull(scopeContext);
         MaxDepth = scopeContext.Options.Serialization.MaxDepth;
+        MaxArrayLength = scopeContext.Options.Serialization.MaxArrayLength;
+        MaxStringLength = scopeContext.Options.Serialization.MaxStringLength;
 
 
         // Built-in converters. cppcache registers ~30 of these at
@@ -81,6 +107,9 @@ internal sealed class SerializationRegistry
         // primitive-array tier (one per primitive + string[]).
         // Order: scalar (sorted by DSCode), then bytes, then string,
         // then arrays (sorted by DSCode).
+        // Scalars: no length-prefix on wire → no allocation DoS
+        // surface → no CacheScopeContext injection needed. Plain
+        // `new …()` keeps these construction sites cheap.
         Register(new BooleanDataConverter());      // 53  CacheableBoolean   → bool
         Register(new CharacterDataConverter());    // 54  CacheableCharacter → char
         Register(new ByteDataConverter());         // 55  CacheableByte      → byte (unsigned, .NET convention)
@@ -90,16 +119,22 @@ internal sealed class SerializationRegistry
         Register(new SingleDataConverter());       // 59  CacheableFloat     → float
         Register(new DoubleDataConverter());       // 60  CacheableDouble    → double
         Register(new DateTimeDataConverter());     // 61  CacheableDate      → DateTime
-        Register(new BytesDataConverter());        // 46  CacheableBytes     → byte[]
-        Register(new StringDataConverter());       // 42/87/88/89 (+69 read-only) → string
 
-        Register(new BooleanArrayDataConverter()); // 26  BooleanArray       → bool[]
-        Register(new CharArrayDataConverter());    // 27  CharArray          → char[]
-        Register(new Int16ArrayDataConverter());   // 47  CacheableInt16Array → short[]
-        Register(new Int32ArrayDataConverter());   // 48  CacheableInt32Array → int[]
-        Register(new Int64ArrayDataConverter());   // 49  CacheableInt64Array → long[]
-        Register(new SingleArrayDataConverter());  // 50  CacheableFloatArray → float[]
-        Register(new DoubleArrayDataConverter());  // 51  CacheableDoubleArray → double[]
+        // Length-prefixed converters: read CacheScopeContext via DI to
+        // snapshot Serialization.MaxArrayLength / MaxStringLength at
+        // construction. ActivatorUtilities resolves the scoped
+        // CacheScopeContext from _serviceProvider — same instance the
+        // registry itself sees.
+        Register(ActivatorUtilities.CreateInstance<BytesDataConverter>(_serviceProvider));        // 46  CacheableBytes     → byte[]
+        Register(ActivatorUtilities.CreateInstance<StringDataConverter>(_serviceProvider));       // 42/87/88/89 (+69 read-only) → string
+
+        Register(ActivatorUtilities.CreateInstance<BooleanArrayDataConverter>(_serviceProvider)); // 26  BooleanArray       → bool[]
+        Register(ActivatorUtilities.CreateInstance<CharArrayDataConverter>(_serviceProvider));    // 27  CharArray          → char[]
+        Register(ActivatorUtilities.CreateInstance<Int16ArrayDataConverter>(_serviceProvider));   // 47  CacheableInt16Array → short[]
+        Register(ActivatorUtilities.CreateInstance<Int32ArrayDataConverter>(_serviceProvider));   // 48  CacheableInt32Array → int[]
+        Register(ActivatorUtilities.CreateInstance<Int64ArrayDataConverter>(_serviceProvider));   // 49  CacheableInt64Array → long[]
+        Register(ActivatorUtilities.CreateInstance<SingleArrayDataConverter>(_serviceProvider));  // 50  CacheableFloatArray → float[]
+        Register(ActivatorUtilities.CreateInstance<DoubleArrayDataConverter>(_serviceProvider));  // 51  CacheableDoubleArray → double[]
         // string[] and object[] both take a registry reference so
         // each element can re-enter WriteObject / ReadObject with
         // its own DSCode. Safe `this` pass — converter stores the

@@ -84,12 +84,13 @@ internal sealed class SerializationRegistry
         Register(new Int64ArrayDataConverter());   // 49  CacheableInt64Array → long[]
         Register(new SingleArrayDataConverter());  // 50  CacheableFloatArray → float[]
         Register(new DoubleArrayDataConverter());  // 51  CacheableDoubleArray → double[]
-        // string[] takes a registry reference so it can re-enter
-        // WriteObject / ReadObject per element (each string element
-        // carries its own DSCode 42 / 87 / 88 / 89). Safe `this` pass
-        // — converter stores the reference but doesn't invoke
-        // anything on us until Write / Read fires post-construction.
+        // string[] and object[] both take a registry reference so
+        // each element can re-enter WriteObject / ReadObject with
+        // its own DSCode. Safe `this` pass — converter stores the
+        // reference but doesn't invoke anything on us until Write /
+        // Read fires post-construction.
         Register(new StringArrayDataConverter(this)); // 64  CacheableStringArray → string[]
+        Register(new ObjectArrayDataConverter(this)); // 52  CacheableObjectArray → object[]
     }
 
     /// <summary>

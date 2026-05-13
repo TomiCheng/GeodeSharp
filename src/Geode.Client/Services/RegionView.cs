@@ -1,3 +1,5 @@
+using Geode.Client.Protocol.Serialization;
+
 namespace Geode.Client.Services;
 
 /// <summary>
@@ -31,11 +33,14 @@ internal sealed class RegionView<TKey, TValue> : IRegion<TKey, TValue>
     where TKey : IEquatable<TKey>
 {
     private readonly IRegion _inner;
+    private readonly TypedResultAdapter _adapter;
 
-    public RegionView(IRegion inner)
+    public RegionView(IRegion inner, TypedResultAdapter adapter)
     {
         ArgumentNullException.ThrowIfNull(inner);
+        ArgumentNullException.ThrowIfNull(adapter);
         _inner = inner;
+        _adapter = adapter;
     }
 
     // ── Metadata pass-through ──────────────────────────────────
@@ -50,11 +55,16 @@ internal sealed class RegionView<TKey, TValue> : IRegion<TKey, TValue>
     public async Task<TValue?> GetAsync(TKey key, CancellationToken ct = default)
     {
         var raw = await _inner.GetAsync(key, ct).ConfigureAwait(false);
-        // Reference types: null stays null. Value types: unbox; null →
-        // default(TValue). InvalidCastException surfaces here when the
-        // stored value's runtime type doesn't unbox to TValue — the
-        // caller is asking the wrong typed view for this region.
-        return raw is null ? default : (TValue)raw;
+        // Adapter reshapes wire-canonical containers (List<object?> from
+        // CacheableArrayList, etc.) into the declared TValue form —
+        // List<int>, IList<IList<string>>, int[], …. Scalars and
+        // primitive arrays early-out unchanged via IsInstanceOfType.
+        // Null in → default(TValue) out (matches .NET dictionary
+        // conventions: missing reference value = null, missing value
+        // type = zero). InvalidCastException surfaces here when the
+        // stored value's shape genuinely doesn't fit TValue — caller
+        // is asking the wrong typed view for this region.
+        return _adapter.Convert<TValue>(raw);
     }
 
     public Task<bool> RemoveAsync(TKey key, CancellationToken ct = default)

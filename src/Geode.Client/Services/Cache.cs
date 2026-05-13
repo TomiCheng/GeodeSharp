@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
+using Geode.Client.Protocol.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -40,7 +41,8 @@ internal sealed class Cache(
     CacheScopeContext scopeContext,
     //ClientProxyMembershipIdBuilder membershipIdBuilder,
     PoolManager poolManager,
-    TcrConnectionManager tcrConnectionManager) : IGeodeCache
+    TcrConnectionManager tcrConnectionManager,
+    TypedResultAdapter typedResultAdapter) : IGeodeCache
 {
     private readonly GeodeClientOptions _options = scopeContext.Options;
 
@@ -444,7 +446,7 @@ internal sealed class Cache(
         // sub-region recursion, destroyPending check). RegionView is a
         // pure compile-time wrapper — TKey/TValue are not runtime-bound.
         var region = GetRegion(path);
-        return region is null ? null : new RegionView<TKey, TValue>(region);
+        return region is null ? null : new RegionView<TKey, TValue>(region, typedResultAdapter);
     }
 
     /// <summary>

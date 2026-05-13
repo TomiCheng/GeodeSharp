@@ -91,6 +91,14 @@ internal sealed class SerializationRegistry
         // Read fires post-construction.
         Register(new StringArrayDataConverter(this)); // 64  CacheableStringArray → string[]
         Register(new ObjectArrayDataConverter(this)); // 52  CacheableObjectArray → object[]
+
+        // Tier B-2 collections — open-generic. ListDataConverter
+        // registers ManagedType = typeof(List<>); WriteObject's
+        // dispatch falls back to GetGenericTypeDefinition() so one
+        // converter instance handles every closed List<T>. Target-
+        // shape conversion (List<object?> → IList<int>, …) happens
+        // post-decode at TypedResultAdapter, not here.
+        Register(new ListDataConverter(this));        // 65  CacheableArrayList → List<T>
     }
 
     /// <summary>
@@ -138,7 +146,18 @@ internal sealed class SerializationRegistry
         }
 
         var type = value.GetType();
-        if (_byType.TryGetValue(type, out var converter))
+        if (!_byType.TryGetValue(type, out var converter)
+            && type.IsGenericType)
+        {
+            // Open-generic fallback. Collection converters register
+            // their open generic (List<>, Dictionary<,>, …) in
+            // _byType; concrete instances (List<int>, List<string>,
+            // …) only hit on this second lookup. Single dictionary —
+            // no extra index, just a smarter probe.
+            _byType.TryGetValue(type.GetGenericTypeDefinition(), out converter);
+        }
+
+        if (converter is not null)
         {
             var dsCode = converter.GetDsCode(value);
             writer.WriteByte(dsCode);

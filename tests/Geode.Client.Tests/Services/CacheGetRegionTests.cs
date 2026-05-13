@@ -1,5 +1,6 @@
 using Geode.Client.Internal;
 using Geode.Client.Options;
+using Geode.Client.Protocol.Serialization;
 using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -32,7 +33,8 @@ public class CacheGetRegionTests
         var poolMgr = new PoolManager();
         var tccm = new TcrConnectionManager(
             scope, NullLogger<TcrConnectionManager>.Instance, sp);
-        return new Cache(sp, scope, poolMgr, tccm);
+        var adapter = new TypedResultAdapter();
+        return new Cache(sp, scope, poolMgr, tccm, adapter);
     }
 
     // ── Path validation (cppcache CacheImpl.cpp:488-490) ────────

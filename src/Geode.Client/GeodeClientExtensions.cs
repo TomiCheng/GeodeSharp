@@ -213,6 +213,11 @@ public static class GeodeClientExtensions
         // it now depends on the Scoped registry (Singleton → Scoped
         // would be a captive-dependency lifetime violation).
         services.TryAddScoped<SerializationRegistry>();
+        // TypedResultAdapter shares SerializationRegistry's per-cache
+        // scope. Stateless today, but Scoped now leaves room for
+        // future per-cache reflection caches / PDX type rules without
+        // re-litigating the lifetime when those land.
+        services.TryAddScoped<TypedResultAdapter>();
         services.TryAddScoped<TcrMessageBuilder>();
         services.TryAddScoped<TcrMessageHelper>();
         // EventIdGenerator is per-cache (Scoped) — mirrors cppcache

@@ -95,6 +95,83 @@ internal sealed class RegionView<TKey, TValue> : IRegion<TKey, TValue>
         return _inner.RemoveAllAsync(boxed, ct);
     }
 
+    public Task PutAllAsync(IReadOnlyDictionary<TKey, TValue> map, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(map);
+        // Box typed entries into a fresh Dictionary<object, object>;
+        // the inner region is non-generic so the typed dict can't ride
+        // through (covariance doesn't apply to IReadOnlyDictionary).
+        // Allocation matches RemoveAllAsync — bulk ops aren't on the
+        // hot path.
+        var boxed = new Dictionary<object, object>(map.Count);
+        foreach (var kv in map)
+        {
+            boxed[kv.Key!] = kv.Value!;
+        }
+        return _inner.PutAllAsync(boxed, ct);
+    }
+
+    public async Task<IReadOnlyDictionary<TKey, TValue?>> GetAllAsync(
+        IReadOnlyCollection<TKey> keys, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        // Box typed keys → object[]; the wire path is object-typed.
+        var boxed = new object[keys.Count];
+        var i = 0;
+        foreach (var k in keys)
+        {
+            boxed[i++] = k!;
+        }
+        var raw = await _inner.GetAllAsync(boxed, ct).ConfigureAwait(false);
+
+        // Reshape Dictionary<object, object?> → Dictionary<TKey, TValue?>
+        // via TypedResultAdapter — same recursive-descent path that
+        // GetAsync uses for nested generics. Each value goes through
+        // Convert<TValue>(raw) so a region declared
+        // <int, IList<int>> still gets List<object?> → List<int>
+        // reshaping per entry; missing-key entries (null value) collapse
+        // to default(TValue?).
+        var typed = new Dictionary<TKey, TValue?>(raw.Count);
+        foreach (var kv in raw)
+        {
+            // Skip server-missing entries at the typed boundary.
+            //
+            // The non-typed inner layer (cppcache parity) keeps null
+            // values to represent "key not on server" — that works
+            // there because the value slot is object?. On the typed
+            // layer the result type is IReadOnlyDictionary<TKey,
+            // TValue?> but TValue? for an unconstrained generic is NOT
+            // Nullable<TValue> at runtime (only a compile-time
+            // nullability annotation), so for value-type TValue
+            // (e.g. int) a "null wire value" would collapse to
+            // default(TValue)=0 and become indistinguishable from a
+            // legitimately-stored 0. .NET idiom for "absent key" is
+            // dict.ContainsKey/TryGetValue returning false; skipping
+            // the null here makes the typed surface unambiguous and
+            // matches the XML-doc contract on
+            // <see cref="IRegion{TKey,TValue}.GetAllAsync"/>.
+            //
+            // Safe because Phase 1.3 PutAsync / PutAllAsync both
+            // ArgumentNullException-guard the value — a region never
+            // stores a null value legitimately, so null on the wire
+            // is always the cppcache miss-flag-3 sentinel.
+            if (kv.Value is null)
+            {
+                continue;
+            }
+
+            // Key reshape is straightforward — inner Keys mirror what we
+            // passed in (we sent object-boxed TKey, server echoes none —
+            // ChunkedGetAllResponse threads our original keys back into
+            // the result dict), so a direct cast holds. The "!" silences
+            // CS8600 for the K reference-type case; if it ever fails the
+            // InvalidCastException is the right surface (wrong typed view).
+            var key = (TKey)kv.Key;
+            typed[key] = _adapter.Convert<TValue>(kv.Value);
+        }
+        return typed;
+    }
+
     // ── Object-typed ops (explicit interface — forward to inner) ──
     Task IRegion.PutAsync(object key, object value, CancellationToken ct)
         => _inner.PutAsync(key, value, ct);
@@ -113,4 +190,11 @@ internal sealed class RegionView<TKey, TValue> : IRegion<TKey, TValue>
 
     Task IRegion.RemoveAllAsync(IReadOnlyCollection<object> keys, CancellationToken ct)
         => _inner.RemoveAllAsync(keys, ct);
+
+    Task IRegion.PutAllAsync(IReadOnlyDictionary<object, object> map, CancellationToken ct)
+        => _inner.PutAllAsync(map, ct);
+
+    Task<IReadOnlyDictionary<object, object?>> IRegion.GetAllAsync(
+        IReadOnlyCollection<object> keys, CancellationToken ct)
+        => _inner.GetAllAsync(keys, ct);
 }

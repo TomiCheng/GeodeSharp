@@ -103,6 +103,53 @@ internal sealed class VersionedCacheableObjectPartList(
     internal IList<VersionTag?> VersionTags => _versionTags;
 
     /// <summary>
+    /// Number of (miss-flag, value) entries decoded in this chunk's
+    /// objects section. Used by <see cref="Services.ChunkedGetAllResponse"/>
+    /// to advance the shared <c>KeysOffset</c> across chunks — cppcache
+    /// passes <c>m_keysOffset</c> as <c>uint32_t*</c> so the cursor is
+    /// shared by reference between chunks; .NET prefers an explicit
+    /// post-read read-back.
+    /// </summary>
+    internal int ConsumedObjectCount => _byteArray.Count;
+
+    /// <summary>
+    /// Wire the shared GetAll accumulators into this per-chunk instance
+    /// before <see cref="FromData"/> runs. Mirrors cppcache's
+    /// <c>VersionedCacheableObjectPartList</c> 10-arg ctor
+    /// (<c>cppcache/src/ThinClientRegion.cpp:3640-3643</c>): the
+    /// chunked-response handler creates a fresh
+    /// <see cref="VersionedCacheableObjectPartList"/> per chunk but
+    /// passes pointers / shared_ptrs to the same outer accumulators so
+    /// each chunk merges into the same dict.
+    /// </summary>
+    /// <remarks>
+    /// <c>keys</c> is the original keys we sent (so step 5 of
+    /// <see cref="FromData"/> can index by position with
+    /// <c>Keys[index + KeysOffset]</c>); <c>values</c> /
+    /// <c>exceptions</c> / <c>resultKeys</c> are the accumulating
+    /// dictionaries / list. <c>addToLocalCache</c> stays
+    /// <c>false</c> for Phase 1.3 (no client-side caching) — gating
+    /// step 7's NIE on this flag keeps the GetAll round-trip alive.
+    /// </remarks>
+    internal void Initialize(
+        IReadOnlyList<object> keys,
+        int keysOffset,
+        Dictionary<object, object?> values,
+        Dictionary<object, GeodeException?>? exceptions,
+        List<object>? resultKeys,
+        bool addToLocalCache)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        ArgumentNullException.ThrowIfNull(values);
+        Keys = keys;
+        KeysOffset = keysOffset;
+        Values = values;
+        Exceptions = exceptions;
+        ResultKeys = resultKeys;
+        AddToLocalCache = addToLocalCache;
+    }
+
+    /// <summary>
     /// Number of accumulated entries. Mirrors cppcache
     /// <c>VersionedCacheableObjectPartList::size()</c>
     /// (<c>cppcache/src/VersionedCacheableObjectPartList.hpp:220-231</c>):
@@ -278,10 +325,12 @@ internal sealed class VersionedCacheableObjectPartList(
             // is true we read a fresh len off the wire.
             var len = 0;
 
-            // TODO Phase 4 — fetch from Region.CacheImpl.MemberListForVersionStamp;
-            // the back-ref chain isn't wired yet, so VersionTag ctor
-            // receives null (it accepts that).
-            MemberListForVersionStamp? memberListForVersionStamp = null;
+            // MemberListForVersionStamp resolved via DI inside
+            // NewVersionTag (Scoped, per-cache — mirrors cppcache
+            // CacheImpl::m_memberListForVersionStamp). cppcache passes
+            // it positionally to VersionTag::fromData via region-back-ref;
+            // .NET resolves it through ActivatorUtilities.CreateInstance
+            // so we don't need a local variable here any more.
 
             if (_hasTags)
             {
@@ -312,19 +361,19 @@ internal sealed class VersionedCacheableObjectPartList(
                             break;
 
                         case FLAG_FULL_TAG:
-                            versionTag = NewVersionTag(persistent, memberListForVersionStamp);
+                            versionTag = NewVersionTag(persistent);
                             versionTag.FromData(reader);
                             versionTag.ReplaceNullMemberId(_endpointMemId);
                             break;
 
                         case FLAG_TAG_WITH_NEW_ID:
-                            versionTag = NewVersionTag(persistent, memberListForVersionStamp);
+                            versionTag = NewVersionTag(persistent);
                             versionTag.FromData(reader);
                             ids.Add(versionTag.InternalMemId);
                             break;
 
                         case FLAG_TAG_WITH_NUMBER_ID:
-                            versionTag = NewVersionTag(persistent, memberListForVersionStamp);
+                            versionTag = NewVersionTag(persistent);
                             versionTag.FromData(reader);
                             var idNumber = (int)reader.ReadUnsignedVL();
                             versionTag.InternalMemId = ids[idNumber];
@@ -364,7 +413,21 @@ internal sealed class VersionedCacheableObjectPartList(
             // hasObjects=false (our actual Phase 1.3 RemoveAll path) this
             // branch is naturally skipped. Body lands with the client-
             // side cache (Phase 4+).
-            if (hasObjects)
+            // Phase 1.3 gate: cppcache walks every entry through Region.PutLocal
+            // (caching-enabled side) or Region.GetEntry (concurrent-version
+            // reconciliation side) regardless of AddToLocalCache, but every
+            // observable mutation funnels through PutLocal which we don't
+            // have yet (no client-side cache map). For proxy-mode regions
+            // (AddToLocalCache=false, the Phase 1.3 norm) the step is a
+            // pure no-op semantically — Values is already filled by step 5
+            // and step 7's only job is the cache-side bookkeeping.
+            //
+            // We gate the NIE on AddToLocalCache so Phase 1.3 GetAll
+            // (which always lands here with AddToLocalCache=false because
+            // ThinClientRegion ANDs the requested true with the region's
+            // caching-enabled attribute, and MVP regions are proxy) skips
+            // cleanly. Phase 4+ flips the flag and lands the real merge.
+            if (hasObjects && AddToLocalCache)
             {
                 // TODO Phase 4+ — needs:
                 //   1. Region.PutLocal(name, isCreate, key, value, out oldValue,
@@ -385,7 +448,10 @@ internal sealed class VersionedCacheableObjectPartList(
                 //   }
                 throw new NotImplementedException(
                     "VersionedCacheableObjectPartList.FromData step 7 (putLocal " +
-                    "merge) pending Phase 4+ (client-side caching).");
+                    "merge) pending Phase 4+ (client-side caching). " +
+                    "Phase 1.3 should never hit this — AddToLocalCache is " +
+                    "AND-gated against region.CachingEnabled which is false " +
+                    "for proxy-mode MVP regions.");
             }
         } // end lock (_responseLock)
     }
@@ -397,13 +463,20 @@ internal sealed class VersionedCacheableObjectPartList(
     /// dispatch
     /// (<c>cppcache/src/VersionedCacheableObjectPartList.cpp:199-235</c>).
     /// </summary>
-    private VersionTag NewVersionTag(bool persistent, MemberListForVersionStamp? memberListForVersionStamp)
+    /// <remarks>
+    /// <see cref="MemberListForVersionStamp"/> is now resolved through
+    /// DI (Scoped, registered in <c>GeodeClientExtensions.AddCore</c>),
+    /// not passed positionally — cppcache fetches it from
+    /// <c>CacheImpl::m_memberListForVersionStamp</c> per call which is
+    /// effectively a per-cache singleton. The earlier "pass null"
+    /// shape broke <see cref="ActivatorUtilities.CreateInstance"/>'s
+    /// ctor matcher (a runtime-null arg has no type to bind against).
+    /// </remarks>
+    private VersionTag NewVersionTag(bool persistent)
     {
         return persistent
-            ? ActivatorUtilities.CreateInstance<DiskVersionTag>(
-                serviceProvider, memberListForVersionStamp!)
-            : ActivatorUtilities.CreateInstance<VersionTag>(
-                serviceProvider, memberListForVersionStamp!);
+            ? ActivatorUtilities.CreateInstance<DiskVersionTag>(serviceProvider)
+            : ActivatorUtilities.CreateInstance<VersionTag>(serviceProvider);
     }
 
     /// <summary>

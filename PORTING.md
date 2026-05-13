@@ -78,7 +78,7 @@ mirror cppcache file-for-file unless explicitly noted, per the
 | --- | --- | --- | --- | --- | --- |
 | `Cache` (façade) + `CacheImpl` (Pimpl body) | `Geode.Client.Services.Cache` (single class, implements public `IGeodeCache`) | 2 | 🔨 | 1.1 | cppcache's Pimpl split (`Cache` → `m_cacheImpl`) is collapsed — .NET doesn't need the binary-compatibility shim. `InitializeCoreAsync` is the next entry point |
 | (DI factory layer) | `Geode.Client.Services.GeodeCacheFactory` | — | ✅ | 0 | New, no cppcache analogue |
-| `ThinClientRegion` | `Geode.Client.Services.ThinClientRegion` (non-generic) | 2 | 🔨 | 1.2 | Skeleton only — fields + ctor + 4 NIE ops. Wire dispatch lands in 1.2.e. Stays non-generic to mirror cppcache native; typed surface goes through `RegionView` wrapper |
+| `ThinClientRegion` | `Geode.Client.Services.ThinClientRegion` (non-generic) | 2 | ✅ | 1.2–1.3.c | All bulk + single-key ops end-to-end (Put / Get / Remove / ContainsKey / Clear / Invalidate / RemoveAll / PutAll / GetAll). Stays non-generic to mirror cppcache native; typed surface goes through `RegionView` wrapper. Sub-region path / caching-enabled local map deferred (Phase 2+) |
 | `LocalRegion` | `Geode.Client.Internal.LocalRegion` (abstract) | 2 | 🔨 | 1.2 | Empty placeholder layer; just holds Name / FullPath / Parent. Local-cache machinery (`m_entries` / listener / writer / loader) deferred to Phase 2+ when `caching-enabled` is honoured |
 | `RegionInternal` | `Geode.Client.Internal.RegionInternal` (abstract) | 2 | 🔨 | 1.2 | Empty placeholder layer; holds `Attributes` and forwards `PoolName`. Internal-only API surface (EventId-aware ops, version stamps, tombstones) deferred to Phase 2+ |
 | `Region` (base) | `Geode.Client.IRegion` (non-generic) + `Geode.Client.IRegion<TKey,TValue>` (typed overlay) | 2 | 🔨 | 1.2 | Non-generic interface holds the real op surface (`object` keys / values); typed interface is overload-only sugar |
@@ -112,14 +112,34 @@ mirror cppcache file-for-file unless explicitly noted, per the
 | --- | --- | --- | --- | --- | --- |
 | `TcrMessage` | `Geode.Client.Protocol.TcrMessage` | 2 | ✅ | 1.1 | unit tested |
 | `TcrMessageReply` | merged into `TcrMessage` | 2 | ✅ | 1.1 | C# uses one class for both directions |
-| (request builders, partial files in cppcache) | `Geode.Client.Protocol.TcrMessageBuilder` (+ `.Get` / `.Put` / `.Ping` partials) | 2 | ✅ | 1.1 | unit tested |
+| (request builders, partial files in cppcache) | `Geode.Client.Protocol.TcrMessageBuilder` (+ `.Get` / `.Put` / `.Ping` / `.ContainsKey` / `.Destroy` / `.ClearRegion` / `.Invalidate` / `.RemoveAll` / `.PutAll` / `.GetAll` / `.CloseConnection` partials) | 2 | ✅ | 1.1–1.3.c | unit tested; new partials track sub-phases |
 | `TcrPart` | `Geode.Client.Protocol.TcrPart` | 2 | ✅ | 1.1 | unit tested |
 | (part builder) | `Geode.Client.Protocol.TcrPartBuilder` | 2 | ✅ | 1.1 | unit tested |
 | `MessageType` enum | `Geode.Client.Protocol.MessageType` | 2 | ✅ | 1.1 | full enum with upstream gaps preserved |
 | `DSCode` | `Geode.Client.Protocol.DSCode` | 2 | ✅ | 1.1 | |
 | `ProtocolVersion` | `Geode.Client.Protocol.ProtocolVersion` | 2 | ✅ | 1.1 | |
-| `ClientProxyMembershipID` | `Geode.Client.Protocol.ClientProxyMembershipIdBuilder` | 2 | ✅ | 1.1 | unit tested |
+| `ClientProxyMembershipID` (builder) | `Geode.Client.Protocol.ClientProxyMembershipIdBuilder` | 2 | ✅ | 1.1 | unit tested |
+| `ClientProxyMembershipID` (decoder used by VersionTag) | `Geode.Client.Protocol.ClientProxyMembershipID` | 2 | ✅ | 1.3.b | `ReadEssentialData` decoder; primary ctor takes `SerializationRegistry` |
 | big-endian byte I/O macros / helpers | `BigEndianBinaryReader` / `BigEndianBinaryWriter` | 2 | ✅ | 1.1 | unit tested |
+
+### Chunked reply / version tags (Phase 1.3.b + 1.3.c)
+
+Bulk ops (`RemoveAll` / `PutAll` / `GetAll70`) ship their reply over multiple wire chunks; these types decode that stream.
+
+| cppcache | C# | Bucket | Status | Phase | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `TcrChunkedResult` | `Geode.Client.Protocol.TcrChunkedResult` (abstract) | 2 | ✅ | 1.3.b | `HandleChunk(payload, isLastChunk)` + `Reset()`; cppcache `finalize` / `binary_semaphore` / `m_ex` / `m_dsmemId` collapsed (Task/await + natural exception propagation) |
+| `TcrMessageHelper` | `Geode.Client.Protocol.TcrMessageHelper` | 2 | ✅ | 1.3.b | `ReadChunkPartHeader` classifies a chunk into NullObject / Object / Exception / Bytes |
+| `ChunkObjectType` | `Geode.Client.Protocol.TcrMessageHelper.ChunkObjectType` enum | 2 | ✅ | 1.3.b | NullObject / Object / Exception / Bytes |
+| `ChunkedRemoveAllResponse` | `Geode.Client.Services.ChunkedRemoveAllResponse` | 2 | ✅ | 1.3.b | only accumulates version tags (Phase 1.3 drops them); 5-step HandleChunk |
+| `ChunkedPutAllResponse` | `Geode.Client.Services.ChunkedPutAllResponse` | 2 | ✅ | 1.3.c | structurally identical to RemoveAll; log strings differ |
+| `ChunkedGetAllResponse` | `Geode.Client.Services.ChunkedGetAllResponse` | 2 | ✅ | 1.3.c | extra ctor params: caller's `IReadOnlyList<object> keys` (positional reverse-lookup) + `bool addToLocalCache`; `Values` accumulator surfaces as `IReadOnlyDictionary<object, object?>`; no NullObject / Bytes branches (cppcache GetAll is Object-or-Exception only) |
+| `CacheableObjectPartList` | `Geode.Client.Protocol.CacheableObjectPartList` | 2 | 🔨 | 1.3.b | base class — fields only; full decoder lives on `VersionedCacheableObjectPartList` |
+| `VersionedCacheableObjectPartList` | `Geode.Client.Protocol.VersionedCacheableObjectPartList` | 2 | ✅ | 1.3.b–1.3.c | 7-step `FromData` decoder; 1.3.c added `Initialize(keys, keysOffset, values, exceptions?, resultKeys?, addToLocalCache)` + `ConsumedObjectCount` accessor for GetAll's shared-accumulator pattern; Step 7 (`putLocal` merge) NIE gated on `AddToLocalCache` (Phase 4+) |
+| `VersionTag` | `Geode.Client.Protocol.VersionTag` | 2 | ✅ | 1.3.b | 8-step `FromData` + 2-step `ReadMembers`; primary ctor `(IServiceProvider, ILogger, MemberListForVersionStamp)`; Phase 1.3.c: `MemberListForVersionStamp` now DI-resolved (not positional) |
+| `DiskVersionTag` | `Geode.Client.Protocol.DiskVersionTag` | 2 | 🔨 | 1.3.b | inherits `VersionTag`; `ReadMembers` override NIE — persistent regions only (Phase 4+) |
+| `MemberListForVersionStamp` | `Geode.Client.Protocol.MemberListForVersionStamp` | 2 | ✅ | 1.3.b–1.3.c | Scoped DI registration added 1.3.c (mirrors cppcache `CacheImpl::m_memberListForVersionStamp` instance scope); hashKey dedup deferred Phase 4 |
+| `DSFid` enum | `Geode.Client.Protocol.DSFid` | 2 | ✅ | 1.3.b | 25 entries; `VersionedObjectPartList = 7` / `DiskVersionTag = 2131` etc. |
 
 ### DSCode coverage (built-in type-code catalogue)
 

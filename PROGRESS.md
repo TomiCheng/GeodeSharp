@@ -332,7 +332,7 @@ Converter 清單：
 #### 測試
 
 - [x] [RegionRemoveAllIntegrationTests](tests/Geode.Client.IntegrationTests/RegionRemoveAllIntegrationTests.cs) — 5 cases（4-key batch / mixed present+missing / empty arg / null arg / single-key N=1 邊界）全綠對 `apachegeode/geode` 真機，15 秒
-- [ ] Unit tests — `TcrMessageBuilderRemoveAllTests`（頭尾 shape / 5+N parts / per-part payload / arg validation / encode round-trip）尚未寫；整合測試已覆蓋 happy path
+- [x] [TcrMessageBuilderRemoveAllTests](tests/Geode.Client.Tests/Protocol/TcrMessageBuilderRemoveAllTests.cs) — 3 unit tests（header+5+N 部數 / 全 part 對齊 cppcache wire bytes / 空 keys ArgumentException）；落地時順帶補在 1.3.c 階段
 
 #### Deferred / 留待後續
 
@@ -343,12 +343,91 @@ Converter 清單：
   - constants naming convention（CLAUDE.md #9）
   - internal class 注入最具體型別（待 memory）
 
-### 1.3.c — PutAll + GetAll70
+### 1.3.c — PutAll + GetAll70 ✅
 
-- [ ] `PutAll(56)` — 5+map.size*2 parts；同 1.3.b chunked 路徑
-- [ ] `IRegion.PutAllAsync(IReadOnlyDictionary<TKey,TValue>, CancellationToken)`
-- [ ] `GetAll70(100)` — 砍 tracker map / exception map，只回 `IReadOnlyDictionary<TKey, TValue?>`（exception 路徑等真的有需求再補）
-- [ ] `IRegion.GetAllAsync(IReadOnlyCollection<TKey>, CancellationToken)`
+**完工狀態**：6/6 PutAll + GetAll integration tests 全綠對 `apachegeode/geode` 真機；509 unit tests（含新增 9 個 = RemoveAll 3 / PutAll 3 / GetAll 3 wire-shape tests）。chunked-reply 在 1.3.b 已落地，1.3.c 主要是新 wire 訊息 + GetAll 端 `hasObjects=true` 真路徑首次觸發。
+
+#### 公開 API
+
+- [x] `IRegion.PutAllAsync(IReadOnlyDictionary<object, object>, CancellationToken)` + typed `IRegion<TKey,TValue>.PutAllAsync(IReadOnlyDictionary<TKey, TValue>, ct)`
+- [x] `IRegion.GetAllAsync(IReadOnlyCollection<object>, ct) → Task<IReadOnlyDictionary<object, object?>>` + typed `IRegion<TKey,TValue>.GetAllAsync → Task<IReadOnlyDictionary<TKey, TValue?>>`
+- [x] `RegionInternal` 加 2 個 abstract；`RegionView` typed forward + 顯式 `IRegion` 實作
+
+#### Wire 訊息
+
+- [x] `PutAll(56)` — 5+`map.Count`*2 parts（region / eventId / **skipCallbacks 佔位 int=0** / flags=0 / count / N×(key,value) 交錯）；對齊 cppcache `TcrMessagePutAll` (`TcrMessage.cpp:2354-2422`)；callback overload (`PutAllWithCallback=108`) 收 callback 但 throw `NotSupportedException` — Phase 1.3 不暴露
+  - [Protocol/TcrMessageBuilder.PutAll.cs](src/Geode.Client/Protocol/TcrMessageBuilder.PutAll.cs)
+- [x] `GetAll70(100)` — 3 parts（region / **inline CacheableObjectArray keys** / int(0) callback placeholder）；對齊 cppcache `TcrMessageGetAll` ctor + `InitializeGetallMsg` (`TcrMessage.cpp:2470-2523`)；keys section inline 寫 `[52][arrayLen][43][writeString "java.lang.Object"][N × WriteObject(key)]` —— **重點**：`writeString` 本身會加 DSCode prefix（cppcache `DataOutput::writeString` 行為一致）
+  - [Protocol/TcrMessageBuilder.GetAll.cs](src/Geode.Client/Protocol/TcrMessageBuilder.GetAll.cs)
+
+#### Region op 實作
+
+- [x] `ThinClientRegion.PutAllAsync` 4-step：NextRange(N) / build / `ChunkedPutAllResponse` + dispatch / reply switch（Reply/Response/Exception/PutDataError/default）
+- [x] `ThinClientRegion.GetAllAsync` 5-step：keys materialise → IReadOnlyList<object> / build / 計算 `addToLocalCache = true && (Attributes.CachingEnabled ?? false)`（對齊 cppcache `LocalRegion::getAll_internal` 寫死 true + `getAllNoThrow_remote` AND with caching-enabled）→ `ChunkedGetAllResponse` + dispatch / reply switch（Response/Exception/GetAllDataError/default）/ return `chunkedResult.Values`
+
+#### Chunked-result handlers
+
+- [x] `ChunkedPutAllResponse`（[Services/ChunkedPutAllResponse.cs](src/Geode.Client/Services/ChunkedPutAllResponse.cs)） — 結構與 `ChunkedRemoveAllResponse` 1:1，5 步 HandleChunk（NullObject / Object / Bytes / Exception）+ 2 步 Reset
+- [x] `ChunkedGetAllResponse`（[Services/ChunkedGetAllResponse.cs](src/Geode.Client/Services/ChunkedGetAllResponse.cs)） — 比 PutAll/RemoveAll 多了：(1) 收 `keys: IReadOnlyList<object>` ctor 參數（chunk reply 用 `Keys[index + KeysOffset]` 反查 caller 送的 key）；(2) `addToLocalCache: bool` ctor 參數；(3) `_values` / `_exceptions` / `_resultKeys` / `_keysOffset` 累積器；(4) HandleChunk 把 shared accumulator 餵給 VCOPL.Initialize，後讀 `vcObjPart.ConsumedObjectCount` 推進 `_keysOffset`；(5) **沒有 NullObject / Bytes 分支** — cppcache GetAll 嚴格只接 Object/Exception；(6) `Values` accessor 揭露為 `IReadOnlyDictionary<object, object?>`
+
+#### VersionedCacheableObjectPartList 變動
+
+- [x] 加 `Initialize(keys, keysOffset, values, exceptions?, resultKeys?, addToLocalCache)` 方法（鏡像 cppcache 10-arg ctor 的角色）；GetAll chunked handler 用這個把累積器注入到 per-chunk 實例
+- [x] 加 `ConsumedObjectCount` accessor（`_byteArray.Count`） — cppcache 用 `uint32_t* m_keysOffset` 共享指標推進，我們改成 post-FromData 顯式 read-back
+- [x] Step 7 (`putLocal` merge) NIE 加 gate：`if (hasObjects && AddToLocalCache)` —— Phase 1.3 MVP `AddToLocalCache` 因 `CachingEnabled=null/false` 被 AND 成 false，這個 NIE 永遠不踩到，Phase 4+ client-side caching 才實作
+
+#### addToLocalCache 流轉（cppcache 完整鏡像）
+
+```
+ThinClientRegion.GetAllAsync
+  ├── const addToLocalCacheRequested = true   ← cppcache LocalRegion::getAll_internal:585 寫死
+  └── addToLocalCache = requested && (Attributes.CachingEnabled ?? false)
+                                     ↑ cppcache getAllNoThrow_remote:1100 AND
+       ↓
+ChunkedGetAllResponse ctor (addToLocalCache: bool, stored as field)
+       ↓
+VCOPL.Initialize(..., addToLocalCache)
+       ↓ stored on AddToLocalCache field
+VCOPL.FromData Step 7 gate: if (hasObjects && AddToLocalCache) → Phase 4+ NIE
+```
+
+#### 踩過的坑
+
+**(1) VersionTag ActivatorUtilities ctor 匹配失敗**
+
+- Symptom：`A suitable constructor for type 'Geode.Client.Protocol.VersionTag' could not be located` —— 整合測試 GetAll 第一次跑就炸
+- Root cause：`ActivatorUtilities.CreateInstance<VersionTag>(sp, memberListForVersionStamp!)` 傳 null，runtime ctor matcher 無法從 null 推型別
+- 為何 1.3.b RemoveAll 沒踩到：REPLICATE region 預設 `concurrency-checks-enabled=false`，server reply 不 ship version tags，VCOPL step 6 整段不進；GetAll reply 觸發 _hasTags 進 step 6
+- Fix：`MemberListForVersionStamp` 註冊成 Scoped DI（per-cache，鏡像 cppcache `CacheImpl::m_memberListForVersionStamp` instance scope）；`NewVersionTag` 簽名移掉 `MemberListForVersionStamp?` 參數，純走 DI 解析
+- 涉檔：[GeodeClientExtensions.cs](src/Geode.Client/GeodeClientExtensions.cs)（DI 註冊）/ [VersionedCacheableObjectPartList.cs](src/Geode.Client/Protocol/VersionedCacheableObjectPartList.cs)（NewVersionTag 簽名）
+
+**(2) `IRegion<TKey, TValue?>` 對 value-type TValue 的 null 語意 footgun**
+
+- Symptom：`xUnit2002: Do not use Assert.Null() on value type 'int'`
+- Root cause：`TValue?` 對 unconstrained T **只是編譯期 nullability annotation**，runtime 對 value type 不會 wrap 成 `Nullable<T>`；missing key 會 collapse 到 `default(int)=0`，無法區分 missing vs 真實存的 0
+- Fix：`RegionView.GetAllAsync` 跳過 null wire values → typed dict 不含 missing keys → caller 用 `TryGetValue` / `ContainsKey` 偵測（.NET idiomatic）；non-typed 入口維持 cppcache parity（null 留在 dict）
+- Phase 1.2 PutAsync / PutAll 都 ArgumentNullException-guard value → region 不可能存 null，wire 的 null **必定**是 cppcache miss-flag-3，跳過安全
+- 涉檔：[RegionView.cs](src/Geode.Client/Services/RegionView.cs)（typed 邊界過濾 null）/ [IRegion.cs](src/Geode.Client/IRegion.cs)（XML doc 對齊新語意）
+
+**(3) cppcache `DataOutput::writeString` 不是 `writeUTF`**
+
+- 一開始我以為 cppcache `writeString("java.lang.Object")` 就是 `writeUTF`（u16 length + bytes，無 DSCode prefix），寫單元測試期望這個 wire 形狀，跑起來 5/6 pass、GetAll layout test 1 失敗
+- 實際：cppcache `DataOutput::writeString`（[DataOutput.hpp:264-305](D:\github\geode-native\cppcache\include\geode\DataOutput.hpp#L264)）**會加 DSCode prefix**（ASCII → `CacheableASCIIString=87`，含非 ASCII → `CacheableString=51`，huge 變體類推）。GetAll keys section 完整 wire：`[52][arrayLen][43][87][u16 length][bytes][N × key]`
+- 我們 `BigEndianBinaryWriter.WriteString` 跟 cppcache 一致；單元測試期望值改對即可，src 不用改
+
+#### 測試
+
+- [x] Unit tests — `TcrMessageBuilderPutAllTests`（3 個：header / per-part wire 對齊 / empty map）+ `TcrMessageBuilderGetAllTests`（3 個：header / per-part wire 對齊 incl. `CacheableASCIIString` prefix in class header / empty keys）+ `TcrMessageBuilderRemoveAllTests`（3 個，順手補了 1.3.b 漏的）；總計 509 unit tests
+- [x] [RegionPutAllIntegrationTests](tests/Geode.Client.IntegrationTests/RegionPutAllIntegrationTests.cs) — 3 cases（4-key batch 寫入＋ Get 驗值 / 覆寫既存 key / 空 map ArgumentException）
+- [x] [RegionGetAllIntegrationTests](tests/Geode.Client.IntegrationTests/RegionGetAllIntegrationTests.cs) — 3 cases（4-key 全 present / mixed present+missing missing-keys 從 typed dict 省略 / 空 keys ArgumentException）
+
+#### Deferred / 留待後續
+
+- `PutAllWithCallback(108)` / `GetAllWithCallback(107)` callback overload — builder 收 callback 參數但 throw `NotSupportedException`；要落地時改 msg type 一行 + IRegion 加 overload
+- 多 keys 跨 chunk 邊界的 `_keysOffset` 推進路徑沒被測過（單 chunk happy path 已測） — 拆 chunk 邊界靠 server framing；要刻意觸發要 ship 大量 keys
+- `_exceptions` / `_resultKeys` 累積器宣告但未曝光於 public surface（Phase 3+ 例外路徑 / Phase 4+ single-hop）
+
+**下一步入口**：Phase 1.4 — OQL Query。Phase 1.3 子階段（1.3.0 / 1.3.a / 1.3.b / 1.3.c）全部完工，Phase 1 MVP 還剩 OQL 查詢（1.4）跟連線管理（1.5）。
 
 ### Phase 1.3 共用決策
 

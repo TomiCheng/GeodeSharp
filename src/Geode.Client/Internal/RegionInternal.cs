@@ -56,6 +56,8 @@ internal abstract class RegionInternal : IRegion
     public abstract Task ClearAsync(CancellationToken ct = default);
     public abstract Task InvalidateAsync(object key, CancellationToken ct = default);
     public abstract Task RemoveAllAsync(IReadOnlyCollection<object> keys, CancellationToken ct = default);
+    public abstract Task PutAllAsync(IReadOnlyDictionary<object, object> map, CancellationToken ct = default);
+    public abstract Task<IReadOnlyDictionary<object, object?>> GetAllAsync(IReadOnlyCollection<object> keys, CancellationToken ct = default);
 
     // TODO future phases — internal-only API surface that cppcache
     // RegionInternal exposes; add as their respective phases ship:

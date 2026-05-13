@@ -103,6 +103,48 @@ public interface IRegion
     /// (Phase 4+).
     /// </remarks>
     Task RemoveAllAsync(IReadOnlyCollection<object> keys, CancellationToken ct = default);
+
+    /// <summary>
+    /// Put every entry in <paramref name="map"/> on the server in one
+    /// roundtrip. Mirrors cppcache <c>Region::putAll</c>
+    /// (<c>cppcache/include/geode/Region.hpp</c>) &#x2192;
+    /// <c>ThinClientRegion::multiHopPutAllNoThrow_remote</c>
+    /// (<c>cppcache/src/ThinClientRegion.cpp:1476-1540</c>); wire is
+    /// <c>MessageType.PutAll(56)</c>.
+    /// </summary>
+    /// <remarks>
+    /// Empty <paramref name="map"/> is rejected (cppcache's per-entry
+    /// sequence-id reserve underflows on zero). Per-key version tags
+    /// from the chunked reply are dropped on the floor in Phase 1.3
+    /// &#x2014; the op returns success once the server acks the batch;
+    /// surfacing version info lands when client-side caching does
+    /// (Phase 4+).
+    /// </remarks>
+    Task PutAllAsync(IReadOnlyDictionary<object, object> map, CancellationToken ct = default);
+
+    /// <summary>
+    /// Fetch every key in <paramref name="keys"/> from the server in
+    /// one roundtrip. Returns a dictionary whose entry set is the
+    /// caller-supplied keys; a key absent on the server appears with
+    /// value <c>null</c> (cppcache parity &#x2014; misses are tagged
+    /// with the per-entry miss flag <c>3</c> and value <c>null</c>).
+    /// Mirrors cppcache <c>Region::getAll</c>
+    /// (<c>cppcache/include/geode/Region.hpp</c>) &#x2192;
+    /// <c>ThinClientRegion::getAllNoThrow_remote</c>
+    /// (<c>cppcache/src/ThinClientRegion.cpp:1089-1172</c>); wire is
+    /// <c>MessageType.GetAll70(100)</c>.
+    /// </summary>
+    /// <remarks>
+    /// Empty <paramref name="keys"/> is rejected. Phase 1.3 always
+    /// requests deserialised values (cppcache <c>m_serializeValues</c>
+    /// false); the raw-bytes overload is deferred. Per-key exception
+    /// reporting (cppcache's <c>HashMapOfException</c>) is dropped in
+    /// Phase 1.3 &#x2014; a server-side per-key exception surfaces
+    /// as a top-level <see cref="GeodeException"/>; per-key surfacing
+    /// lands when partial-result APIs do.
+    /// </remarks>
+    Task<IReadOnlyDictionary<object, object?>> GetAllAsync(
+        IReadOnlyCollection<object> keys, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -157,6 +199,39 @@ public interface IRegion<TKey, TValue> : IRegion
 
     /// <inheritdoc cref="IRegion.RemoveAllAsync(IReadOnlyCollection{object}, CancellationToken)" />
     Task RemoveAllAsync(IReadOnlyCollection<TKey> keys, CancellationToken ct = default);
+
+    /// <inheritdoc cref="IRegion.PutAllAsync(IReadOnlyDictionary{object,object}, CancellationToken)" />
+    Task PutAllAsync(IReadOnlyDictionary<TKey, TValue> map, CancellationToken ct = default);
+
+    /// <summary>
+    /// Fetch every key in <paramref name="keys"/> from the server in
+    /// one roundtrip. The returned dictionary contains only the keys
+    /// the server has values for &#x2014; server-missing keys are
+    /// <b>absent</b> from the result (not present with
+    /// <see langword="null"/>). Use
+    /// <see cref="IReadOnlyDictionary{TKey, TValue}.TryGetValue"/> or
+    /// <see cref="IReadOnlyDictionary{TKey, TValue}.ContainsKey"/> to
+    /// detect missing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Diverges from <see cref="IRegion.GetAllAsync(IReadOnlyCollection{object}, CancellationToken)"/>:
+    /// the non-typed (raw-object) surface keeps cppcache parity
+    /// &#x2014; missing keys appear with <see langword="null"/>
+    /// because <see cref="object"/>? carries null directly. The
+    /// typed surface can't do that uniformly &#x2014;
+    /// <c>TValue?</c> for an unconstrained generic is a compile-time
+    /// nullability annotation only, not <see cref="Nullable{T}"/>;
+    /// for value-type <c>TValue</c> (e.g. <see cref="int"/>) a
+    /// "null wire value" would collapse to <c>default(TValue)</c>
+    /// and become indistinguishable from a legitimately-stored
+    /// zero. Skipping missing keys at this layer keeps the
+    /// observable contract unambiguous across reference and value
+    /// types.
+    /// </para>
+    /// </remarks>
+    Task<IReadOnlyDictionary<TKey, TValue?>> GetAllAsync(
+        IReadOnlyCollection<TKey> keys, CancellationToken ct = default);
 
     // No typed ClearAsync overload — the base IRegion.ClearAsync takes
     // no key / value, nothing to specialise.

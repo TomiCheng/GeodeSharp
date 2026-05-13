@@ -226,6 +226,18 @@ public static class GeodeClientExtensions
         // resets the counter (clientId rotates anyway, so server-side
         // dedup keys don't collide).
         services.TryAddScoped<EventIdGenerator>();
+        // MemberListForVersionStamp is per-cache (Scoped) — mirrors
+        // cppcache CacheImpl::m_memberListForVersionStamp, the instance
+        // member that backs `VersionTag.ReplaceNullMemberId` and the
+        // m_members1/m_members2 dicts. Registered (rather than
+        // hand-instantiated inside VersionedCacheableObjectPartList)
+        // so VersionTag's ctor — which takes
+        // `MemberListForVersionStamp?` — can resolve a real instance
+        // through ActivatorUtilities at chunk-decode time. Without
+        // this, ActivatorUtilities.CreateInstance<VersionTag>(sp)
+        // can't pick a matching ctor (a runtime-null arg has no
+        // type for the matcher to bind against).
+        services.TryAddScoped<MemberListForVersionStamp>();
 
         // IValidateOptions<T> is an additive abstraction: the options
         // pipeline runs every registered validator. TryAddEnumerable

@@ -162,8 +162,27 @@ mirror cppcache file-for-file unless explicitly noted, per the
 | `std::chrono::duration` | `TimeSpan` | |
 | `ExpiryTaskManager` + `FunctionExpiryTask` | `PeriodicTimer` | |
 | cppcache internal `Task<T>` worker class | `Task.Run` + cancellable loop | name collides with BCL; the cppcache class is internal |
+| `LoggingMacros` / `LOGFINE` etc. | `Microsoft.Extensions.Logging.ILogger` | also cross-listed under §Statistics / observability |
+| `Statistics` framework | `System.Diagnostics.Metrics.Meter` / EventCounters | also cross-listed under §Statistics / observability |
 | `Xerces-C` (cache.xml parser) | cut entirely | per Configuration policy |
 | `apache::geode::client::Properties` | `IDictionary<string, string>` | |
+
+### Bucket 3 — thin wrappers (BCL covers most, wrap the gap)
+
+cppcache classes where the BCL has the engine but is missing some
+semantics. Wrap **only enough** to add the missing bit; do not
+rebuild the whole cppcache class. Domain sections above hold the
+per-class status / phase rows; this table is the design-decision
+view (what BCL is missing + wrap strategy).
+
+| cppcache | What BCL is missing | Wrap strategy |
+| --- | --- | --- |
+| `ConnectionQueue<T>` (FIFO + condvar + size cap + timed get) | `Channel<T>` lacks "wait up to T then create new" | thin wrapper around `Channel<T>` exposing `TryGetWithTimeoutAsync` |
+| `synchronized_map<K,V>` | `ConcurrentDictionary` has no iterate-with-lock | **don't wrap** — use `ConcurrentDictionary` + snapshot where needed |
+| `Cacheable` / `Serializable` family | `ISerializable` doesn't match PDX wire format | introduce `IDataSerializable` interface (Phase 2) |
+| `PoolStats` (named counters + sampler) | `Meter` naming / sampling differs | thin wrapper that registers cppcache-named counters into a `Meter` |
+| `CacheableString` / `CacheableBytes` | `string` / `byte[]` already exist | **don't wrap** — handle DSCode tag in the codec only |
+| `ServerLocation` (host + port + version) | nothing equivalent | **don't wrap** — define a record `ServerLocation(...)` directly |
 
 ---
 

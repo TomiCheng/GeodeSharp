@@ -101,23 +101,9 @@ primitives but not the abstraction. .NET has the abstraction
 out-of-the-box. Use the BCL type directly; do not port the cppcache
 class.
 
-| cppcache | .NET / BCL replacement                              |
-| -------- | --------------------------------------------------- |
-| `boost::asio::tcp::socket`            | `System.Net.Sockets.Socket` / `NetworkStream` |
-| `boost::asio::ssl::stream`            | `System.Net.Security.SslStream`               |
-| `boost::asio::io_context` + workers   | `Task` + `async`/`await`                      |
-| `std::thread` / `boost::thread`       | `Task.Run`                                    |
-| `std::mutex` / `std::recursive_mutex` | `lock` / `SemaphoreSlim`                      |
-| `std::condition_variable`             | `Channel<T>` / `SemaphoreSlim`                |
-| `std::atomic<T>`                      | `Interlocked`                                 |
-| `std::shared_ptr<T>`                  | GC                                            |
-| `std::chrono::duration`               | `TimeSpan`                                    |
-| `ExpiryTaskManager` + `FunctionExpiryTask` | `PeriodicTimer`                          |
-| cppcache internal `Task<T>` (worker)  | `Task.Run` + cancellable loop                 |
-| `LoggingMacros` / `LOGFINE` etc.      | `Microsoft.Extensions.Logging.ILogger`        |
-| `Statistics` framework                | `System.Diagnostics.Metrics.Meter` / EventCounters |
-| `Xerces-C` (cache.xml parser)         | Cut entirely (per Configuration policy)       |
-| `apache::geode::client::Properties`   | `IDictionary<string, string>`                 |
+The concrete cppcache ↔ BCL mapping table lives in
+[PORTING.md](PORTING.md) under "Bucket 1 — BCL replacements". Add
+new mappings there as you encounter them.
 
 #### Bucket 2: domain logic / wire protocol → **mirror the architecture**
 
@@ -137,14 +123,9 @@ Examples: `ThinClientBaseDM`, `DistributionManager`, `PoolDM`,
 Use the BCL type as the engine; wrap **only enough** to add the
 missing semantics. Do not rebuild the whole cppcache class.
 
-| cppcache                            | What BCL is missing                  | Wrap strategy |
-| ----------------------------------- | ------------------------------------ | ------------- |
-| `ConnectionQueue<T>` (FIFO + condvar + size cap + timed get) | `Channel<T>` lacks "wait up to T then create new" | thin wrapper around `Channel<T>` exposing `TryGetWithTimeoutAsync` |
-| `synchronized_map<K,V>`             | `ConcurrentDictionary` has no iterate-with-lock | **don't wrap** — use `ConcurrentDictionary` + snapshot where needed |
-| `Cacheable` / `Serializable` family | `ISerializable` doesn't match PDX wire format | introduce `IDataSerializable` interface (Phase 2) |
-| `PoolStats` (named counters + sampler) | `Meter` naming/sampling differs | thin wrapper that registers cppcache-named counters into a `Meter` |
-| `CacheableString` / `CacheableBytes` | `string` / `byte[]` already exist    | **don't wrap** — handle DSCode tag in the codec only |
-| `ServerLocation` (host+port+version) | nothing equivalent                   | **don't wrap** — define a record `ServerLocation(...)` directly |
+The concrete cppcache ↔ wrap-strategy table lives in
+[PORTING.md](PORTING.md) under "Bucket 3 — thin wrappers". Add new
+entries there as you encounter them.
 
 #### Rule 4: when ambiguous → default to bucket 2
 
@@ -235,28 +216,11 @@ public class OrderService(IGeodeCache cache)
 }
 ```
 
-Main interfaces:
-
-```csharp
-public interface IGeodeCache
-{
-    IRegion<TKey, TValue> GetRegion<TKey, TValue>(string name);
-    IQueryService QueryService { get; }
-}
-
-public interface IRegion<TKey, TValue>
-{
-    string Name { get; }
-    Task PutAsync(TKey key, TValue value, CancellationToken ct = default);
-    Task<TValue?> GetAsync(TKey key, CancellationToken ct = default);
-    Task<bool> RemoveAsync(TKey key, CancellationToken ct = default);
-    Task<bool> ContainsKeyAsync(TKey key, CancellationToken ct = default);
-    // ... bulk / Clear / Invalidate / convenience queries land in Phase 1.3 / 1.4
-}
-
-public interface IQueryService { IQuery<T> NewQuery<T>(string oql); }
-public interface IQuery<T>      { Task<IReadOnlyList<T>> ExecuteAsync(CancellationToken ct = default); }
-```
+Current interface shape lives in `src/Geode.Client/` — `IGeodeCache`,
+`IRegion` / `IRegion<TKey,TValue>` (typed overlay with
+`where TKey : IEquatable<TKey>`), `IQueryService`, `IQuery<T>`. Use
+the source as the canonical reference; this file no longer carries a
+parallel interface listing.
 
 **Important:** in MVP we do not support cache.xml or region creation.
 A DBA pre-creates the region with gfsh
@@ -316,68 +280,11 @@ acts as a proxy.
 
 ## Phase 1 sub-phase breakdown
 
-Split into 5 sub-phases by dependency order. Each sub-phase is its own
-walking skeleton.
-
-### Phase 1.1 — Establish a single server connection
-
-End-to-end: the consumer-visible `Cache` opens one TCP/TLS connection
-to one server, runs the handshake, and closes it cleanly. No pool, no
-multi-endpoint, no failover. The user can call
-`EnsureInitializedAsync` / `CloseAsync` and have it Just Work against
-a real Geode cluster.
-
-- Frame codec (big-endian, TcrPart, TcrMessage) — already done
-- Handshake bytes — already done; refer to
-  `cppcache/src/TcrConnection.cpp::sendHandshakeForServer`
-- A single `TcrConnection` with reader / writer loops — already done
-- Ping / Reply verification — already done
-- **`TcrEndpoint.CreateNewConnectionAsync`**: open socket + handshake,
-  return a usable `TcrConnection`
-- **`Cache.InitializeCoreAsync`**: build a single `TcrEndpoint` from
-  options, await `CreateNewConnectionAsync`
-- **`Cache.CloseAsync`**: send `MessageType.CloseConnection` (18),
-  drain in-flight, dispose the endpoint
-
-### Phase 1.2 — Single-key CRUD
-
-The first demo-able milestone.
-
-- Built-in DSFID codec (string, byte[], bool, int, long, short, byte,
-  float, double, DateTime, null, List, Dictionary, arrays, HashSet)
-  — moved from 1.1 since serialization is only needed once
-  Put/Get arrive
-- Put(7) / Request(0) / Destroy(9) / ContainsKey(38) messages
-- Exception(2) reply handling
-- `IGeodeCache` / `IRegion<TKey,TValue>` public API
-- DI registration (`AddGeodeClient`)
-- Resolve `PutGetIntegrationTests` / `GetDiagnosticTests` skipped
-  cases (the `RegionDestroyedException` / per-connection state
-  thread)
-- Integration tests: put / get / remove / contains
-
-### Phase 1.3 — Bulk + management operations
-
-- PutAll(56) / GetAll70(100) / RemoveAll(109)
-- Clear (region-wide entry clear)
-- Invalidate
-- Each gets its own message type; rounds out the basic region surface
-
-### Phase 1.4 — Query
-
-- OQL Query(34) message
-- Result decoding: `SELECT *` returns `IReadOnlyList<TValue>`,
-  `SELECT COUNT(*)` returns `long`
-- Region convenience queries (ExistsValue / SelectValue)
-
-### Phase 1.5 — Connection management
-
-Promote the single socket to production-ready.
-
-- Connection pool (min/max, idle eviction, health checks)
-- Locator wire protocol (different from the server protocol)
-- Multi-server failover, automatic reconnect
-- Server endpoint health monitoring
+Phase 1 is split into 5 dependency-ordered sub-phases (1.1 single
+connection → 1.2 single-key CRUD → 1.3 bulk + management → 1.4 OQL
+query → 1.5 connection management), each a walking skeleton. The
+per-sub-phase scope, status, design decisions, and "踩過的坑" notes
+live in [PROGRESS.md](PROGRESS.md).
 
 ---
 
@@ -408,26 +315,12 @@ ad-hoc byte sequence. Translate it byte-by-byte against
 `cppcache/src/TcrConnection.cpp::sendHandshakeForServer`. **Do not
 work from memory.**
 
-### MessageType (MVP subset)
+### MessageType
 
-Pulled from `cppcache/src/TcrMessage.hpp`:
-
-| Value | Name                | Sub-phase |
-| ----- | ------------------- | --------- |
-| 0     | Request (GET)       | 1.2       |
-| 1     | Response (GET reply)| 1.2       |
-| 2     | Exception           | 1.2       |
-| 5     | Ping                | 1.1       |
-| 6     | Reply               | 1.1       |
-| 7     | Put                 | 1.2       |
-| 9     | Destroy             | 1.2       |
-| 18    | CloseConnection     | 1.1       |
-| 34    | Query               | 1.4       |
-| 38    | ContainsKey         | 1.2       |
-| 56    | PutAll              | 1.3       |
-| 99    | ServerToClientPing  | 1.1       |
-| 100   | GetAll70            | 1.3       |
-| 109   | RemoveAll           | 1.3       |
+The canonical list is the `Geode.Client.Protocol.MessageType` enum
+in `src/Geode.Client/Protocol/MessageType.cs` (mirrored from
+`cppcache/src/TcrMessage.hpp`). Which values land in which sub-phase
+is tracked in [PROGRESS.md](PROGRESS.md).
 
 ---
 
@@ -505,22 +398,9 @@ The maintainer works across two networks:
 
 ## Bootstrapping the next task
 
-Phase 1 starts with **Phase 1.1**. Suggested prompt:
-
-```
-Read CLAUDE.md. We're starting Phase 1.1.
-
-API-first first:
-1. Following the cppcache clicache/src/ headers, declare every Phase 1
-   public interface (IGeodeCache, IRegion<TKey,TValue>, IQueryService,
-   GeodeClientOptions, AddGeodeClient extension, related exceptions)
-   under src/Geode.Client/. Method bodies are NotImplementedException;
-   add full XML docs.
-2. Wire up DI but leave internal bindings throwing
-   (the API skeleton).
-3. Make sure dotnet build and dotnet test pass (mark tests
-   [Fact(Skip="Phase 1.1")] for now).
-
-Once that lands, move into the real Phase 1.1 work:
-Frame codec → Handshake → Ping.
-```
+New session: read this file, then [PROGRESS.md](PROGRESS.md), find
+the **下一步入口** marker on the most recently completed sub-phase,
+and start from there. PROGRESS.md's sub-phase sections carry the
+specific context (entry file, prerequisite work, design decisions
+already taken) for each upcoming task — there is no per-phase prompt
+template to maintain here.

@@ -60,9 +60,11 @@ internal sealed class SerializationRegistry
         // Built-in converters. cppcache registers ~30 of these at
         // SerializationRegistry construction; we add them as their
         // wire formats land. Phase 1.2 shipped int32 + boolean (the
-        // walking-skeleton minimum); Phase 1.3.0 widens to the full
-        // Tier A scalar / bytes / string set.
-        // Order: scalar (sorted by DSCode), then bytes, then string.
+        // walking-skeleton minimum); Phase 1.3.0 widened to the full
+        // Tier A scalar / bytes / string set; Phase 1.3.d adds the
+        // primitive-array tier (one per primitive + string[]).
+        // Order: scalar (sorted by DSCode), then bytes, then string,
+        // then arrays (sorted by DSCode).
         Register(new BooleanDataConverter());      // 53  CacheableBoolean   → bool
         Register(new CharacterDataConverter());    // 54  CacheableCharacter → char
         Register(new ByteDataConverter());         // 55  CacheableByte      → byte (unsigned, .NET convention)
@@ -74,6 +76,20 @@ internal sealed class SerializationRegistry
         Register(new DateTimeDataConverter());     // 61  CacheableDate      → DateTime
         Register(new BytesDataConverter());        // 46  CacheableBytes     → byte[]
         Register(new StringDataConverter());       // 42/87/88/89 (+69 read-only) → string
+
+        Register(new BooleanArrayDataConverter()); // 26  BooleanArray       → bool[]
+        Register(new CharArrayDataConverter());    // 27  CharArray          → char[]
+        Register(new Int16ArrayDataConverter());   // 47  CacheableInt16Array → short[]
+        Register(new Int32ArrayDataConverter());   // 48  CacheableInt32Array → int[]
+        Register(new Int64ArrayDataConverter());   // 49  CacheableInt64Array → long[]
+        Register(new SingleArrayDataConverter());  // 50  CacheableFloatArray → float[]
+        Register(new DoubleArrayDataConverter());  // 51  CacheableDoubleArray → double[]
+        // string[] takes a registry reference so it can re-enter
+        // WriteObject / ReadObject per element (each string element
+        // carries its own DSCode 42 / 87 / 88 / 89). Safe `this` pass
+        // — converter stores the reference but doesn't invoke
+        // anything on us until Write / Read fires post-construction.
+        Register(new StringArrayDataConverter(this)); // 64  CacheableStringArray → string[]
     }
 
     /// <summary>

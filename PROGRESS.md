@@ -214,18 +214,33 @@ interface IDataConverter
 | 51 | `CacheableDoubleArray` | `double[]` | |
 | 64 | `CacheableStringArray` | `string[]` | **唯一**收 `SerializationRegistry` ctor 注入；每元素重入 `WriteObject` 走完整 DSCode dispatch（per-element 42 / 87 / 88 / 89 / 41 都可能）；`null` 元素走 NullObj=41 由 registry 一層處理；`new this(this)` 安全（converter 只存 reference、Write/Read 才使用，那時 registry 已完整 populated） |
 
-**Tier B-2 — 集合（進行中）**
+**Tier B-2 — 集合 ✅**（主要型別完成；Vector / LinkedHashSet deferred）
 
-- ✅ `CacheableObjectArray(52)` — commit `0671ae1`。`object[]` ↔ 寫死 `"java.lang.Object"` Java class header + per-element re-entry 透過 registry。
-- ✅ `CacheableArrayList(65)` — `List<T>` / `IList<T>` 端到端。架構新增**兩個機制**支撐這個 tier 的後續所有集合：
-  - **`TypedResultAdapter`**（Scoped DI；[Protocol/Serialization/TypedResultAdapter.cs](src/Geode.Client/Protocol/Serialization/TypedResultAdapter.cs)）— Java wire 不帶 container element type，decode 永遠回 canonical `List<object?>`；adapter 在 `RegionView` 邊界把 `object?` 重塑成宣告 `TValue`（`IList<int>` / `IList<IList<string>>` / `int[]` 都通），遞迴下降處理 nested generics。Two-pass cost MVP 可接受；profiling 顯示問題才把 hint 下推到 converter（API 不會破壞）
-  - **`SerializationRegistry` open-generic write fallback**（[SerializationRegistry.cs:140-149](src/Geode.Client/Protocol/Serialization/SerializationRegistry.cs)）— `_byType[runtimeType]` miss 且 `runtimeType.IsGenericType` 時二次查 `GetGenericTypeDefinition()`；單字典雙探，不增加索引。`ListDataConverter.ManagedType = typeof(List<>)` 一個 instance 通吃所有 `List<T>` 閉式具現
-  - 涉檔：上述兩支 + [ListDataConverter.cs](src/Geode.Client/Protocol/Serialization/ListDataConverter.cs) / [RegionView.cs](src/Geode.Client/Services/RegionView.cs)（adapter 注入）/ [Cache.cs](src/Geode.Client/Services/Cache.cs)（primary ctor 多收 adapter）/ [GeodeClientExtensions.cs](src/Geode.Client/GeodeClientExtensions.cs)（Scoped DI 註冊）
-  - 測試：37 個新 unit（TypedResultAdapter 23 / ListDataConverter 9 / SerializationRegistry open-generic dispatch 5）+ 7 個新 integration（含 1 個 B-route 驗 server-side `java.util.ArrayList`）。422 unit + 既有整合測試全綠
-  - **gfsh quirk**（記到 memory）：`gfsh get` 印 ArrayList 用 `[1,2,3]`（無空格），不是標準 Java `[1, 2, 3]`；B-route regex 要用無空格版本
-- [ ] `CacheableHashSet(66)` — `HashSet<T>` / `ISet<T>`；同 ArrayList 套路（adapter 加 `ISet<>` branch、Set converter `ManagedType=typeof(HashSet<>)`）
-- [ ] `CacheableHashMap(67)` — `Dictionary<K,V>` / `IDictionary<K,V>`；adapter 加 `IDictionary<,>` branch + key/value 雙遞迴；converter `ManagedType=typeof(Dictionary<,>)`
-- [ ] `CacheableLinkedList(10)` / `CacheableVector(71)` / `CacheableStack(74)` / `CacheableLinkedHashSet(73)` — 等真有需求再補
+核心架構（ArrayList 落地時建立、後續 5 個 collection converter 共用）：
+
+- **`TypedResultAdapter`**（Scoped DI；[TypedResultAdapter.cs](src/Geode.Client/Protocol/Serialization/TypedResultAdapter.cs)）— Java wire 不帶 container element type，所有 collection converter 的 `Read` 都回 canonical `<object?>`-element 容器；adapter 在 `RegionView` 邊界遞迴下降把 `object?` 重塑成宣告 `TValue`（`IList<int>` / `IList<IList<string>>` / `IDictionary<int, IList<string>>` / 等都通）。Two-pass cost MVP 可接受；profiling 顯示問題才把 hint 下推到 converter（API 不會破壞）。
+- **`SerializationRegistry` open-generic write fallback**（[SerializationRegistry.cs](src/Geode.Client/Protocol/Serialization/SerializationRegistry.cs)）— `_byType[runtimeType]` miss 且 `runtimeType.IsGenericType` 時二次查 `GetGenericTypeDefinition()`；單字典雙探，不增加索引。Tier B-2 所有 converter `ManagedType` 都用 open generic（`typeof(List<>)` / `typeof(HashSet<>)` / `typeof(Dictionary<,>)` / `typeof(LinkedList<>)` / `typeof(Stack<>)`），一個 instance 通吃所有閉式具現。
+- 涉檔（架構）：上述兩支 + [RegionView.cs](src/Geode.Client/Services/RegionView.cs)（adapter 注入）/ [Cache.cs](src/Geode.Client/Services/Cache.cs)（primary ctor 多收 adapter）/ [GeodeClientExtensions.cs](src/Geode.Client/GeodeClientExtensions.cs)（Scoped DI 註冊）。
+
+Converter 清單：
+
+| DSCode | cppcache | CLR | 狀態 | 備註 |
+|---|---|---|---|---|
+| 52 | `CacheableObjectArray` | `object[]` | ✅ commit `0671ae1` | 寫死 `"java.lang.Object"` Java class header + per-element re-entry |
+| 65 | `CacheableArrayList` | `List<T>` / `IList<T>` 系列 | ✅ | 架構初登場（adapter + open-generic dispatch） |
+| 10 | `CacheableLinkedList` | `LinkedList<T>` | ✅ | wire 與 ArrayList 完全一樣（cppcache 底層都 `std::vector`）；adapter 獨立 `LinkedList<>` branch（`LinkedList<T>` 不實作 `IList<T>`，不能與 `List<>` 共 branch） |
+| 66 | `CacheableHashSet` | `HashSet<T>` / `ISet<T>` / `IReadOnlySet<T>` | ✅ | canonical decode 是 `HashSet<object?>`（Java HashSet 容許 null 元素，C++ 不容許但 wire 統一）；HashSet<T> 不實作非泛型 ICollection，write 端要先 collect 進 scratch list 拿 count |
+| 67 | `CacheableHashMap` | `Dictionary<K,V>` / `IDictionary<K,V>` / `IReadOnlyDictionary<K,V>` | ✅ | wire key/value **交錯**（不是 keys-then-values）；canonical decode 是 `Dictionary<object, object?>`；null key 在 read 端拒絕（Java HashMap 容許但 .NET Dictionary 不容；明訊息 > 沉默死） |
+| 74 | `CacheableStack` | `Stack<T>` | ✅ | **write reverse** 對齊 clicache `Linq::Enumerable::Reverse(stack)`（.NET Stack iteration top→bottom，wire 要 bottom→top）；read plain push；adapter 端再反轉一次補償 `Stack<T>(IEnumerable<T>)` ctor 的 push-in-iteration-order 反向特性 |
+| 71 | `CacheableVector` | — | [ ] | Java legacy thread-safe ArrayList；.NET 沒等價物（強行對 `List<T>` 會跟 ArrayList 撞 ManagedType）；等真有需求再做 |
+| 73 | `CacheableLinkedHashSet` | — | [ ] | .NET 沒「保持插入順序的 Set」；要做需新型別（`Geode.Client.Collections.OrderedSet<T>` 之類），是 public API 決策不是技術問題；先跳過 |
+
+**測試狀態**：464 unit + 18 collection integration 全綠。Tier B-2 直屬 unit 共 79（ListDataConverter 9 / HashSet 8 / Dictionary 8 / LinkedList 6 / Stack 7 / SerializationRegistry open-generic 5 / TypedResultAdapter 36），integration 11 round-trip + 4 B-route + 3 nested。
+
+**記到 memory 的 gfsh quirks**（[gfsh-arraylist-format.md](C:\Users\c_tom\.claude\projects\D--projects-tomi-GeodeSharp\memory\gfsh-arraylist-format.md)）：
+
+- 集合（ArrayList / LinkedList / HashSet / Stack）`Value :` 印 `[1,2,3]` **無空格**（不是 Java 標準 `[1, 2, 3]`）
+- HashMap 印 **JSON-like** `{"42":"answer"}` — 雙引號連 Integer key 都加，不是 Java 標準 `{42=answer}`
 
 **Tier C — 不做或 Phase 2+：**
 `NullObj(41)` 已內聯；`CacheableNullString(69)` 走 41 即可；`PdxType/PDX/PDX_ENUM` Phase 2；`CacheableUserData*` Phase 2；`Properties(11)` Phase 3 auth；`JavaSerializable(44)`/`DataSerializable(45)`/`Class(43)`/`CacheableFileName(63)`/`CacheableTimeUnit(68)` 罕用，skip；`FixedID*(1–4)` 是 wire layer 內部碼，不放 `SerializationRegistry`。

@@ -37,11 +37,12 @@ public class SerializationRegistryTests
     [Fact]
     public void WriteObject_unregistered_closed_generic_still_throws_NotSupported()
     {
-        // Dictionary<,> has no registered converter (yet). Open-generic
-        // fallback probes typeof(Dictionary<,>), misses, and the
-        // existing unregistered-type branch fires.
+        // SortedDictionary<,> has no registered converter — open-
+        // generic fallback probes typeof(SortedDictionary<,>), misses
+        // even though Dictionary<,> IS registered (different open-
+        // generic identity), and the unregistered-type branch fires.
         Assert.Throws<NotSupportedException>(
-            () => SerializationTestHelpers.Encode(new Dictionary<int, string>()));
+            () => SerializationTestHelpers.Encode(new SortedDictionary<int, string>()));
     }
 
     [Fact]

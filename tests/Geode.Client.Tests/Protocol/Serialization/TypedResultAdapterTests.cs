@@ -149,6 +149,140 @@ public class TypedResultAdapterTests
         Assert.Null(result[1]);
     }
 
+    // ── ISet<T> / HashSet<T> ───────────────────────────────────
+
+    [Fact]
+    public void Convert_canonical_to_HashSet_int()
+    {
+        var raw = new HashSet<object?> { 1, 2, 3 };
+        var result = _adapter.Convert<HashSet<int>>(raw);
+        Assert.NotNull(result);
+        Assert.Equal(new HashSet<int> { 1, 2, 3 }, result);
+    }
+
+    [Theory]
+    [InlineData(typeof(ISet<int>))]
+    [InlineData(typeof(HashSet<int>))]
+    [InlineData(typeof(IReadOnlySet<int>))]
+    public void Convert_materialises_HashSet_T_for_every_supported_set_shape(Type targetType)
+    {
+        var raw = new HashSet<object?> { 1, 2, 3 };
+        var result = _adapter.Convert(raw, targetType);
+        Assert.NotNull(result);
+        Assert.IsType<HashSet<int>>(result);
+        Assert.True(targetType.IsInstanceOfType(result));
+    }
+
+    [Fact]
+    public void Convert_canonical_set_with_null_to_ISet_nullable_string()
+    {
+        // ISet<string?> with null member — canonical HashSet<object?>
+        // already permits null, materialised as HashSet<string?>.
+        var raw = new HashSet<object?> { "a", null, "b" };
+        var result = _adapter.Convert<ISet<string?>>(raw);
+        Assert.NotNull(result);
+        Assert.Equal(3, result!.Count);
+        Assert.Contains("a", result);
+        Assert.Contains(null, result);
+        Assert.Contains("b", result);
+    }
+
+    // ── IDictionary<K,V> / Dictionary<K,V> ─────────────────────
+
+    [Fact]
+    public void Convert_canonical_to_Dictionary_int_string()
+    {
+        var raw = new Dictionary<object, object?>
+        {
+            [1] = "a",
+            [2] = "b",
+        };
+        var result = _adapter.Convert<Dictionary<int, string>>(raw);
+        Assert.NotNull(result);
+        Assert.Equal(2, result!.Count);
+        Assert.Equal("a", result[1]);
+        Assert.Equal("b", result[2]);
+    }
+
+    [Theory]
+    [InlineData(typeof(IDictionary<int, string>))]
+    [InlineData(typeof(Dictionary<int, string>))]
+    [InlineData(typeof(IReadOnlyDictionary<int, string>))]
+    public void Convert_materialises_Dictionary_KV_for_every_supported_map_shape(Type targetType)
+    {
+        var raw = new Dictionary<object, object?> { [1] = "a" };
+        var result = _adapter.Convert(raw, targetType);
+        Assert.NotNull(result);
+        Assert.IsType<Dictionary<int, string>>(result);
+        Assert.True(targetType.IsInstanceOfType(result));
+    }
+
+    [Fact]
+    public void Convert_dictionary_with_nested_value_recurses()
+    {
+        // Nested values use the value-side conversion path
+        // independently — IDictionary<int, IList<int>> materialises a
+        // Dictionary<int, List<int>> with each value converted.
+        var raw = new Dictionary<object, object?>
+        {
+            [1] = new List<object?> { 10, 20 },
+            [2] = new List<object?> { 30 },
+        };
+        var result = _adapter.Convert<IDictionary<int, IList<int>>>(raw);
+        Assert.NotNull(result);
+        Assert.Equal(new[] { 10, 20 }, result![1]);
+        Assert.Equal(new[] { 30 }, result[2]);
+    }
+
+    // ── LinkedList<T> ──────────────────────────────────────────
+
+    [Fact]
+    public void Convert_canonical_to_LinkedList_int_preserves_head_to_tail()
+    {
+        var raw = new LinkedList<object?>();
+        raw.AddLast(1);
+        raw.AddLast(2);
+        raw.AddLast(3);
+
+        var result = _adapter.Convert<LinkedList<int>>(raw);
+        Assert.NotNull(result);
+        Assert.Equal(new[] { 1, 2, 3 }, result);
+    }
+
+    [Fact]
+    public void Convert_canonical_List_object_to_LinkedList_int()
+    {
+        // Adapter doesn't care whether source is canonical-shaped
+        // (LinkedList<object?>) or any other IEnumerable — accepts a
+        // List<object?> source too and materialises LinkedList<int>.
+        var raw = new List<object?> { 1, 2, 3 };
+        var result = _adapter.Convert<LinkedList<int>>(raw);
+        Assert.NotNull(result);
+        Assert.Equal(new[] { 1, 2, 3 }, result);
+    }
+
+    // ── Stack<T> ───────────────────────────────────────────────
+
+    [Fact]
+    public void Convert_canonical_Stack_object_to_Stack_int_preserves_push_order()
+    {
+        // Canonical Stack<object?> is constructed by pushing in wire
+        // order (bottom→top), so foreach yields top→bottom. Adapter
+        // must reverse before constructing typed Stack<T>, otherwise
+        // the typed stack ends up inverted.
+        var raw = new Stack<object?>();
+        raw.Push(10);     // bottom
+        raw.Push(20);
+        raw.Push(30);     // top
+
+        var result = _adapter.Convert<Stack<int>>(raw);
+        Assert.NotNull(result);
+        Assert.Equal(30, result!.Peek());
+        Assert.Equal(30, result.Pop());
+        Assert.Equal(20, result.Pop());
+        Assert.Equal(10, result.Pop());
+    }
+
     // ── Arrays ─────────────────────────────────────────────────
 
     [Fact]
@@ -181,11 +315,12 @@ public class TypedResultAdapterTests
     [Fact]
     public void Convert_unknown_generic_target_throws()
     {
-        // Dictionary<,> is a known unknown — adapter does not yet have
-        // a branch for it (follow-up PR).
+        // SortedDictionary<,> is a known unknown — adapter has
+        // Dictionary<,> / IDictionary<,> branches but doesn't cover
+        // the sorted variants (follow-up).
         var raw = new List<object?> { 1, 2 };
         Assert.Throws<InvalidCastException>(
-            () => _adapter.Convert<Dictionary<int, string>>(raw));
+            () => _adapter.Convert<SortedDictionary<int, string>>(raw));
     }
 
     [Fact]

@@ -1,0 +1,89 @@
+using System.Collections;
+
+namespace Geode.Client.Protocol.Serialization;
+
+/// <summary>
+/// <see cref="IDataConverter"/> for <c>LinkedList&lt;T&gt;</c> ↔
+/// <see cref="DSCode.CacheableLinkedList"/> (10). Wire payload is
+/// identical to <see cref="ListDataConverter"/> — VL-encoded length
+/// followed by N fully-serialised elements — because cppcache backs
+/// both <c>CacheableArrayList</c> and <c>CacheableLinkedList</c> with
+/// the same <c>std::vector&lt;CacheablePtr&gt;</c> (see
+/// <c>cppcache/include/geode/CacheableBuiltins.hpp:348-358</c>). The
+/// DSCode is what makes the server materialise a
+/// <c>java.util.LinkedList</c> instead of a <c>java.util.ArrayList</c>.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>Open-generic registration.</b> <see cref="ManagedType"/> returns
+/// <c>typeof(LinkedList&lt;&gt;)</c>; the registry's <c>WriteObject</c>
+/// dispatch falls back to <see cref="Type.GetGenericTypeDefinition"/>
+/// when the closed-type lookup misses, so this single instance handles
+/// every closed <c>LinkedList&lt;T&gt;</c>.
+/// </para>
+/// <para>
+/// <b>Not <c>IList&lt;T&gt;</c>-compatible.</b> Unlike
+/// <c>List&lt;T&gt;</c>, <c>LinkedList&lt;T&gt;</c> only implements
+/// <see cref="ICollection{T}"/> / <see cref="IReadOnlyCollection{T}"/>
+/// — it deliberately does <i>not</i> implement <see cref="IList{T}"/>
+/// because indexed access is O(N) on a linked list. Callers wanting a
+/// linked-list-shaped region value must declare
+/// <c>IRegion&lt;K, LinkedList&lt;T&gt;&gt;</c>, not
+/// <c>IRegion&lt;K, IList&lt;T&gt;&gt;</c>.
+/// </para>
+/// <para>
+/// <b>Read returns canonical <c>LinkedList&lt;object?&gt;</c>.</b>
+/// Target-shape conversion (to <c>LinkedList&lt;int&gt;</c>) happens
+/// at <see cref="TypedResultAdapter"/>'s
+/// <c>LinkedList&lt;&gt;</c> branch.
+/// </para>
+/// </remarks>
+internal sealed class LinkedListDataConverter : IDataConverter
+{
+    private static readonly byte[] s_dsCodes = { DSCode.CacheableLinkedList };
+
+    private readonly SerializationRegistry _registry;
+
+    public LinkedListDataConverter(SerializationRegistry registry)
+    {
+        ArgumentNullException.ThrowIfNull(registry);
+        _registry = registry;
+    }
+
+    public byte[] DsCodes => s_dsCodes;
+
+    public Type ManagedType => typeof(LinkedList<>);
+
+    public byte GetDsCode(object value) => DSCode.CacheableLinkedList;
+
+    public void Write(BigEndianBinaryWriter writer, object value, byte dsCode)
+    {
+        // LinkedList<T> implements non-generic ICollection — Count
+        // is O(1), no scratch list needed (unlike HashSet<T>).
+        // foreach yields head→tail, matching the cppcache wire order.
+        var source = (ICollection)value;
+        writer.WriteArrayLen(source.Count);
+        foreach (var item in source)
+        {
+            _registry.WriteObject(writer, item);
+        }
+    }
+
+    public object? Read(BigEndianBinaryReader reader, byte dsCode)
+    {
+        var length = reader.ReadArrayLen();
+        var list = new LinkedList<object?>();
+        if (length <= 0)
+        {
+            return list;
+        }
+
+        for (var i = 0; i < length; i++)
+        {
+            // AddLast preserves wire order — wire element 0 becomes
+            // head, last element becomes tail.
+            list.AddLast(_registry.ReadObject(reader));
+        }
+        return list;
+    }
+}

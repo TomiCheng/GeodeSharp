@@ -92,13 +92,19 @@ internal sealed class SerializationRegistry
         Register(new StringArrayDataConverter(this)); // 64  CacheableStringArray → string[]
         Register(new ObjectArrayDataConverter(this)); // 52  CacheableObjectArray → object[]
 
-        // Tier B-2 collections — open-generic. ListDataConverter
-        // registers ManagedType = typeof(List<>); WriteObject's
-        // dispatch falls back to GetGenericTypeDefinition() so one
-        // converter instance handles every closed List<T>. Target-
-        // shape conversion (List<object?> → IList<int>, …) happens
+        // Tier B-2 collections — open-generic. Each ManagedType is
+        // typeof(List<>) / typeof(HashSet<>) / typeof(Dictionary<,>);
+        // WriteObject's dispatch falls back to
+        // GetGenericTypeDefinition() so one converter instance handles
+        // every closed instantiation. Target-shape conversion
+        // (List<object?> → IList<int>, HashSet<object?> → ISet<int>,
+        // Dictionary<object,object?> → Dictionary<K,V>, …) happens
         // post-decode at TypedResultAdapter, not here.
-        Register(new ListDataConverter(this));        // 65  CacheableArrayList → List<T>
+        Register(new LinkedListDataConverter(this));  // 10  CacheableLinkedList → LinkedList<T>
+        Register(new ListDataConverter(this));        // 65  CacheableArrayList  → List<T>
+        Register(new HashSetDataConverter(this));     // 66  CacheableHashSet    → HashSet<T>
+        Register(new DictionaryDataConverter(this));  // 67  CacheableHashMap    → Dictionary<K,V>
+        Register(new StackDataConverter(this));       // 74  CacheableStack      → Stack<T>
     }
 
     /// <summary>

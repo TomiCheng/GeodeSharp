@@ -155,6 +155,13 @@ Phase 1.2 只實作 `Int32` + `Boolean` 兩個 converter；bulk ops 端到端整
 - `IRegion<TKey, TValue>` constraint `where TKey : IEquatable<TKey>`（編譯期擋集合 / `byte[]` / 無 IEquatable POCO）
 - 順手修了 `BigEndianBinaryReader.ReadArrayLen` signed/unsigned bug（phase 1.1 留下來的潛在問題，length 128..252 被誤判負數）
 
+**後續補強**（1.3.0 落地之後分別追加的工作）：
+
+- **B 路 server-side type verification**（commit `2854ce4`）— Put/Get round-trip 無法證明 server 真的把 wire bytes 解成對的 Java 型別（encoder/decoder 同向出 bug 抓不到）。透過 `docker exec gfsh get` 讀 server 端 `Value Class` + `Value` 斷言，補上這個盲點。13 個 fact 涵蓋全部 Tier A converter（String 四個 DSCode variant 各一 fact）。`GeodeFixture` 加 `GfshAsync` helper + 容器 TZ=UTC（DateTime / java.util.Date 顯示穩定）。**意外發現**：gfsh 印 `java.util.Date` 用 raw ms-since-epoch（非 `Date.toString()`），精度直達 ms 強於原本計劃的秒級驗證。
+  - **byte[] B 路 deferred** — gfsh 對 byte[] 印 `[B@<identityHash>`，沒值可驗。Phase 2 Java sidecar 補。
+- **Tier B-1 primitive arrays 落地**（src + unit tests 已完成、整合 + B 路驗證待加）— 詳見下方 Tier B-1 段落。
+- **文件結構整理**（commit `ab1d030`）— CLAUDE.md 把 Bucket 1 / Bucket 3 對應表移到 PORTING.md、Phase 1 sub-phase 細節 / MessageType 表 / Public API 介面 code block / Phase 1.1 bootstrap prompt 全部移除（reference data 各歸其位、過期模板砍掉），CLAUDE.md 從 456 → 406 行。
+
 **架構決策（已拍板）：**
 
 `IDataConverter` 介面改造（cppcache `Serializable::getDsCode()` + `Serializable::toData` 對齊）：
@@ -192,10 +199,25 @@ interface IDataConverter
 | 46 | `CacheableBytes` | `byte[]` | VL-encoded length + raw bytes（1/3/5 byte prefix）；`null` 走 NullObj、`byte[0]` 走 DSCode 46 + length=0；**不可當 Key**（`Array` 不實作 `IEquatable<T>`、cppcache `CacheableArrayPrimitive` 不繼承 `CacheableKey`，編譯期被 `where TKey : IEquatable<TKey>` 擋掉）；**順手修了 `ReadArrayLen` signed/unsigned bug**（length 128..252 範圍原本被誤判為負數） | ✅ |
 | 42 / 87 / 88 / 89 (+69 read-only) | `CacheableString` / `…ASCIIString` / `…ASCIIStringHuge` / `…StringHuge` (+`CacheableNullString`) | `string` | 一 converter 多 DSCode；ASCII vs modified UTF-8 × short(u16) vs huge(u32) — 但 huge UTF 路徑用 **UTF-16 BE** 不是 modified UTF-8 huge（對齊 cppcache `writeUtf16Huge`）；69 是 read-only null sentinel；`BigEndianBinaryReader.ReadJavaModifiedUtf8` 從 stub 補成實作 | ✅ |
 
-**Tier B — 視 demo / 測試需要再加**（不在 1.3.0 範圍）：
+**Tier B-1 — primitive arrays ✅（後續補強）**
+
+8 個 converter src + 62 unit tests 落地（unit total 323 → 385）。Wire 形狀：`WriteArrayLen` 1/3/5 byte VL prefix + N × 元素位元（primitive raw bytes / `string[]` 每元素自己的 DSCode+payload）。整合測試 + B 路驗證仍待加。
+
+| DSCode | cppcache | CLR | 備註 |
+|---|---|---|---|
+| 26 | `BooleanArray` | `bool[]` | VL length + N×1 byte；decode tolerant 任何非 0 byte = true |
+| 27 | `CharArray` | `char[]` | VL length + N×u16 BE（Java `char[]`，不是 UTF-8） |
+| 47 | `CacheableInt16Array` | `short[]` | |
+| 48 | `CacheableInt32Array` | `int[]` | VL 邊界（252 / 253 / 65536）unit test 集中寫在這檔，其他 array 共用 ReadArrayLen/WriteArrayLen 不重複 |
+| 49 | `CacheableInt64Array` | `long[]` | |
+| 50 | `CacheableFloatArray` | `float[]` | IEEE-754 BE，NaN / ±Infinity bit-pattern 保留 |
+| 51 | `CacheableDoubleArray` | `double[]` | |
+| 64 | `CacheableStringArray` | `string[]` | **唯一**收 `SerializationRegistry` ctor 注入；每元素重入 `WriteObject` 走完整 DSCode dispatch（per-element 42 / 87 / 88 / 89 / 41 都可能）；`null` 元素走 NullObj=41 由 registry 一層處理；`new this(this)` 安全（converter 只存 reference、Write/Read 才使用，那時 registry 已完整 populated） |
+
+**Tier B-2 — 集合（pending，待 demand 觸發）**
+
 - `CacheableArrayList(65)` / `CacheableHashSet(66)` / `CacheableHashMap(67)` / `CacheableObjectArray(52)`
-- primitive arrays（47–51, 26, 27, 64）
-- 一旦觸發 Tier B，要實作「encode 端介面分派」（`IList` / `IDictionary` / `ISet` 偵測 + 泛型 element 遞迴 `WriteObject`），cppcache 走 RTTI dynamic_cast 對齊。
+- 觸發時要實作「encode 端介面分派」（`IList` / `IDictionary` / `ISet` 偵測 + 泛型 element 遞迴 `WriteObject`），cppcache 走 RTTI dynamic_cast 對齊。Tier B-1 `StringArrayDataConverter` 的 registry-注入模式可直接複用。
 
 **Tier C — 不做或 Phase 2+：**
 `NullObj(41)` 已內聯；`CacheableNullString(69)` 走 41 即可；`PdxType/PDX/PDX_ENUM` Phase 2；`CacheableUserData*` Phase 2；`Properties(11)` Phase 3 auth；`JavaSerializable(44)`/`DataSerializable(45)`/`Class(43)`/`CacheableFileName(63)`/`CacheableTimeUnit(68)` 罕用，skip；`FixedID*(1–4)` 是 wire layer 內部碼，不放 `SerializationRegistry`。

@@ -214,10 +214,18 @@ interface IDataConverter
 | 51 | `CacheableDoubleArray` | `double[]` | |
 | 64 | `CacheableStringArray` | `string[]` | **唯一**收 `SerializationRegistry` ctor 注入；每元素重入 `WriteObject` 走完整 DSCode dispatch（per-element 42 / 87 / 88 / 89 / 41 都可能）；`null` 元素走 NullObj=41 由 registry 一層處理；`new this(this)` 安全（converter 只存 reference、Write/Read 才使用，那時 registry 已完整 populated） |
 
-**Tier B-2 — 集合（pending，待 demand 觸發）**
+**Tier B-2 — 集合（進行中）**
 
-- `CacheableArrayList(65)` / `CacheableHashSet(66)` / `CacheableHashMap(67)` / `CacheableObjectArray(52)`
-- 觸發時要實作「encode 端介面分派」（`IList` / `IDictionary` / `ISet` 偵測 + 泛型 element 遞迴 `WriteObject`），cppcache 走 RTTI dynamic_cast 對齊。Tier B-1 `StringArrayDataConverter` 的 registry-注入模式可直接複用。
+- ✅ `CacheableObjectArray(52)` — commit `0671ae1`。`object[]` ↔ 寫死 `"java.lang.Object"` Java class header + per-element re-entry 透過 registry。
+- ✅ `CacheableArrayList(65)` — `List<T>` / `IList<T>` 端到端。架構新增**兩個機制**支撐這個 tier 的後續所有集合：
+  - **`TypedResultAdapter`**（Scoped DI；[Protocol/Serialization/TypedResultAdapter.cs](src/Geode.Client/Protocol/Serialization/TypedResultAdapter.cs)）— Java wire 不帶 container element type，decode 永遠回 canonical `List<object?>`；adapter 在 `RegionView` 邊界把 `object?` 重塑成宣告 `TValue`（`IList<int>` / `IList<IList<string>>` / `int[]` 都通），遞迴下降處理 nested generics。Two-pass cost MVP 可接受；profiling 顯示問題才把 hint 下推到 converter（API 不會破壞）
+  - **`SerializationRegistry` open-generic write fallback**（[SerializationRegistry.cs:140-149](src/Geode.Client/Protocol/Serialization/SerializationRegistry.cs)）— `_byType[runtimeType]` miss 且 `runtimeType.IsGenericType` 時二次查 `GetGenericTypeDefinition()`；單字典雙探，不增加索引。`ListDataConverter.ManagedType = typeof(List<>)` 一個 instance 通吃所有 `List<T>` 閉式具現
+  - 涉檔：上述兩支 + [ListDataConverter.cs](src/Geode.Client/Protocol/Serialization/ListDataConverter.cs) / [RegionView.cs](src/Geode.Client/Services/RegionView.cs)（adapter 注入）/ [Cache.cs](src/Geode.Client/Services/Cache.cs)（primary ctor 多收 adapter）/ [GeodeClientExtensions.cs](src/Geode.Client/GeodeClientExtensions.cs)（Scoped DI 註冊）
+  - 測試：37 個新 unit（TypedResultAdapter 23 / ListDataConverter 9 / SerializationRegistry open-generic dispatch 5）+ 7 個新 integration（含 1 個 B-route 驗 server-side `java.util.ArrayList`）。422 unit + 既有整合測試全綠
+  - **gfsh quirk**（記到 memory）：`gfsh get` 印 ArrayList 用 `[1,2,3]`（無空格），不是標準 Java `[1, 2, 3]`；B-route regex 要用無空格版本
+- [ ] `CacheableHashSet(66)` — `HashSet<T>` / `ISet<T>`；同 ArrayList 套路（adapter 加 `ISet<>` branch、Set converter `ManagedType=typeof(HashSet<>)`）
+- [ ] `CacheableHashMap(67)` — `Dictionary<K,V>` / `IDictionary<K,V>`；adapter 加 `IDictionary<,>` branch + key/value 雙遞迴；converter `ManagedType=typeof(Dictionary<,>)`
+- [ ] `CacheableLinkedList(10)` / `CacheableVector(71)` / `CacheableStack(74)` / `CacheableLinkedHashSet(73)` — 等真有需求再補
 
 **Tier C — 不做或 Phase 2+：**
 `NullObj(41)` 已內聯；`CacheableNullString(69)` 走 41 即可；`PdxType/PDX/PDX_ENUM` Phase 2；`CacheableUserData*` Phase 2；`Properties(11)` Phase 3 auth；`JavaSerializable(44)`/`DataSerializable(45)`/`Class(43)`/`CacheableFileName(63)`/`CacheableTimeUnit(68)` 罕用，skip；`FixedID*(1–4)` 是 wire layer 內部碼，不放 `SerializationRegistry`。

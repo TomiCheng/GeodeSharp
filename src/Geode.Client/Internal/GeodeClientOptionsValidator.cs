@@ -91,7 +91,15 @@ internal sealed class GeodeClientOptionsValidator : IValidateOptions<GeodeClient
             ValidateXmlRegion(options.CacheXml.Regions, options.CacheXml.NamedAttributes, failures, prefix);
         }
 
-
+        // SerializationOptions.MaxDepth — must be >= 1. Zero or
+        // negative would refuse every wire payload (including
+        // top-level scalars at depth 1), so reject at host build
+        // time rather than let the first Put / Get throw.
+        if (options.Serialization.MaxDepth < 1)
+        {
+            failures.Add(
+                $"{prefix}.Serialization.MaxDepth must be >= 1 (got {options.Serialization.MaxDepth}).");
+        }
 
         return failures.Count == 0
             ? ValidateOptionsResult.Success

@@ -69,19 +69,22 @@ internal sealed class StringArrayDataConverter : DataConverter<string[]>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, string[] value, byte dsCode)
+    public override void Write(BigEndianBinaryWriter writer, string[] value, byte dsCode, int depth)
     {
         writer.WriteArrayLen(value.Length);
         foreach (var element in value)
         {
             // WriteObject handles null → DSCode.NullObj (41) and
             // picks the correct string DSCode (42 / 87 / 88 / 89)
-            // for non-null elements.
-            _registry.WriteObject(writer, element);
+            // for non-null elements. depth + 1 propagates the
+            // recursion budget into the registry — even leaf strings
+            // count, keeping the limit symmetric with container
+            // elements.
+            _registry.WriteObject(writer, element, depth + 1);
         }
     }
 
-    public override string[] Read(BigEndianBinaryReader reader, byte dsCode)
+    public override string[] Read(BigEndianBinaryReader reader, byte dsCode, int depth)
     {
         var length = reader.ReadArrayLen();
         if (length <= 0)
@@ -102,7 +105,7 @@ internal sealed class StringArrayDataConverter : DataConverter<string[]>
             // else means corrupt wire — let InvalidCastException
             // surface that as a hard fault rather than silently
             // produce wrong data.
-            array[i] = (string)_registry.ReadObject(reader)!;
+            array[i] = (string)_registry.ReadObject(reader, depth + 1)!;
         }
         return array;
     }

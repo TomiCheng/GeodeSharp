@@ -21,9 +21,9 @@ internal sealed class CharacterDataConverter : DataConverter<char>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, char value, byte dsCode) =>
+    public override void Write(BigEndianBinaryWriter writer, char value, byte dsCode, int depth) =>
         writer.WriteUInt16(value);
 
-    public override char Read(BigEndianBinaryReader reader, byte dsCode) =>
+    public override char Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>
         (char)reader.ReadUInt16();
 }

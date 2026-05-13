@@ -71,7 +71,7 @@ internal sealed class ListDataConverter : IDataConverter
 
     public byte GetDsCode(object value) => DSCode.CacheableArrayList;
 
-    public void Write(BigEndianBinaryWriter writer, object value, byte dsCode)
+    public void Write(BigEndianBinaryWriter writer, object value, byte dsCode, int depth)
     {
         // Any IList works at the type-erased layer — we accept the
         // value as IList (non-generic) so List<int>, List<string>,
@@ -89,11 +89,11 @@ internal sealed class ListDataConverter : IDataConverter
             // outer iteration yields inner List instances which
             // re-enter this same converter via the open-generic
             // fallback.
-            _registry.WriteObject(writer, item);
+            _registry.WriteObject(writer, item, depth + 1);
         }
     }
 
-    public object? Read(BigEndianBinaryReader reader, byte dsCode)
+    public object? Read(BigEndianBinaryReader reader, byte dsCode, int depth)
     {
         var length = reader.ReadArrayLen();
         if (length <= 0)
@@ -107,7 +107,7 @@ internal sealed class ListDataConverter : IDataConverter
             // Each slot's DSCode is read by ReadObject. Null elements
             // come back as null via DSCode.NullObj. Any registered
             // type (including a nested ArrayList) is a valid slot.
-            list.Add(_registry.ReadObject(reader));
+            list.Add(_registry.ReadObject(reader, depth + 1));
         }
         return list;
     }

@@ -79,7 +79,7 @@ internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, object[] value, byte dsCode)
+    public override void Write(BigEndianBinaryWriter writer, object[] value, byte dsCode, int depth)
     {
         writer.WriteArrayLen(value.Length);
 
@@ -96,11 +96,12 @@ internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
             // WriteObject handles null → DSCode.NullObj (41) and
             // dispatches to the appropriate converter (string / int /
             // … or even a nested array) for non-null elements.
-            _registry.WriteObject(writer, element);
+            // depth + 1 propagates the recursion budget.
+            _registry.WriteObject(writer, element, depth + 1);
         }
     }
 
-    public override object[] Read(BigEndianBinaryReader reader, byte dsCode)
+    public override object[] Read(BigEndianBinaryReader reader, byte dsCode, int depth)
     {
         var length = reader.ReadArrayLen();
         if (length <= 0)
@@ -115,7 +116,7 @@ internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
         //   _registry.ReadObject()      — the "java.lang.Object" string,
         //                                 routed via StringDataConverter
         reader.ReadByte();
-        _registry.ReadObject(reader);
+        _registry.ReadObject(reader, depth + 1);
 
         var array = new object[length];
         for (var i = 0; i < length; i++)
@@ -126,7 +127,7 @@ internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
             // object, but at runtime CLR arrays of reference types
             // accept null in any slot. Tested in
             // ObjectArrayDataConverterTests.RoundTrip_with_null_elements.
-            array[i] = _registry.ReadObject(reader)!;
+            array[i] = _registry.ReadObject(reader, depth + 1)!;
         }
         return array;
     }

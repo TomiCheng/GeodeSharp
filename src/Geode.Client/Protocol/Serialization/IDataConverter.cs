@@ -105,7 +105,19 @@ internal interface IDataConverter
     /// earlier <see cref="GetDsCode"/> call on the same value).
     /// Single-DSCode converters ignore it.
     /// </param>
-    void Write(BigEndianBinaryWriter writer, object value, byte dsCode);
+    /// <param name="depth">
+    /// Current nesting level — <c>0</c> at the top-level call, one
+    /// higher per nested container. Scalar / primitive-array
+    /// converters ignore. Container converters MUST forward
+    /// <c>depth + 1</c> when they re-enter
+    /// <see cref="SerializationRegistry.WriteObject"/> for each
+    /// element. The registry refuses payloads where this would exceed
+    /// <c>SerializationRegistry.MaxDepth</c> (default 64; mirrors
+    /// <see cref="System.Text.Json.JsonSerializerOptions.MaxDepth"/>),
+    /// defending against stack-overflow DoS from a malicious /
+    /// pathological object graph.
+    /// </param>
+    void Write(BigEndianBinaryWriter writer, object value, byte dsCode, int depth);
 
     /// <summary>
     /// Read one payload from <paramref name="reader"/>. The DSCode
@@ -114,9 +126,16 @@ internal interface IDataConverter
     /// multi-DSCode converters know which format the payload is in.
     /// Single-DSCode converters ignore it.
     /// </summary>
+    /// <param name="depth">
+    /// Current nesting level — see
+    /// <see cref="Write(BigEndianBinaryWriter, object, byte, int)"/>
+    /// for semantics. Container converters forward <c>depth + 1</c>
+    /// when re-entering <see cref="SerializationRegistry.ReadObject"/>
+    /// for each element.
+    /// </param>
     /// <returns>
     /// Boxed instance of <see cref="ManagedType"/>, or <c>null</c>
     /// for value types whose stored representation is "no value".
     /// </returns>
-    object? Read(BigEndianBinaryReader reader, byte dsCode);
+    object? Read(BigEndianBinaryReader reader, byte dsCode, int depth);
 }

@@ -29,20 +29,22 @@ internal abstract class DataConverter<T> : IDataConverter<T>
     /// </summary>
     public virtual byte GetDsCode(T value) => DsCodes[0];
 
-    public abstract void Write(BigEndianBinaryWriter writer, T value, byte dsCode);
+    public abstract void Write(BigEndianBinaryWriter writer, T value, byte dsCode, int depth);
 
-    public abstract T? Read(BigEndianBinaryReader reader, byte dsCode);
+    public abstract T? Read(BigEndianBinaryReader reader, byte dsCode, int depth);
 
     // ── Bridges to the non-generic interface ──────────────────────
     // The registry calls these overloads, never the typed ones
     // directly. The casts are safe because the registry looks codecs
-    // up by ManagedType (encode) / DsCodes (decode).
+    // up by ManagedType (encode) / DsCodes (decode). `depth` rides
+    // through unchanged — the registry already does the limit check
+    // before calling in; this layer just forwards.
     byte IDataConverter.GetDsCode(object value) =>
         GetDsCode((T)value);
 
-    void IDataConverter.Write(BigEndianBinaryWriter writer, object value, byte dsCode) =>
-        Write(writer, (T)value, dsCode);
+    void IDataConverter.Write(BigEndianBinaryWriter writer, object value, byte dsCode, int depth) =>
+        Write(writer, (T)value, dsCode, depth);
 
-    object? IDataConverter.Read(BigEndianBinaryReader reader, byte dsCode) =>
-        Read(reader, dsCode);
+    object? IDataConverter.Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>
+        Read(reader, dsCode, depth);
 }

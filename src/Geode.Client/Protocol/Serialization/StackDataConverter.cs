@@ -56,7 +56,7 @@ internal sealed class StackDataConverter : IDataConverter
 
     public byte GetDsCode(object value) => DSCode.CacheableStack;
 
-    public void Write(BigEndianBinaryWriter writer, object value, byte dsCode)
+    public void Write(BigEndianBinaryWriter writer, object value, byte dsCode, int depth)
     {
         // Stack<T> implements non-generic ICollection — Count is
         // O(1), no scratch list needed.
@@ -76,11 +76,11 @@ internal sealed class StackDataConverter : IDataConverter
         }
         foreach (var item in buffer)
         {
-            _registry.WriteObject(writer, item);
+            _registry.WriteObject(writer, item, depth + 1);
         }
     }
 
-    public object? Read(BigEndianBinaryReader reader, byte dsCode)
+    public object? Read(BigEndianBinaryReader reader, byte dsCode, int depth)
     {
         var length = reader.ReadArrayLen();
         var stack = new Stack<object?>();
@@ -94,7 +94,7 @@ internal sealed class StackDataConverter : IDataConverter
         // push sequence preserved.
         for (var i = 0; i < length; i++)
         {
-            stack.Push(_registry.ReadObject(reader));
+            stack.Push(_registry.ReadObject(reader, depth + 1));
         }
         return stack;
     }

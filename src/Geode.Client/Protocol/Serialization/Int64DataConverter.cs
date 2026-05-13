@@ -13,9 +13,9 @@ internal sealed class Int64DataConverter : DataConverter<long>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, long value, byte dsCode) =>
+    public override void Write(BigEndianBinaryWriter writer, long value, byte dsCode, int depth) =>
         writer.WriteInt64(value);
 
-    public override long Read(BigEndianBinaryReader reader, byte dsCode) =>
+    public override long Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>
         reader.ReadInt64();
 }

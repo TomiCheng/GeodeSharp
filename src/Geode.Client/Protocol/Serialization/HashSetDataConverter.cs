@@ -71,7 +71,7 @@ internal sealed class HashSetDataConverter : IDataConverter
 
     public byte GetDsCode(object value) => DSCode.CacheableHashSet;
 
-    public void Write(BigEndianBinaryWriter writer, object value, byte dsCode)
+    public void Write(BigEndianBinaryWriter writer, object value, byte dsCode, int depth)
     {
         // HashSet<T> doesn't expose non-generic Count via cast; one
         // scratch pass collects the elements + counts them, second
@@ -89,11 +89,11 @@ internal sealed class HashSetDataConverter : IDataConverter
         {
             // WriteObject handles null → DSCode.NullObj and dispatches
             // by per-element runtime type.
-            _registry.WriteObject(writer, item);
+            _registry.WriteObject(writer, item, depth + 1);
         }
     }
 
-    public object? Read(BigEndianBinaryReader reader, byte dsCode)
+    public object? Read(BigEndianBinaryReader reader, byte dsCode, int depth)
     {
         var length = reader.ReadArrayLen();
         if (length <= 0)
@@ -108,7 +108,7 @@ internal sealed class HashSetDataConverter : IDataConverter
             // mirrors that. Duplicate elements (whatever the wire
             // sends) are silently de-duplicated — same semantics as
             // std::unordered_set::insert ignoring existing keys.
-            set.Add(_registry.ReadObject(reader));
+            set.Add(_registry.ReadObject(reader, depth + 1));
         }
         return set;
     }

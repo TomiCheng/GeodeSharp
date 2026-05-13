@@ -119,7 +119,7 @@ internal sealed class StringDataConverter : DataConverter<string>
             : DSCode.CacheableASCIIString;          // 87 — ASCII short
     }
 
-    public override void Write(BigEndianBinaryWriter writer, string value, byte dsCode)
+    public override void Write(BigEndianBinaryWriter writer, string value, byte dsCode, int depth)
     {
         switch (dsCode)
         {
@@ -156,7 +156,7 @@ internal sealed class StringDataConverter : DataConverter<string>
         }
     }
 
-    public override string? Read(BigEndianBinaryReader reader, byte dsCode)
+    public override string? Read(BigEndianBinaryReader reader, byte dsCode, int depth)
     {
         switch (dsCode)
         {

@@ -18,7 +18,7 @@ internal sealed class Int32ArrayDataConverter : DataConverter<int[]>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, int[] value, byte dsCode)
+    public override void Write(BigEndianBinaryWriter writer, int[] value, byte dsCode, int depth)
     {
         writer.WriteArrayLen(value.Length);
         foreach (var element in value)
@@ -27,7 +27,7 @@ internal sealed class Int32ArrayDataConverter : DataConverter<int[]>
         }
     }
 
-    public override int[] Read(BigEndianBinaryReader reader, byte dsCode)
+    public override int[] Read(BigEndianBinaryReader reader, byte dsCode, int depth)
     {
         var length = reader.ReadArrayLen();
         if (length <= 0)

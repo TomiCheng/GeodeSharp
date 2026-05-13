@@ -56,7 +56,7 @@ internal sealed class LinkedListDataConverter : IDataConverter
 
     public byte GetDsCode(object value) => DSCode.CacheableLinkedList;
 
-    public void Write(BigEndianBinaryWriter writer, object value, byte dsCode)
+    public void Write(BigEndianBinaryWriter writer, object value, byte dsCode, int depth)
     {
         // LinkedList<T> implements non-generic ICollection — Count
         // is O(1), no scratch list needed (unlike HashSet<T>).
@@ -65,11 +65,11 @@ internal sealed class LinkedListDataConverter : IDataConverter
         writer.WriteArrayLen(source.Count);
         foreach (var item in source)
         {
-            _registry.WriteObject(writer, item);
+            _registry.WriteObject(writer, item, depth + 1);
         }
     }
 
-    public object? Read(BigEndianBinaryReader reader, byte dsCode)
+    public object? Read(BigEndianBinaryReader reader, byte dsCode, int depth)
     {
         var length = reader.ReadArrayLen();
         var list = new LinkedList<object?>();
@@ -82,7 +82,7 @@ internal sealed class LinkedListDataConverter : IDataConverter
         {
             // AddLast preserves wire order — wire element 0 becomes
             // head, last element becomes tail.
-            list.AddLast(_registry.ReadObject(reader));
+            list.AddLast(_registry.ReadObject(reader, depth + 1));
         }
         return list;
     }

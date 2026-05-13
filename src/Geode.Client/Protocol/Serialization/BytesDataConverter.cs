@@ -48,9 +48,9 @@ internal sealed class BytesDataConverter : DataConverter<byte[]>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, byte[] value, byte dsCode) =>
+    public override void Write(BigEndianBinaryWriter writer, byte[] value, byte dsCode, int depth) =>
         writer.WriteBytes(value);
 
-    public override byte[]? Read(BigEndianBinaryReader reader, byte dsCode) =>
+    public override byte[]? Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>
         reader.ReadBytes();
 }

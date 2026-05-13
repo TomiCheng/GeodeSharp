@@ -1,3 +1,5 @@
+using Geode.Client.Internal;
+
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -55,8 +57,22 @@ internal sealed class SerializationRegistry
     //   private readonly Dictionary<string, IPdxConverter> _pdxByName = new();
     //   private readonly Dictionary<Type, IPdxConverter> _pdxByType = new();
 
-    public SerializationRegistry()
+    /// <summary>
+    /// Snapshot of <see cref="Options.SerializationOptions.MaxDepth"/>
+    /// at scope-build time. Read once and cached because the per-cache
+    /// options bag is one-shot (<see cref="CacheScopeContext.Initialize"/>
+    /// runs before any consumer resolves) and the depth check fires on
+    /// every recursive write/read step — no point chasing the property
+    /// chain each time.
+    /// </summary>
+    internal int MaxDepth { get; }
+
+    public SerializationRegistry(CacheScopeContext scopeContext)
     {
+        ArgumentNullException.ThrowIfNull(scopeContext);
+        MaxDepth = scopeContext.Options.Serialization.MaxDepth;
+
+
         // Built-in converters. cppcache registers ~30 of these at
         // SerializationRegistry construction; we add them as their
         // wire formats land. Phase 1.2 shipped int32 + boolean (the
@@ -135,13 +151,35 @@ internal sealed class SerializationRegistry
     /// the payload. Mirrors cppcache
     /// <c>DataOutput::writeObject(shared_ptr&lt;Serializable&gt;)</c>.
     /// </summary>
+    /// <param name="depth">
+    /// Nesting level — <c>0</c> at the top-level call. Container
+    /// converters re-enter with <c>depth + 1</c>; scalars don't
+    /// recurse. The registry refuses payloads at
+    /// <see cref="MaxDepth"/> or beyond.
+    /// </param>
     /// <exception cref="NotSupportedException">
     /// <paramref name="value"/>'s runtime type has no registered
     /// converter. Becomes a PDX fall-through in Phase 2+.
     /// </exception>
-    public void WriteObject(BigEndianBinaryWriter writer, object? value)
+    /// <exception cref="InvalidOperationException">
+    /// <paramref name="depth"/> reached <see cref="MaxDepth"/> —
+    /// likely a cycle or pathologically nested in-memory graph from
+    /// the caller. Tune via
+    /// <c>GeodeClientOptions.Serialization.MaxDepth</c> if the
+    /// workload genuinely warrants deeper nesting.
+    /// </exception>
+    public void WriteObject(BigEndianBinaryWriter writer, object? value, int depth = 0)
     {
         ArgumentNullException.ThrowIfNull(writer);
+
+        if (depth >= MaxDepth)
+        {
+            throw new InvalidOperationException(
+                $"SerializationRegistry: write exceeded MaxDepth ({MaxDepth}). "
+                + "Refusing to serialise a potentially cyclic or pathologically "
+                + "nested object graph. Tune GeodeClientOptions.Serialization.MaxDepth "
+                + "if a legitimate workload needs deeper nesting.");
+        }
 
         if (value is null)
         {
@@ -167,7 +205,7 @@ internal sealed class SerializationRegistry
         {
             var dsCode = converter.GetDsCode(value);
             writer.WriteByte(dsCode);
-            converter.Write(writer, value, dsCode);
+            converter.Write(writer, value, dsCode, depth);
             return;
         }
 
@@ -189,13 +227,32 @@ internal sealed class SerializationRegistry
     /// converters know which wire form to parse. Mirrors cppcache
     /// <c>DataInput::readObject()</c>.
     /// </summary>
+    /// <param name="depth">
+    /// Nesting level — <c>0</c> at the top-level call. Container
+    /// converters re-enter with <c>depth + 1</c>; scalars don't
+    /// recurse. The registry refuses payloads at
+    /// <see cref="MaxDepth"/> or beyond — defends the read path
+    /// against stack-overflow DoS from a malicious server payload.
+    /// </param>
     /// <exception cref="GeodeException">
-    /// The DSCode is not a built-in we recognise and (in Phase 2+)
-    /// not the PDX marker.
+    /// The DSCode is not a built-in we recognise (and in Phase 2+
+    /// not the PDX marker), OR <paramref name="depth"/> reached
+    /// <see cref="MaxDepth"/> — wire stream more deeply nested than
+    /// the client permits.
     /// </exception>
-    public object? ReadObject(BigEndianBinaryReader reader)
+    public object? ReadObject(BigEndianBinaryReader reader, int depth = 0)
     {
         ArgumentNullException.ThrowIfNull(reader);
+
+        if (depth >= MaxDepth)
+        {
+            throw new GeodeException(
+                $"SerializationRegistry: read exceeded MaxDepth ({MaxDepth}). "
+                + "The server payload is more deeply nested than the client "
+                + "permits — treat as hostile or buggy unless a legitimate "
+                + "workload warrants it, in which case tune "
+                + "GeodeClientOptions.Serialization.MaxDepth.");
+        }
 
         var dsCode = reader.ReadByte();
 
@@ -209,7 +266,7 @@ internal sealed class SerializationRegistry
 
         if (_byDsCode.TryGetValue(dsCode, out var converter))
         {
-            return converter.Read(reader, dsCode);
+            return converter.Read(reader, dsCode, depth);
         }
 
         throw new GeodeException(

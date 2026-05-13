@@ -13,9 +13,9 @@ internal sealed class Int16DataConverter : DataConverter<short>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, short value, byte dsCode) =>
+    public override void Write(BigEndianBinaryWriter writer, short value, byte dsCode, int depth) =>
         writer.WriteInt16(value);
 
-    public override short Read(BigEndianBinaryReader reader, byte dsCode) =>
+    public override short Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>
         reader.ReadInt16();
 }

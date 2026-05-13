@@ -1,5 +1,6 @@
 using Geode.Client.Protocol;
 using Geode.Client.Protocol.Serialization;
+using Geode.Client.Tests.Protocol.Serialization;
 using Xunit;
 
 namespace Geode.Client.Tests.Protocol;
@@ -15,7 +16,7 @@ public class TcrMessageBuilderGetTests
     private const int Key = 123;
 
     private static TcrMessageBuilder NewBuilder() =>
-        new(new TcrPartBuilder(), new SerializationRegistry());
+        new(new TcrPartBuilder(), SerializationTestHelpers.CreateRegistry());
 
     // Helper: the on-wire bytes for an int32 key (CacheableInt32(57) +
     // 4-byte big-endian payload). Mirrors what Int32DataConverter

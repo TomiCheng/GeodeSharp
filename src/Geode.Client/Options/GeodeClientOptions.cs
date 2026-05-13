@@ -95,6 +95,14 @@ public class GeodeClientOptions
     public PdxOptions Pdx { get; } = new();
 
     /// <summary>
+    /// Wire-serialisation safety bounds (depth limit etc.). See
+    /// <see cref="SerializationOptions"/>. No cppcache analogue —
+    /// added independently to defend against malicious / pathological
+    /// server payloads.
+    /// </summary>
+    public SerializationOptions Serialization { get; } = new();
+
+    /// <summary>
     /// Declarative <c>cache.xml</c> contents — named pools, region
     /// trees, PDX defaults. See <see cref="CacheXmlOptions"/>.
     /// </summary>

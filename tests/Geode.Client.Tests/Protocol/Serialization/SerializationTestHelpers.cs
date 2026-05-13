@@ -1,4 +1,6 @@
 using System.Buffers;
+using Geode.Client.Internal;
+using Geode.Client.Options;
 using Geode.Client.Protocol;
 using Geode.Client.Protocol.Serialization;
 
@@ -16,6 +18,28 @@ namespace Geode.Client.Tests.Protocol.Serialization;
 internal static class SerializationTestHelpers
 {
     /// <summary>
+    /// Spin up a fresh <see cref="SerializationRegistry"/> wired to a
+    /// freshly-initialised <see cref="CacheScopeContext"/>. Production
+    /// resolves the registry through DI; tests build one directly via
+    /// this helper so each test gets a clean instance without
+    /// bootstrapping the whole DI container.
+    /// </summary>
+    /// <param name="maxDepth">
+    /// Override for <see cref="SerializationOptions.MaxDepth"/>. Default
+    /// matches production (<c>64</c>); depth-enforcement tests pass
+    /// small values like <c>2</c> / <c>3</c> so the limit fires on a
+    /// realistically small nested payload.
+    /// </param>
+    public static SerializationRegistry CreateRegistry(int maxDepth = 64)
+    {
+        var scope = new CacheScopeContext();
+        var opts = new GeodeClientOptions();
+        opts.Serialization.MaxDepth = maxDepth;
+        scope.Initialize(string.Empty, opts);
+        return new SerializationRegistry(scope);
+    }
+
+    /// <summary>
     /// Encode <paramref name="value"/> through the registry and
     /// return the full wire bytes (DSCode byte + payload).
     /// </summary>
@@ -23,7 +47,7 @@ internal static class SerializationTestHelpers
     {
         var buffer = new ArrayBufferWriter<byte>();
         var writer = new BigEndianBinaryWriter(buffer);
-        new SerializationRegistry().WriteObject(writer, value);
+        CreateRegistry().WriteObject(writer, value);
         return buffer.WrittenSpan.ToArray();
     }
 
@@ -34,7 +58,7 @@ internal static class SerializationTestHelpers
     public static object? Decode(byte[] bytes)
     {
         var reader = new BigEndianBinaryReader(bytes);
-        return new SerializationRegistry().ReadObject(reader);
+        return CreateRegistry().ReadObject(reader);
     }
 
     /// <summary>

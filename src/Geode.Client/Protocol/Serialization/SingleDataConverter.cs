@@ -23,9 +23,9 @@ internal sealed class SingleDataConverter : DataConverter<float>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, float value, byte dsCode) =>
+    public override void Write(BigEndianBinaryWriter writer, float value, byte dsCode, int depth) =>
         writer.WriteFloat(value);
 
-    public override float Read(BigEndianBinaryReader reader, byte dsCode) =>
+    public override float Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>
         reader.ReadFloat();
 }

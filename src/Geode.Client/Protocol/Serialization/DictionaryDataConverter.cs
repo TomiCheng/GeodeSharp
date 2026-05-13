@@ -77,7 +77,7 @@ internal sealed class DictionaryDataConverter : IDataConverter
 
     public byte GetDsCode(object value) => DSCode.CacheableHashMap;
 
-    public void Write(BigEndianBinaryWriter writer, object value, byte dsCode)
+    public void Write(BigEndianBinaryWriter writer, object value, byte dsCode, int depth)
     {
         // Dictionary<K,V> implements non-generic IDictionary (and
         // therefore non-generic ICollection with Count) — unlike
@@ -88,12 +88,13 @@ internal sealed class DictionaryDataConverter : IDataConverter
         {
             // Key first, value second — interleaved per cppcache's
             // writeObject(iter.first) / writeObject(iter.second).
-            _registry.WriteObject(writer, entry.Key);
-            _registry.WriteObject(writer, entry.Value);
+            // depth + 1 propagates the recursion budget per slot.
+            _registry.WriteObject(writer, entry.Key, depth + 1);
+            _registry.WriteObject(writer, entry.Value, depth + 1);
         }
     }
 
-    public object? Read(BigEndianBinaryReader reader, byte dsCode)
+    public object? Read(BigEndianBinaryReader reader, byte dsCode, int depth)
     {
         var length = reader.ReadArrayLen();
         if (length <= 0)
@@ -104,8 +105,8 @@ internal sealed class DictionaryDataConverter : IDataConverter
         var dict = new Dictionary<object, object?>(capacity: length);
         for (var i = 0; i < length; i++)
         {
-            var key = _registry.ReadObject(reader);
-            var value = _registry.ReadObject(reader);
+            var key = _registry.ReadObject(reader, depth + 1);
+            var value = _registry.ReadObject(reader, depth + 1);
 
             if (key is null)
             {

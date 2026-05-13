@@ -42,7 +42,7 @@ internal sealed class BooleanArrayDataConverter : DataConverter<bool[]>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, bool[] value, byte dsCode)
+    public override void Write(BigEndianBinaryWriter writer, bool[] value, byte dsCode, int depth)
     {
         writer.WriteArrayLen(value.Length);
         foreach (var element in value)
@@ -51,7 +51,7 @@ internal sealed class BooleanArrayDataConverter : DataConverter<bool[]>
         }
     }
 
-    public override bool[] Read(BigEndianBinaryReader reader, byte dsCode)
+    public override bool[] Read(BigEndianBinaryReader reader, byte dsCode, int depth)
     {
         var length = reader.ReadArrayLen();
         if (length <= 0)

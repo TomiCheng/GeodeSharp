@@ -1,5 +1,6 @@
 using Geode.Client.Protocol;
 using Geode.Client.Protocol.Serialization;
+using Geode.Client.Tests.Protocol.Serialization;
 using Xunit;
 
 namespace Geode.Client.Tests.Protocol;
@@ -17,7 +18,7 @@ public class TcrMessageBuilderInvalidateTests
     private const long SeqId = 1L;
 
     private static TcrMessageBuilder NewBuilder() =>
-        new(new TcrPartBuilder(), new SerializationRegistry());
+        new(new TcrPartBuilder(), SerializationTestHelpers.CreateRegistry());
 
     private static byte[] EncodedInt32(int v) =>
     [

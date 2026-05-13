@@ -46,7 +46,7 @@ internal sealed class DateTimeDataConverter : DataConverter<DateTime>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, DateTime value, byte dsCode)
+    public override void Write(BigEndianBinaryWriter writer, DateTime value, byte dsCode, int depth)
     {
         // Three-way Kind handling. Unspecified is rejected because
         // .NET's ToUniversalTime silently assumes Local, which would
@@ -71,7 +71,7 @@ internal sealed class DateTimeDataConverter : DataConverter<DateTime>
         writer.WriteInt64(ms);
     }
 
-    public override DateTime Read(BigEndianBinaryReader reader, byte dsCode)
+    public override DateTime Read(BigEndianBinaryReader reader, byte dsCode, int depth)
     {
         long ms = reader.ReadInt64();
         // DateTime.UnixEpoch is Kind=Utc; AddTicks preserves Kind.

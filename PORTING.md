@@ -121,6 +121,84 @@ mirror cppcache file-for-file unless explicitly noted, per the
 | `ClientProxyMembershipID` | `Geode.Client.Protocol.ClientProxyMembershipIdBuilder` | 2 | ✅ | 1.1 | unit tested |
 | big-endian byte I/O macros / helpers | `BigEndianBinaryReader` / `BigEndianBinaryWriter` | 2 | ✅ | 1.1 | unit tested |
 
+### DSCode coverage (built-in type-code catalogue)
+
+Every value the wire's <code>SerializationRegistry</code> dispatch can
+encounter, sorted by DSCode number. "Status" = `✅` registered today,
+`⏳` planned/deferred, `❌` won't port (wire-internal or
+rarely-used Java type). Phase column matches PROGRESS.md.
+
+#### Done — built-in scalars / strings / bytes / arrays / collections
+
+| DSCode | cppcache | CLR | Status | Phase | Notes |
+|---:|---|---|:---:|---|---|
+| 10 | `CacheableLinkedList` | `LinkedList<T>` | ✅ | 1.3.0 Tier B-2 | wire identical to ArrayList; own adapter branch (not `IList<T>`) |
+| 26 | `BooleanArray` | `bool[]` | ✅ | 1.3.0 Tier B-1 | |
+| 27 | `CharArray` | `char[]` | ✅ | 1.3.0 Tier B-1 | u16 BE per element (Java `char[]`, not UTF-8) |
+| 41 | `NullObj` | `null` | ✅ | 1.2 | inlined in registry (no standalone converter) |
+| 42 | `CacheableString` | `string` | ✅ | 1.3.0 Tier A | non-ASCII short; modified UTF-8 (one `StringDataConverter` covers 42/87/88/89) |
+| 46 | `CacheableBytes` | `byte[]` | ✅ | 1.3.0 Tier A | VL length + raw bytes; not a valid `TKey` |
+| 47 | `CacheableInt16Array` | `short[]` | ✅ | 1.3.0 Tier B-1 | |
+| 48 | `CacheableInt32Array` | `int[]` | ✅ | 1.3.0 Tier B-1 | VL boundary unit tests live here, shared with sibling arrays |
+| 49 | `CacheableInt64Array` | `long[]` | ✅ | 1.3.0 Tier B-1 | |
+| 50 | `CacheableFloatArray` | `float[]` | ✅ | 1.3.0 Tier B-1 | NaN / ±Infinity bit-pattern preserved |
+| 51 | `CacheableDoubleArray` | `double[]` | ✅ | 1.3.0 Tier B-1 | |
+| 52 | `CacheableObjectArray` | `object[]` | ✅ | 1.3.0 Tier B-2 | hard-coded `"java.lang.Object"` class header; per-element re-entry |
+| 53 | `CacheableBoolean` | `bool` | ✅ | 1.2 | walking-skeleton converter |
+| 54 | `CacheableCharacter` | `char` | ✅ | 1.3.0 Tier A | UTF-16 code unit, 2-byte BE |
+| 55 | `CacheableByte` | `byte` | ✅ | 1.3.0 Tier A | unsigned (.NET convention); wire bit-pattern interop with Java signed byte |
+| 56 | `CacheableInt16` | `short` | ✅ | 1.3.0 Tier A | |
+| 57 | `CacheableInt32` | `int` | ✅ | 1.2 | walking-skeleton converter |
+| 58 | `CacheableInt64` | `long` | ✅ | 1.3.0 Tier A | |
+| 59 | `CacheableFloat` | `float` | ✅ | 1.3.0 Tier A | IEEE-754 BE; NaN / ±∞ shape == Java |
+| 60 | `CacheableDouble` | `double` | ✅ | 1.3.0 Tier A | IEEE-754 BE |
+| 61 | `CacheableDate` | `DateTime` | ✅ | 1.3.0 Tier A | 8-byte ms-since-epoch UTC; Read → `Kind=Utc`; Write rejects `Unspecified` |
+| 64 | `CacheableStringArray` | `string[]` | ✅ | 1.3.0 Tier B-1 | registry-injected; per-element 42/87/88/89/41 dispatch |
+| 65 | `CacheableArrayList` | `List<T>` / `IList<T>` | ✅ | 1.3.0 Tier B-2 | brought `TypedResultAdapter` + open-generic write fallback |
+| 66 | `CacheableHashSet` | `HashSet<T>` / `ISet<T>` | ✅ | 1.3.0 Tier B-2 | canonical decode `HashSet<object?>`; null elements travel as DSCode 41 |
+| 67 | `CacheableHashMap` | `Dictionary<K,V>` / `IDictionary<K,V>` | ✅ | 1.3.0 Tier B-2 | key/value **interleaved** on wire; null key rejected on read (Java HashMap allows, .NET Dictionary doesn't) |
+| 69 | `CacheableNullString` | `null` | ✅ | 1.3.0 | read-only null sentinel; handled by `StringDataConverter` |
+| 74 | `CacheableStack` | `Stack<T>` | ✅ | 1.3.0 Tier B-2 | **write reverses** to bottom-to-top wire order; adapter re-reverses on the way out |
+| 87 | `CacheableASCIIString` | `string` | ✅ | 1.3.0 Tier A | ASCII, u16 length; via `StringDataConverter` |
+| 88 | `CacheableASCIIStringHuge` | `string` | ✅ | 1.3.0 Tier A | ASCII, i32 length |
+| 89 | `CacheableStringHuge` | `string` | ✅ | 1.3.0 Tier A | non-ASCII huge — switches to **UTF-16 BE** (not modified UTF-8); cppcache parity |
+
+#### Deferred — clean target exists, awaiting demand or design
+
+| DSCode | cppcache | CLR | Status | Phase | Notes |
+|---:|---|---|:---:|---|---|
+| 71 | `CacheableVector` | — | ⏳ | — | Java legacy thread-safe ArrayList; no clean .NET equivalent (forcing `List<T>` would clash with `CacheableArrayList`); revisit if real demand |
+| 73 | `CacheableLinkedHashSet` | — | ⏳ | — | .NET lacks an insertion-ordered Set; proper mapping needs a new public type (e.g. `Geode.Client.Collections.OrderedSet<T>`) — public API decision, not wire work |
+
+#### Planned future phases
+
+| DSCode | cppcache | CLR | Status | Phase | Notes |
+|---:|---|---|:---:|---|---|
+| 11 | `Properties` | `IDictionary<string,string>` | ⏳ | 3 | auth-properties payload (handshake credentials etc.) |
+| 17 | `PdxType` | `Geode.Client.Pdx.PdxType` | ⏳ | 2 | PDX type metadata |
+| 37 | `CacheableUserData4` | (user `DataSerializable` class) | ⏳ | 2+ | superseded by PDX; only port if a real workload still ships DataSerializable |
+| 38 | `CacheableUserData2` | same | ⏳ | 2+ | |
+| 39 | `CacheableUserData` | same | ⏳ | 2+ | |
+| 93 | `PDX` | user PDX-serialised class | ⏳ | 2 | the main custom-object path |
+| 94 | `PdxEnum` | enum | ⏳ | 2 | PDX-encoded enum |
+
+#### Won't port
+
+| DSCode | cppcache | Reason |
+|---:|---|---|
+| 0 | `FixedIDDefault` | wire-layer internal — used as a prefix when serialising `DataSerializableFixedId` objects (EventId / ClientProxyMembershipId / VersionTag / …). NOT a top-level type registered in `SerializationRegistry`; handled inline by the wire builders |
+| 1 | `FixedIDByte` | same family |
+| 2 | `FixedIDShort` | same family |
+| 3 | `FixedIDInt` | same family |
+| 4 | `FixedIDNone` | same family |
+| 43 | `Class` | sub-marker only — appears inside `CacheableObjectArray`'s class-header bytes (`Class` + the literal `"java.lang.Object"` string); never seen as a top-level Part payload |
+| 44 | `JavaSerializable` | Java's native `Serializable` over Geode wire; almost never used in modern deployments; revisit only if a workload requires it |
+| 45 | `DataSerializable` | older Geode-specific custom-serialisation; superseded by PDX; same revisit rule as `JavaSerializable` |
+| 63 | `CacheableFileName` | rarely used Java type; skip until a workload appears |
+| 68 | `CacheableTimeUnit` | rarely used Java enum; skip until a workload appears |
+| 70 | `CacheableHashTable` | Java legacy synchronized `Hashtable`; same situation as `Vector` (no clean .NET map + nobody uses it) |
+| 72 | `CacheableIdentityHashMap` | identity-equals map; niche on Java side; skip until a workload appears |
+
 ### Serialisation (Phase 2 PDX)
 
 | cppcache | C# | Bucket | Status | Phase | Notes |

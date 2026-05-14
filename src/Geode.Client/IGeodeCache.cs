@@ -53,6 +53,26 @@ public interface IGeodeCache : IRegionService
     /// </remarks>
     Task EnsureInitializedAsync(CancellationToken ct = default);
 
+    /// <summary>
+    /// OQL query factory. Mirrors cppcache
+    /// <c>Cache::getQueryService()</c> / <c>getQueryService(poolName)</c>
+    /// (<c>cppcache/include/geode/Cache.hpp</c>) collapsed into one
+    /// method.
+    /// </summary>
+    /// <param name="poolName">
+    /// Pool to source the query service from. <see langword="null"/>
+    /// or empty selects <c>PoolManager.DefaultPool</c>.
+    /// </param>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="poolName"/> is supplied but no pool with that
+    /// name is registered.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// No default pool exists (cache not initialised, or all pools
+    /// destroyed).
+    /// </exception>
+    IQueryService GetQueryService(string? poolName = null);
+
     // Phase 2: bool PdxIgnoreUnreadFields { get; }
     // Phase 2: bool PdxReadSerialized   { get; }
 }

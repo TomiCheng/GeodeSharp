@@ -89,7 +89,11 @@ internal sealed class Cache(
     //                                  → fields above (DI / Cache-owned)
 
     // ── Query (CacheImpl.hpp:370) ──
-    private object? _remoteQueryService;  // m_remoteQueryServicePtr
+    // cppcache m_remoteQueryServicePtr is the non-pool fallback —
+    // CacheImpl owns its own RemoteQueryService when no default pool
+    // exists. We are pool-only (memory pool-only-no-non-pool.md), so
+    // GetQueryService always delegates to PoolManager and never builds
+    // a cache-owned service. The cppcache field has no .NET counterpart.
 
     // ── Transactions (CacheImpl.hpp:376) ──
     private object? _cacheTransactionManager; // m_cacheTXManager
@@ -115,6 +119,35 @@ internal sealed class Cache(
 #pragma warning restore CS0169, CS0414, CS0649
 
     public string Name { get; } = scopeContext.Name;
+
+    /// <summary>
+    /// Delegates to <c>PoolManager.DefaultPool.QueryService</c> (or the
+    /// named pool's). Mirrors cppcache <c>CacheImpl::getQueryService()</c>
+    /// pool-mode branch (<c>CacheImpl.cpp:171-203</c>); the non-pool
+    /// fallback in the same method has no .NET counterpart per memory
+    /// <c>pool-only-no-non-pool.md</c>.
+    /// </summary>
+    public IQueryService GetQueryService(string? poolName = null)
+    {
+        ObjectDisposedException.ThrowIf(IsClosed, this);
+
+        // null / empty → DefaultPool. Aligns with PoolManager.Find's
+        // own empty-string convention, but null gets normalised here
+        // so PoolManager.Find (which throws on null) never sees it.
+        if (string.IsNullOrEmpty(poolName))
+        {
+            var defaultPool = poolManager.DefaultPool
+                ?? throw new InvalidOperationException(
+                    "Cache has no default pool — call EnsureInitializedAsync " +
+                    "first or ensure at least one pool is registered.");
+            return defaultPool.QueryService;
+        }
+
+        var pool = poolManager.Find(poolName)
+            ?? throw new ArgumentException(
+                $"Pool '{poolName}' is not registered.", nameof(poolName));
+        return pool.QueryService;
+    }
 
     /// <summary>
     /// Test-only escape hatch: expose the scoped <see cref="PoolManager"/>

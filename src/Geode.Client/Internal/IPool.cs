@@ -38,15 +38,19 @@ internal interface IPool : IAsyncDisposable
     /// </remarks>
     Task DestroyAsync(bool keepAlive = false, CancellationToken ct = default);
 
+    /// <summary>
+    /// Pool-scoped OQL query factory. Mirrors cppcache
+    /// <c>Pool::getQueryService()</c> &#x2192;
+    /// <c>ThinClientPoolDM::m_remoteQueryService</c>.
+    /// </summary>
+    IQueryService QueryService { get; }
+
     // TODO Phase 1.5:
     //   string Name { get; }
     //   bool IsDestroyed { get; }
     //   PoolOptions Options { get; }                       // replaces 30+ cppcache getters
     //   IReadOnlyList<string> Locators { get; }
     //   IReadOnlyList<string> Servers { get; }
-    //
-    // TODO Phase 1.4:
-    //   IQueryService QueryService { get; }
     //
     // Skipped (cppcache surface we will not expose):
     //   releaseThreadLocalConnection() — bucket 1, AsyncLocal<T>

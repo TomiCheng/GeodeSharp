@@ -3,6 +3,7 @@ using System.Net;
 using System.Threading.Channels;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Geode.Client.Internal;
@@ -37,6 +38,7 @@ internal sealed class ThinClientPoolDM(
     CacheXmlPoolOptions xmlPool,
     GeodeClientOptions options,
     TcrConnectionManager connManager,
+    IServiceProvider serviceProvider,
     ILogger<ThinClientPoolDM> logger) : ThinClientBaseDM(connManager, region: null), IPool
 {
     // ── Endpoint registry (ThinClientPoolDM.hpp m_endpoints) ──
@@ -105,6 +107,23 @@ internal sealed class ThinClientPoolDM(
     public bool IsDestroyed => Volatile.Read(ref _isDestroyed) != 0;
 
     /// <summary>
+    /// Pool-scoped query service. Mirrors cppcache
+    /// <c>ThinClientPoolDM::m_remoteQueryService</c> — eagerly tied to
+    /// this pool (cppcache builds it in the pool ctor). Lazy here only
+    /// because primary-ctor field initialisers can't reference
+    /// <c>this</c>; the creation itself is zero-I/O. Built via
+    /// <see cref="ActivatorUtilities"/> so DI-resolved dependencies
+    /// (logger, serialization registry, future stats) flow in
+    /// automatically — <see langword="this"/> supplies the
+    /// <see cref="ThinClientBaseDM"/> argument.
+    /// </summary>
+    private RemoteQueryService? _queryService;
+    public IQueryService QueryService =>
+        LazyInitializer.EnsureInitialized(
+            ref _queryService,
+            () => ActivatorUtilities.CreateInstance<RemoteQueryService>(serviceProvider, this));
+
+    /// <summary>
     /// Test-only: current pool connection count (cppcache <c>m_poolSize</c>).
     /// Bumped in <see cref="CreatePoolConnectionAsync"/> step 4 after a
     /// fresh <see cref="TcrConnection"/> handshakes successfully.
@@ -157,6 +176,14 @@ internal sealed class ThinClientPoolDM(
         // Stash the caller's keepAlive intent for Step 5a's CloseAsync calls.
         // cppcache: m_keepAlive = keepAlive (ThinClientPoolDM.cpp:789).
         _keepAlive = keepAlive;
+
+        // 1b. Close pool-owned RemoteQueryService if it was ever
+        // accessed. Mirrors cppcache CacheImpl::close() →
+        // m_remoteQueryServicePtr->close(); we trigger it from pool
+        // destroy because the RQS lives on the pool, not the cache.
+        // Read the field directly (not the property) — we don't want
+        // to lazy-create an RQS just to immediately close it.
+        _queryService?.Close();
 
         // 2. Signal every background loop to stop.
         _backgroundCts.Cancel();
@@ -311,8 +338,12 @@ internal sealed class ThinClientPoolDM(
         // TODO Phase 1.5: launch the rest of the workers and timers:
         //   • _updateLocatorLoop = Task.Run(() => UpdateLocatorLoopAsync(_backgroundCts.Token));
         //       only when _xmlPool.Locators.Count > 0.
-        //   • RemoteQueryService.InitAsync   — Phase 1.4 (pool-scoped QS).
         //   • Statistics sampler             — bucket-1 (Meter-based).
+        //
+        // RemoteQueryService has no init step in Phase 1.4 (cppcache
+        // RemoteQueryService::init() only does work when CQ is enabled;
+        // pure OQL has nothing to initialise). Reappears with CQ in
+        // Phase 2.
     }
 
     /// <summary>

@@ -15,9 +15,12 @@ namespace Geode.Client;
 /// with <c>AuthenticatedView : RegionService</c>.
 /// </para>
 /// <para>
-/// Region lookup, query service, and PDX instance factory accessors
-/// will land on this interface as their respective phases ship
-/// (Phase 1.2 / 1.4 / 2). Today it is the lifecycle surface only.
+/// Region lookup and PDX instance factory accessors will land on this
+/// interface as their respective phases ship (Phase 1.2 / 2). Query
+/// service stays on <see cref="IGeodeCache"/> rather than here &#x2014;
+/// cppcache puts <c>getQueryService</c> on <c>Cache</c>, not on
+/// <c>RegionService</c>; Phase 3 <c>AuthenticatedView</c> will declare
+/// its own <c>QueryService</c> property directly when it ships.
 /// </para>
 /// </remarks>
 public interface IRegionService : IAsyncDisposable
@@ -81,7 +84,6 @@ public interface IRegionService : IAsyncDisposable
     /// </summary>
     IRegion? GetRegion(string path);
 
-    // Phase 1.4: IQueryService QueryService { get; }
     // Phase 1.x: IReadOnlyList<IRegion> RootRegions { get; }
     // Phase 2:   PdxInstanceFactory CreatePdxInstanceFactory(string className, ...);
 }

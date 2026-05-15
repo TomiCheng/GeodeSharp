@@ -65,8 +65,11 @@ partial class TcrMessageBuilder
 
         var parts = new List<TcrPart>(3)
         {
-            // Part 1 — Query string. cppcache writeRegionPart of the OQL.
-            partBuilder.RegionName(queryString),
+            // Part 1 — Query string. cppcache writeRegionPart of the OQL
+            // (it re-uses the region-name part for the OQL body); we
+            // call ModifiedUtf8 directly to make the encoding intent
+            // explicit — server-side decoder is the same in both cases.
+            partBuilder.ModifiedUtf8(queryString),
 
             // Part 2 — EventId. 18 raw bytes:
             //   [u8 longCode=3][i64 threadId BE][u8 longCode=3][i64 sequenceId BE]

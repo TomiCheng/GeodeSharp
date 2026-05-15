@@ -528,11 +528,31 @@ public interface IGeodeCacheFactory
 
 ---
 
-## Phase 1.4 — OQL Query（未啟動）
+## Phase 1.4 — OQL Query（進行中）
 
-- [ ] `IQueryService.NewQuery<T>(oql)` / `IQuery<T>.ExecuteAsync(ct)` 介面
-- [ ] `Query(34)` 訊息與結果解碼（`SELECT *` → `IReadOnlyList<TValue>`、`SELECT COUNT(*)` → `long`）
+- [x] `IQueryService.NewQuery<T>(oql)` / `IQuery<T>` 介面 + DI wiring
+- [x] `RemoteQueryService` + `RemoteQuery<T>` 殼 + `ExecuteCoreAsync` B1-B11 占位
+- [x] `TcrMessageBuilder.Query(34)` / `QueryWithParameters(80)` wire 編碼器
+- [x] `ChunkedQueryResponse<T>` 殼
+- [ ] `ChunkedQueryResponse<T>.HandleChunk` / `Reset` 真正解碼
+      （cppcache `ChunkedQueryResponse::handleChunk` + `readObjectPartList`）
+      — ResultSet path（row values）+ StructSet path（fieldNames + row values）
+- [ ] **`Struct` 公開型別**（拉前自 Phase 2）：一個 row 的 N 個值 + 透過
+      parent 反查欄位名；`IReadOnlyList<object?>` 行為、`GetFieldIndex` /
+      `GetFieldName` / by-name indexer
+- [ ] **B10 StructSet 兌現**（拉前自 Phase 2）：`fieldNames.Count != 0`
+      時把 flat values 每 K 個 reshape 成 `Struct`；對應 cppcache
+      `StructSetImpl` ctor 邏輯
 - [ ] Region convenience：`ExistsValueAsync` / `SelectValueAsync`
+- [ ] `QueryExtensions`：`ExecuteSingleAsync` / `ExecuteFirstOrDefaultAsync`
+      / `WithParameters` / `WithResponseTimeout`（取代「兩個 ExecuteAsync
+      overload」設計，配合 `Parameters` property）
+
+**拉前理由**：B10 ResultSet / StructSet 分支跟 `ChunkedQueryResponse.HandleChunk`
+是同一條解碼路徑 — fieldNames 解碼跟 row values 解碼在 cppcache 同一個
+`readObjectPartList`。若 StructSet 留 Phase 2，會出現「結構在但不解 fieldNames /
+不 reshape」的 silent-corruption 半成品（caller 寫 `SELECT id, total` 拿到
+攤平 list，無錯誤、無警告）。同期完成才不留漏洞。
 
 ---
 

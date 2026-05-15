@@ -241,7 +241,11 @@ acts as a proxy.
 - Region convenience queries (ExistsValue / SelectValue)
 - Built-in type serialisation (including collections: List, Dictionary,
   arrays, HashSet)
-- OQL queries (`SELECT *` and `SELECT COUNT(*)`)
+- OQL queries (`SELECT *`, `SELECT COUNT(*)`, and multi-column
+  projection `SELECT field1, field2` — pulled forward from Phase 2
+  because the `StructSet` branch in the result decoder is on the same
+  code path as `ResultSet`; deferring it would leave a half-built
+  switch with a silent-corruption failure mode for projection OQL)
 - Connection pool
 - Locator discovery
 - Server failover / automatic reconnect
@@ -250,7 +254,6 @@ acts as a proxy.
 
 - Custom-object serialisation (PDX)
 - Interop with the Java client
-- OQL projection queries (`SELECT field1, field2`)
 - PdxInstance (read fields without full deserialisation)
 - Continuous Query (server-push subscriptions)
 - Transactions (Begin / Commit / Rollback)

@@ -54,6 +54,17 @@ internal sealed class RemoteQueryService : IQueryService
     /// </summary>
     private int _invalid;
 
+    /// <summary>
+    /// True after <see cref="Close"/>. Read by
+    /// <see cref="RemoteQuery{T}"/>'s closed guard
+    /// (cppcache <c>RemoteQuery::executeNoThrow</c> step that checks
+    /// <c>m_queryService-&gt;invalid()</c>). Best-effort: cppcache wraps
+    /// the read in a <c>shared_lock</c> against destroy, we do not —
+    /// the actual wire op will fail naturally if the pool's
+    /// connections are gone post-Close, so the race is benign.
+    /// </summary>
+    internal bool IsClosed => Volatile.Read(ref _invalid) != 0;
+
     public IQuery<T> NewQuery<T>(string oql)
     {
         // step 1 — input validation. cppcache does not; server's OQL

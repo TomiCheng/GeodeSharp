@@ -1,3 +1,9 @@
+using System.Text;
+using Geode.Client.Protocol;
+using Geode.Client.Services;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+
 namespace Geode.Client.Internal;
 
 /// <summary>
@@ -12,129 +18,183 @@ namespace Geode.Client.Internal;
 /// thread-safe per cppcache contract; use one instance per
 /// thread / scope.
 /// </remarks>
-internal sealed class RemoteQuery<T> : IQuery<T>
+internal sealed class RemoteQuery<T>(
+    string oql,
+    RemoteQueryService queryService,
+    ThinClientBaseDM dm,
+    TcrMessageBuilder messageBuilder,
+    EventIdGenerator eventIdGenerator,
+    IServiceProvider serviceProvider,
+    ILogger<RemoteQuery<T>> logger) : IQuery<T>
 {
-    // cppcache RemoteQuery.hpp:44 — m_queryService. Held for lifetime
-    // anchoring + cppcache symmetry; .NET GC doesn't require it but
-    // mirroring keeps porting straightforward.
-#pragma warning disable CS0414 // unused while ExecuteAsync is a stub
-    private readonly RemoteQueryService _queryService;
-    private readonly ThinClientBaseDM _dm;            // cppcache m_tccdm
-#pragma warning restore CS0414
-
-    public RemoteQuery(string oql, RemoteQueryService queryService, ThinClientBaseDM dm)
-    {
-        QueryString = oql;
-        _queryService = queryService;
-        _dm = dm;
-    }
 
     /// <inheritdoc />
-    public string QueryString { get; }
+    public string QueryString { get; } = oql;
 
     /// <inheritdoc />
     public TimeSpan ResponseTimeout { get; set; } = TimeSpan.FromSeconds(15);
+    public IList<object?> Parameters { get; } = [];
 
     /// <inheritdoc />
     public Task<IReadOnlyList<T>> ExecuteAsync(CancellationToken ct = default)
-        => ExecuteCoreAsync(parameters: null, ct);
-
-    /// <inheritdoc />
-    public Task<IReadOnlyList<T>> ExecuteAsync(
-        IReadOnlyList<object?> parameters,
-        CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(parameters);
-        return ExecuteCoreAsync(parameters, ct);
-    }
+        => ExecuteCoreAsync(ct);
 
     // ────────────────────────────────────────────────────────────
     //  Shared execution path. Mirrors cppcache RemoteQuery::execute
-    //  (timeout, func, tcdm, paramList) + executeNoThrow merged
-    //  (RemoteQuery.cpp:67-182). Both public overloads delegate here.
+    //  + executeNoThrow merged (RemoteQuery.cpp:67-182). Both public
+    //  ExecuteAsync overloads delegate here.
     //
-    //  ── Pre-requisite work (not yet in codebase) ──
+    //  ── Pre-requisite work ──
+    //   A1. TcrMessageBuilder.Query                    ✅ done
+    //   A2. TcrMessageBuilder.QueryWithParameters      ✅ done
+    //   A3. ChunkedQueryResponse<T> (TcrChunkedResult) ❌ pending
     //
-    //   A1. TcrMessage.BuildQuery(oql)
-    //       — cppcache TcrMessageQuery ctor.
-    //       — wire: MessageType.Query(34) + 1 part (oql string).
-    //
-    //   A2. TcrMessage.BuildQueryWithParameters(oql, parameters)
-    //       — cppcache TcrMessageQueryWithParameters ctor.
-    //       — wire: MessageType.QueryWithParameters(82) + parts for
-    //         query string, param count, timeout, each serialised param.
-    //
-    //   A3. ChunkedQueryResponse<T> (new TcrChunkedResult subclass)
-    //       — cppcache ChunkedQueryResponse.
-    //       — per-chunk decoder of row values; exposes Results (List<T>)
-    //         and StructFieldNames (Phase 1.4 always empty); uses
-    //         TypedResultAdapter for object→T conversion.
-    //
-    //  ── Step list (mirrors cppcache numbered comments) ──
-    //
-    //   B1. Closed guard. cppcache RemoteQuery.cpp:127-130:
-    //         shared_lock(m_queryService->getMutex());
-    //         if (m_queryService->invalid()) return GF_CACHE_CLOSED_EXCEPTION;
-    //       → ObjectDisposedException.ThrowIf on _queryService._invalid.
-    //
-    //   B2. Log "executing query". cppcache RemoteQuery.cpp:125 LOGFINEST
-    //       → _logger.LogTrace("Executing query: {Oql}", QueryString).
-    //
-    //   B3. Build TcrMessage request. cppcache 132-139 / 158-162:
-    //         parameters is null  → A1 BuildQuery(QueryString)
-    //         parameters non-null → A2 BuildQueryWithParameters(...)
-    //       Sets msg.Timeout — Phase 1.4 deferred (we rely on ct;
-    //       timeout option lands with PoolOptions in Phase 1.5).
-    //
-    //   B4. Build ChunkedQueryResponse<T> collector (A3).
-    //
-    //   B5. Log "sending request". cppcache 143/166 LOGFINEST
-    //       → _logger.LogTrace("Sending request: {Oql}", QueryString).
-    //
-    //   B6. Wire. cppcache 147/170:
-    //         err = tcdm->sendSyncRequest(msg, reply);
-    //       → reply = await _dm.SendSyncRequestAsync(request, collector,
-    //                                                ct: ct);
-    //       Connection error surfaces as IOException / GeodeException
-    //       (.NET exceptions replace cppcache GfErrType).
-    //
-    //   B7. Server-exception handling. cppcache 151-156 / 174-179:
-    //         if (reply.getMessageType() == EXCEPTION) {
-    //           err = ThinClientRegion::handleServerException(...);
-    //           if (err == GF_CACHESERVER_EXCEPTION)
-    //             err = GF_REMOTE_QUERY_EXCEPTION;
-    //         }
-    //       → if (reply.MessageType == MessageType.Exception)
-    //             throw new GeodeException(reply.ExceptionMessage);
-    //
-    //   B8. Log "reading reply". cppcache 93 LOGFINEST.
-    //
-    //   B9. Read collector.Results + collector.StructFieldNames.
-    //
-    //   B10. ResultSet vs StructSet branch. cppcache 97-111:
-    //          fieldNameVec.size() == 0 → ResultSetImpl(values)
-    //          else                     → StructSetImpl(values, names)
-    //        Phase 1.4: StructFieldNames is always empty (SELECT *
-    //        single-column / SELECT COUNT(*)) → always treat as
-    //        ResultSet, return collector.Results directly.
-    //        StructSet branch is Phase 2 (multi-column projection).
-    //
-    //   B11. Log "creating ResultSet" — cppcache 98 LOGFINEST.
-    //
-    //  ── Phase 1.4 skipped (cppcache RemoteQuery.cpp surface we omit) ──
-    //
+    //  ── Phase 1.4 skipped (cppcache surface we omit) ──
     //   • GuardUserAttributes / AuthenticatedView binding (Phase 3)
     //   • pool->getStats().incQueryExecutionId() (Phase 1.5 stats)
     //   • enableTimeStatistics / sampleStartNanos (Phase 1.5 stats)
-    //   • PROTOCOL_OPERATION_TIMEOUT_BOUNDS validation (Phase 1.5 timeout)
+    //   • PROTOCOL_OPERATION_TIMEOUT_BOUNDS validation
     //   • compile() / isCompiled() — cppcache itself throws unsupported
     //
-    private Task<IReadOnlyList<T>> ExecuteCoreAsync(
-        IReadOnlyList<object?>? parameters,
-        CancellationToken ct)
+    private async Task<IReadOnlyList<T>> ExecuteCoreAsync(CancellationToken ct)
     {
-        _ = parameters; _ = ct;     // suppress unused-warning until B1-B11 land.
-        throw new NotImplementedException(
-            "Phase 1.4 — pre-requisites A1 / A2 / A3 not yet built.");
+        // B1 — Closed guard. cppcache RemoteQuery.cpp:127-130:
+        //   shared_lock(m_queryService->getMutex());
+        //   if (m_queryService->invalid()) return GF_CACHE_CLOSED_EXCEPTION;
+        // cppcache's shared_lock against destroy is not ported — the
+        // race window is benign (B6's wire send fails naturally if
+        // the pool's connections are gone). See RemoteQueryService.IsClosed.
+        ObjectDisposedException.ThrowIf(queryService.IsClosed, queryService);
+
+        // B2 — Log "executing query". cppcache RemoteQuery.cpp:125
+        //   LOGFINEST("%s: executing query: %s", func, m_queryString)
+        // ("func" is the cppcache call-site label, always
+        // "Query::execute" for this path — kept verbatim so
+        // side-by-side cppcache trace comparisons line up.)
+        logger.LogTrace("Query::execute: executing query: {Oql}", QueryString);
+
+        // B3 — Build TcrMessage request. cppcache RemoteQuery.cpp:132-139
+        // (Query(34)) / 158-162 (QueryWithParameters(80)). ResponseTimeout
+        // → ms (cppcache m_messageResponseTimeout). Wire branch decided
+        // by Parameters.Count: empty → Query(34), non-empty →
+        // QueryWithParameters(80).
+        var timeoutMs = (int)ResponseTimeout.TotalMilliseconds;
+        TcrMessage request;
+        if (Parameters.Count == 0)
+        {
+            // Query(34) needs an EventId; cppcache TcrMessageQuery emits
+            // writeEventIdPart unconditionally. Reuse the per-cache
+            // EventIdGenerator that Put / ClearRegion already drive.
+            var (threadId, sequenceId) = eventIdGenerator.Next();
+            request = messageBuilder.Query(
+                QueryString,
+                eventThreadId: threadId,
+                eventSequenceId: sequenceId,
+                messageResponseTimeoutMillis: timeoutMs);
+        }
+        else
+        {
+            // QueryWithParameters(80) omits the EventId part (cppcache
+            // TcrMessageQueryWithParameters ctor doesn't call
+            // writeEventIdPart).
+            request = messageBuilder.QueryWithParameters(
+                QueryString,
+                Parameters,
+                messageResponseTimeoutMillis: timeoutMs);
+        }
+
+        // B4 — Build ChunkedQueryResponse<T> collector (A3). cppcache
+        // RemoteQuery.cpp:84-87 — std::unique_ptr<ChunkedQueryResponse>
+        // bound to reply via setChunkedResultHandler. Our chunked DM
+        // overload takes the collector directly in B6; nothing to bind
+        // here, just construct. ActivatorUtilities mirrors what
+        // ThinClientRegion does for its Chunked*Response collectors.
+        var collector =
+            ActivatorUtilities.CreateInstance<ChunkedQueryResponse<T>>(serviceProvider);
+
+        // B5 — Log "sending request". cppcache RemoteQuery.cpp:143
+        // (Query branch) / :166 (QueryWithParameters branch) — same
+        // LOGFINEST text in both paths.
+        logger.LogTrace("Query::execute: sending request for query: {Oql}", QueryString);
+
+        // B6 — Wire. cppcache RemoteQuery.cpp:147 (Query branch) / :170
+        // (QueryWithParameters branch): err = tcdm->sendSyncRequest(msg, reply).
+        // Connection error surfaces as IOException / GeodeException
+        // (.NET exceptions replace cppcache GfErrType).
+        var reply = await dm
+            .SendSyncRequestAsync(request, collector, ct: ct)
+            .ConfigureAwait(false);
+
+        // B7 — Server-exception handling. cppcache RemoteQuery.cpp:151-156
+        // (Query) / :174-179 (QueryWithParameters). cppcache only
+        // special-cases EXCEPTION here; any other reply type falls
+        // through to read collector results. We mirror that — strict
+        // "unexpected MessageType" guard can land if integration tests
+        // surface a server quirk worth catching.
+        if (reply.MessageType == MessageType.Exception)
+        {
+            throw new GeodeException(
+                $"Server exception on Query '{QueryString}': " +
+                DecodeExceptionPreview(reply));
+        }
+
+        // B8 — Log "reading reply". cppcache RemoteQuery.cpp:93.
+        logger.LogTrace("Query::execute: reading reply for query: {Oql}", QueryString);
+
+        // B9 — Read collector.Results + collector.StructFieldNames.
+        // cppcache RemoteQuery.cpp:94-95:
+        //   auto&& values = resultCollector->getQueryResults();
+        //   auto&& fieldNameVec = resultCollector->getStructFieldNames();
+        var values = collector.Results;
+        var fieldNames = collector.StructFieldNames;
+
+        // B10 — ResultSet vs StructSet branch. cppcache RemoteQuery.cpp:97-111:
+        //   fieldNameVec.size() == 0 → ResultSetImpl(values)
+        //   else                     → StructSetImpl(values, names)
+        // Phase 1.4: StructFieldNames is always empty (SELECT *
+        // single-column / SELECT COUNT(*)) → always treat as
+        // ResultSet, return collector.Results directly. StructSet
+        // branch (multi-column projection) is Phase 2 scope; the
+        // cppcache divisibility check
+        // (values.size() % fieldNames.size() != 0 → MessageException)
+        // also moves with it.
+        if (fieldNames.Count != 0)
+        {
+            throw new NotImplementedException(
+                "StructSet (multi-column projection) is Phase 2 scope.");
+        }
+
+        // B11 — Log "creating ResultSet". cppcache RemoteQuery.cpp:98.
+        logger.LogTrace("Query::execute: creating ResultSet for query: {Oql}", QueryString);
+        return values;
+    }
+
+    /// <summary>
+    /// Best-effort preview of the bytes in an <c>EXCEPTION</c> reply's
+    /// first part. cppcache surfaces the server-side message via
+    /// <c>reply.getException()</c>; our reply path doesn't decode the
+    /// exception object yet — we render the raw bytes as printable
+    /// ASCII so the throw at least carries a hint.
+    /// </summary>
+    /// <remarks>
+    /// Copy of <c>ThinClientRegion.DecodeExceptionPreview</c>
+    /// (<c>Services/ThinClientRegion.cs:764-778</c>). If a third
+    /// caller materialises, lift to a shared helper (likely on
+    /// <see cref="TcrMessageHelper"/>).
+    /// </remarks>
+    private static string DecodeExceptionPreview(TcrMessage reply)
+    {
+        if (reply.Parts.Count == 0)
+        {
+            return "<no exception parts>";
+        }
+
+        var bytes = reply.Parts[0].Payload.Span;
+        var sb = new StringBuilder(bytes.Length);
+        foreach (var b in bytes)
+        {
+            sb.Append(b is >= 0x20 and < 0x7F ? (char)b : '.');
+        }
+        return sb.ToString();
     }
 }

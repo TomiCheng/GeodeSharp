@@ -1,58 +1,72 @@
-# =============================================================================
-# CI is intentionally DISABLED during the MVP phases.
-#
-# Why:
-#   - Directory.Build.props sets AnalysisLevel=latest-recommended +
-#     TreatWarningsAsErrors=true. The Phase 0 skeleton itself fails on
-#     opinionated analyzer rules (CA1848, CA1711, ...). Iterating "push,
-#     watch CI go red, fix, push again" is not a useful feedback loop yet.
-#   - No real production code exists. There is nothing to protect.
-#
-# When to re-enable:
-#   - After analyzer strictness has been decided (relax to
-#     latest-default for now? keep strict and pre-fix the skeleton? — see
-#     issue tracker / CONTRIBUTING.md once the workflow is settled).
-#   - At the latest, before Phase 5 / first NuGet preview release.
-#
-# To re-enable: uncomment the block below and push.
-# =============================================================================
+name: CI
 
-# name: CI
-#
-# on:
-#   push:
-#     branches: [main]
-#   pull_request:
-#     branches: [main]
-#
-# jobs:
-#   build-test:
-#     runs-on: ubuntu-latest
-#     steps:
-#       - uses: actions/checkout@v4
-#         with:
-#           fetch-depth: 0   # MinVer needs full history for tag-based versioning
-#
-#       - uses: actions/setup-dotnet@v4
-#         with:
-#           dotnet-version: '10.0.x'
-#
-#       - name: Restore
-#         run: dotnet restore
-#
-#       - name: Build
-#         run: dotnet build --no-restore -c Release
-#
-#       - name: Unit tests
-#         run: dotnet test tests/Geode.Client.Tests/Geode.Client.Tests.csproj --no-build -c Release --logger trx --collect:"XPlat Code Coverage"
-#
-#       - name: Integration tests
-#         # Testcontainers boots a real Geode container; runs on Linux runner with Docker.
-#         run: dotnet test tests/Geode.Client.IntegrationTests/Geode.Client.IntegrationTests.csproj --no-build -c Release --logger trx
-#
-#       - name: Upload test results
-#         if: always()
-#         uses: actions/upload-artifact@v4
-#         with:
-#           name: test-results
-#           path: '**/*.trx'
+on:
+  push:
+  pull_request:
+
+# Cancel superseded runs on the same ref to save runner time when
+# commits land back-to-back on a branch / PR.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # MinVer needs full history for tag-based versioning
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore -c Release
+
+      - name: Unit tests
+        run: dotnet test tests/Geode.Client.Tests/Geode.Client.Tests.csproj --no-build -c Release --logger trx
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: '**/*.trx'
+
+  integration-tests:
+    # PR-only gate. Integration tests boot a real Geode container via
+    # Testcontainers and are too slow to run on every push.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore -c Release
+
+      - name: Integration tests
+        # GitHub-hosted Ubuntu runner ships with native Docker; Testcontainers
+        # works out of the box. RYUK_DISABLED is only needed for Podman on
+        # local dev machines — do NOT set it here.
+        run: dotnet test tests/Geode.Client.IntegrationTests/Geode.Client.IntegrationTests.csproj --no-build -c Release --logger trx
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: '**/*.trx'

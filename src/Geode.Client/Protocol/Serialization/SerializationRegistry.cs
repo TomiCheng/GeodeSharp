@@ -181,6 +181,22 @@ internal sealed class SerializationRegistry
     }
 
     /// <summary>
+    /// True if <paramref name="type"/> has a registered converter
+    /// (direct match or open-generic match for closed generics).
+    /// Used by callers that need an early "is T a wire-supported
+    /// type?" check before scheduling work that depends on the
+    /// registry — e.g. <c>RemoteQueryService.NewQuery&lt;T&gt;</c>'s
+    /// Phase 1.4 guard against unsupported row types.
+    /// </summary>
+    public bool IsRegistered(Type type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        if (_byType.ContainsKey(type)) return true;
+        if (type.IsGenericType && _byType.ContainsKey(type.GetGenericTypeDefinition())) return true;
+        return false;
+    }
+
+    /// <summary>
     /// Encode <paramref name="value"/>: pick a DSCode via the
     /// converter, write that byte, then delegate to the converter for
     /// the payload. Mirrors cppcache

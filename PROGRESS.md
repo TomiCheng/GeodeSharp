@@ -530,29 +530,85 @@ public interface IGeodeCacheFactory
 
 ## Phase 1.4 — OQL Query（進行中）
 
-- [x] `IQueryService.NewQuery<T>(oql)` / `IQuery<T>` 介面 + DI wiring
-- [x] `RemoteQueryService` + `RemoteQuery<T>` 殼 + `ExecuteCoreAsync` B1-B11 占位
-- [x] `TcrMessageBuilder.Query(34)` / `QueryWithParameters(80)` wire 編碼器
-- [x] `ChunkedQueryResponse<T>` 殼
-- [ ] `ChunkedQueryResponse<T>.HandleChunk` / `Reset` 真正解碼
-      （cppcache `ChunkedQueryResponse::handleChunk` + `readObjectPartList`）
-      — ResultSet path（row values）+ StructSet path（fieldNames + row values）
-- [ ] **`Struct` 公開型別**（拉前自 Phase 2）：一個 row 的 N 個值 + 透過
-      parent 反查欄位名；`IReadOnlyList<object?>` 行為、`GetFieldIndex` /
-      `GetFieldName` / by-name indexer
-- [ ] **B10 StructSet 兌現**（拉前自 Phase 2）：`fieldNames.Count != 0`
-      時把 flat values 每 K 個 reshape 成 `Struct`；對應 cppcache
-      `StructSetImpl` ctor 邏輯
-- [ ] Region convenience：`ExistsValueAsync` / `SelectValueAsync`
-- [ ] `QueryExtensions`：`ExecuteSingleAsync` / `ExecuteFirstOrDefaultAsync`
-      / `WithParameters` / `WithResponseTimeout`（取代「兩個 ExecuteAsync
-      overload」設計，配合 `Parameters` property）
+### 已完成
 
-**拉前理由**：B10 ResultSet / StructSet 分支跟 `ChunkedQueryResponse.HandleChunk`
-是同一條解碼路徑 — fieldNames 解碼跟 row values 解碼在 cppcache 同一個
-`readObjectPartList`。若 StructSet 留 Phase 2，會出現「結構在但不解 fieldNames /
-不 reshape」的 silent-corruption 半成品（caller 寫 `SELECT id, total` 拿到
-攤平 list，無錯誤、無警告）。同期完成才不留漏洞。
+- [x] `IQueryService.NewQuery<T>(oql)` / `IQuery<T>` 介面 + DI wiring
+- [x] `RemoteQueryService` + `RemoteQuery<T>` 殼 + `ExecuteCoreAsync` B1-B11
+      完整實作（closed guard / logs / TcrMessage build / DM send / server-exception
+      handling / result projection）
+- [x] `TcrMessageBuilder.Query(34)` / `QueryWithParameters(80)` wire 編碼器
+- [x] `ChunkedQueryResponse<T>` **完整解碼** — C1-C12 主流程、R1-R3
+      `ReadObjectPartList`、S1-S4 `SkipClass`、K1-K2 `Reset`、helper
+      `ReadStructRow` / `ReadExceptionAndThrow`。三條 wire shape 全處理：
+      scalar COUNT (C3b)、CacheableObjectArray (C11a)、CacheableObjectPartList (C11b)
+- [x] **`QueryStruct` 公開型別**（拉前自 Phase 2）— 不叫 `Struct` 因為跟 C#
+      keyword 衝突。實作 `IReadOnlyList<object?>` + by-name indexer +
+      `FieldNames` / `GetFieldIndex` / `GetFieldName`
+- [x] **StructSet 兌現** — 採 Option C（collector 內每 K 個值組好
+      `QueryStruct` 直接 push，跳過 cppcache 的「攤平 → 外層 reshape」
+      中介），B10 簡化為單行 return
+- [x] **NewQuery type guard** — `T` 須是 `SerializationRegistry` 註冊型
+      或 `QueryStruct`，擋掉 bucket 2 (PDX 自訂型) / bucket 4 (ORM mapping)
+- [x] **`BigEndianBinaryReader.ReadArrayLength`** — Java 變長 array
+      length 解碼（cppcache `DataInput::readArrayLength` 對等）
+- [x] **`TcrPartBuilder.ModifiedUtf8`** + `RegionName` 內部改委派 —
+      OQL / region path 編碼從 ASCII 換 Modified UTF-8 body，跟 Java
+      server `CacheServerHelper.fromUTF` 對齊；純 ASCII 場景 byte 不變
+- [x] **`QueryExtensions`**（`ExecuteSingleAsync` /
+      `ExecuteFirstOrDefaultAsync` / `WithParameters` /
+      `WithResponseTimeout`）—  caller-side fluent / scalar 包裝
+- [x] **單元測試**（39 個）：`QueryStructTests` (16) +
+      `QueryExtensionsTests` (18) + `TcrMessageBuilderQueryTests` (17)
+      + `TcrMessageBuilderQueryWithParametersTests` (22)
+- [x] **整合測試**（7 個，全 PASS）：`QueryIntegrationTests` 覆蓋
+      `SELECT *` ResultSet、`SELECT COUNT(*)` scalar、
+      `QueryWithParameters(80)` + bind values、`ExecuteSingleAsync` 組
+      合 extension、type 不符 → `InvalidCastException`
+
+### 待做
+
+- [ ] Region convenience：`ExistsValueAsync` / `SelectValueAsync`
+      （cppcache `Region::existsValue` / `Region::selectValue`）
+- [ ] 多欄 projection / StructSet 整合測試 — 需要 server 端 PDX 結構化
+      資料（gfsh JSON put 或 Java 預載），暫時 deferred
+
+### 整合測試實戰抓到的兩個 bug
+
+**Bug 1：`TcrMessageHelper.ReadChunkPartHeader` 簽號 byte 錯解**
+（`Protocol/TcrMessageHelper.cs:156-167`）。`compId = reader.ReadByte()`
+回無號 byte，對負值 `DSFid` 解錯（`CollectionTypeImpl = -59` 的 wire
+byte 是 `0xC5`，無號讀回 197 跟 -59 比對失敗）。修法：
+`compId = (sbyte)reader.ReadByte()` 簽號解讀。之前 GetAll / RemoveAll
+chunked decoder 都用正 DSFid（`VersionedObjectPartList = 7` 等），
+此 bug 一直 latent；query 是第一個碰到負 DSFid。
+
+**Bug 2：`ChunkedQueryResponse` C6 / C7 / R3a 對短字串 DSCode 太嚴**
+（`Services/ChunkedQueryResponse.cs`）。原本只接
+`DSCode.CacheableString(42)`，server 對純 ASCII 類別名 / 欄位名實際送
+`DSCode.CacheableASCIIString(87)`。抽出 `ReadShortString` helper 同時
+接受兩種 form — Modified UTF-8 解碼對 ASCII subset byte-identical，
+共用 reader。cppcache `DataInput::readString` 本來就 dispatch 四種 form，
+我們之前未實作的 huge / ASCII 分支現在 Phase 1.4 至少 ASCII 已覆蓋。
+
+### 取捨備忘
+
+**T 型別不符的 cast 失敗**（例 `IQuery<int>("SELECT name...")`）目前讓
+`InvalidCastException` 自然冒出，跟 `IRegion<TKey,TValue>.GetAsync` 同源
+（memory note：deferred to PDX phase 才會再回頭整合 `TypedResultAdapter`
++ ORM mapping）。
+
+**OQL `this` 在 WHERE clause 不 work**（至少對 int region；可能跟
+`/region` scan 的隱式 iterator 命名規則有關）— 整合測試一律用顯式
+alias `SELECT t FROM /test t WHERE t = ...`。將來 region convenience
+方法（`ExistsValueAsync` / `SelectValueAsync`）也要採同樣 alias 寫法
+或 client side 改寫 caller predicate。
+
+**拉前 projection 理由**：B10 ResultSet / StructSet 分支跟
+`ChunkedQueryResponse.HandleChunk` 是同一條解碼路徑 — fieldNames 解碼跟
+row values 解碼在 cppcache 同一個 `readObjectPartList`。若 StructSet 留
+Phase 2，會出現「結構在但不解 fieldNames / 不 reshape」的
+silent-corruption 半成品（caller 寫 `SELECT id, total` 拿到攤平 list，
+無錯誤、無警告）。同期完成才不留漏洞。
 
 ---
 

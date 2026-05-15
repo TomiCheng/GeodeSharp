@@ -162,6 +162,38 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
     }
 
     /// <summary>
+    /// Read a Java variable-length-encoded array length. Mirrors
+    /// cppcache <c>DataInput::readArrayLength</c>
+    /// (<c>include/geode/DataInput.hpp:205-224</c>): one byte for
+    /// lengths in <c>[0, 252]</c>; <c>0xFE</c> + u16 for
+    /// <c>[253, 65535]</c>; <c>0xFD</c> + i32 for larger; <c>0xFF</c>
+    /// signals -1 (null array).
+    /// </summary>
+    /// <exception cref="GeodeException">
+    /// Leading byte is &gt; 252 and not one of <c>0xFD</c> /
+    /// <c>0xFE</c> / <c>0xFF</c> &#x2014; corrupt stream.
+    /// </exception>
+    public int ReadArrayLength()
+    {
+        var code = ReadByte();
+        if (code == 0xFF)
+        {
+            return -1;
+        }
+        if (code <= 252)
+        {
+            return code;
+        }
+        return code switch
+        {
+            0xFE => ReadUInt16(),
+            0xFD => ReadInt32(),
+            _ => throw new GeodeException(
+                $"BigEndianBinaryReader.ReadArrayLength: unexpected length code 0x{code:X2}."),
+        };
+    }
+
+    /// <summary>
     /// Read a Java variable-length-encoded unsigned long (1-9 bytes).
     /// Mirrors cppcache <c>DataInput::readUnsignedVL</c> /
     /// Java <c>DataSerializer.readUnsignedVL</c>: 7-bit-per-byte

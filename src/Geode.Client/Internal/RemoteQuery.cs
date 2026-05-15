@@ -141,32 +141,21 @@ internal sealed class RemoteQuery<T>(
         // B8 — Log "reading reply". cppcache RemoteQuery.cpp:93.
         logger.LogTrace("Query::execute: reading reply for query: {Oql}", QueryString);
 
-        // B9 — Read collector.Results + collector.StructFieldNames.
-        // cppcache RemoteQuery.cpp:94-95:
-        //   auto&& values = resultCollector->getQueryResults();
-        //   auto&& fieldNameVec = resultCollector->getStructFieldNames();
-        var values = collector.Results;
-        var fieldNames = collector.StructFieldNames;
+        // B9 / B10 — Read collector.Results directly. The collector
+        // stores already-typed rows (List<T?>): single-column queries
+        // push cast row values, multi-column projection pushes
+        // assembled QueryStruct per row. cppcache's RemoteQuery.cpp:94-111
+        // does the ResultSetImpl / StructSetImpl wrapping at this site;
+        // we collapse it into the collector so this leg is one line.
+        //
+        // B11 — Log "creating result set". cppcache RemoteQuery.cpp:98 / :107.
+        logger.LogTrace("Query::execute: creating result set for query: {Oql}", QueryString);
 
-        // B10 — ResultSet vs StructSet branch. cppcache RemoteQuery.cpp:97-111:
-        //   fieldNameVec.size() == 0 → ResultSetImpl(values)
-        //   else                     → StructSetImpl(values, names)
-        // Phase 1.4: StructFieldNames is always empty (SELECT *
-        // single-column / SELECT COUNT(*)) → always treat as
-        // ResultSet, return collector.Results directly. StructSet
-        // branch (multi-column projection) is Phase 2 scope; the
-        // cppcache divisibility check
-        // (values.size() % fieldNames.size() != 0 → MessageException)
-        // also moves with it.
-        if (fieldNames.Count != 0)
-        {
-            throw new NotImplementedException(
-                "StructSet (multi-column projection) is Phase 2 scope.");
-        }
-
-        // B11 — Log "creating ResultSet". cppcache RemoteQuery.cpp:98.
-        logger.LogTrace("Query::execute: creating ResultSet for query: {Oql}", QueryString);
-        return values;
+        // collector.Results is IReadOnlyList<T?>; ExecuteAsync returns
+        // IReadOnlyList<T>. Same runtime type for unconstrained T; the
+        // `!` suppresses the nullability annotation gap (caller takes
+        // null elements as they come — server may send NULL row values).
+        return collector.Results!;
     }
 
     /// <summary>

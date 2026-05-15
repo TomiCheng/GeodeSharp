@@ -155,7 +155,13 @@ internal sealed class TcrMessageHelper(ILogger<TcrMessageHelper> logger)
             }
             else if (expectedDsCode == DSCode.FixedIDByte)
             {
-                compId = reader.ReadByte();
+                // DSFid is a signed byte on the wire; cppcache reads it
+                // via int8_t. Without the (sbyte) cast 0xC5 reads back
+                // as 197 (unsigned) instead of -59 (CollectionTypeImpl),
+                // breaking the compId compare. Only matters for negative
+                // DSFid IDs — the positive ones (VersionedObjectPartList,
+                // CacheableObjectPartList, etc.) round-trip either way.
+                compId = (sbyte)reader.ReadByte();
             }
         }
 

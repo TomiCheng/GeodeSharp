@@ -1,3 +1,4 @@
+using Geode.Client.Protocol.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -30,15 +31,18 @@ internal sealed class RemoteQueryService : IQueryService
 {
     private readonly ThinClientBaseDM _dm;
     private readonly IServiceProvider _serviceProvider;
+    private readonly SerializationRegistry _serializationRegistry;
     private readonly ILogger<RemoteQueryService> _logger;
 
     public RemoteQueryService(
         ThinClientBaseDM dm,
         IServiceProvider serviceProvider,
+        SerializationRegistry serializationRegistry,
         ILogger<RemoteQueryService> logger)
     {
         _dm = dm;
         _serviceProvider = serviceProvider;
+        _serializationRegistry = serializationRegistry;
         _logger = logger;
 
         // cppcache RemoteQueryService.cpp:46 — LOGFINEST("Initialized m_tccdm").
@@ -70,6 +74,21 @@ internal sealed class RemoteQueryService : IQueryService
         // step 1 — input validation. cppcache does not; server's OQL
         // parser catches empty / whitespace. We fail fast client-side.
         ArgumentException.ThrowIfNullOrWhiteSpace(oql);
+
+        // step 2 — Phase 1.4 row-type guard. Supports:
+        //   bucket 1 (single-column basic) — T has a SerializationRegistry
+        //       converter (int / string / byte[] / List<int> / ...).
+        //   bucket 3 (multi-column projection) — T == QueryStruct.
+        // Buckets 2 (PDX single-column) and 4 (ORM-mapped multi-column)
+        // ship in later phases; throw NotSupportedException early so
+        // caller doesn't discover the gap mid-flight.
+        if (typeof(T) != typeof(QueryStruct) && !_serializationRegistry.IsRegistered(typeof(T)))
+        {
+            throw new NotSupportedException(
+                $"IQuery<{typeof(T).Name}>: Phase 1.4 supports basic wire-registered " +
+                $"types and {nameof(QueryStruct)} only. PDX (single-column custom) and " +
+                "ORM mapping (multi-column to user types) land in later phases.");
+        }
 
         // step 3 — closed guard. Mirrors cppcache
         // RemoteQueryService::newQuery's `if (m_invalid) throw

@@ -114,10 +114,10 @@ public class GeodeClientOptionsTests
     public void Validate_propagates_cachexml_failures()
     {
         var opts = MakeValid();
-        opts.Cache!.Pools.Clear();   // triggers "at least one pool"
+        opts.Cache!.Pools.Clear();   // triggers "must set either Endpoints or Pools"
 
         var failures = opts.Validate("root").ToList();
-        Assert.Contains(failures, f => f.Contains("root.Cache.Pools"));
+        Assert.Contains(failures, f => f.Contains("root.Cache must set either Endpoints or Pools"));
     }
 
     [Fact]

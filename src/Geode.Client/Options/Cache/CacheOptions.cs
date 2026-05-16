@@ -1,27 +1,13 @@
 namespace Geode.Client.Options;
 
-/// <summary>
-/// Mirrors the cppcache <c>cache.xml</c> declarative-cache schema
-/// (<c>xsds/cpp-cache-1.0.xsd</c>, root element
-/// <c>&lt;client-cache&gt;</c>). Parser source:
-/// <c>cppcache/src/CacheParser.cpp</c>.
-/// </summary>
-/// <remarks>
-/// CLAUDE.md cuts <c>cache.xml</c> entirely; this whole tree is on the
-/// deletion shortlist and only exists so the audit can prove no
-/// consumer needs it. Kept separate from the
-/// <c>SystemProperties</c>-derived options (<see cref="PoolOptions"/>,
-/// <see cref="PdxOptions"/>, ...) because cppcache models these as two
-/// different sources (<c>SystemProperties</c> vs <c>PoolFactory</c> /
-/// <c>CacheCreation</c>) — collapsing them would hide that.
-/// </remarks>
+/// <summary>Declarative cache configuration (pools, regions, PDX) — the per-cache half of the options tree.</summary>
 public class CacheOptions : ICloneable
 {
     public CacheOptions() { }
 
     public CacheOptions(CacheOptions other)
     {
-        Endpoints = other.Endpoints;
+        Endpoints = other.Endpoints.Select(e => e.Clone()).ToList();
         RedundancyLevel = other.RedundancyLevel;
         Version = other.Version;
         Pools = other.Pools.Select(p => p.Clone()).ToList();
@@ -31,76 +17,46 @@ public class CacheOptions : ICloneable
     }
 
     /// <summary>
-    /// Root <c>&lt;client-cache endpoints&gt;</c> attribute. Legacy
-    /// inline endpoint list; default empty.
+    /// Inline endpoint list; when non-empty, treated as a synthesized
+    /// default pool's <see cref="CachePoolOptions.Servers"/>.
     /// </summary>
-    public string Endpoints { get; set; } = string.Empty;
+    public List<CacheHostPortOptions> Endpoints { get; set; } = [];
 
-    /// <summary>
-    /// Root <c>&lt;client-cache redundancy-level&gt;</c> attribute.
-    /// Legacy HA setting; default empty.
-    /// </summary>
+    /// <summary>Subscription redundancy level; default empty.</summary>
     public string RedundancyLevel { get; set; } = string.Empty;
 
-    /// <summary>
-    /// Schema version pinned in <c>&lt;client-cache version&gt;</c>;
-    /// XSD fixes this to <c>"1.0"</c>.
-    /// </summary>
+    /// <summary>Schema version; pinned to <c>"1.0"</c>.</summary>
     public string Version { get; set; } = "1.0";
 
-    /// <summary>
-    /// Named connection pools declared in the XML
-    /// (<c>&lt;pool&gt;</c>). cppcache stores these in
-    /// <c>PoolManager</c>, keyed by <see cref="CachePoolOptions.Name"/>.
-    /// </summary>
+    /// <summary>Named connection pools, keyed by <see cref="CachePoolOptions.Name"/>.</summary>
     public List<CachePoolOptions> Pools { get; set; } = new();
 
-    /// <summary>
-    /// Top-level regions declared in the XML
-    /// (<c>&lt;region&gt;</c>). Regions can nest via
-    /// <see cref="CacheRegionOptions.ChildRegions"/>.
-    /// </summary>
+    /// <summary>Top-level regions; can nest via <see cref="CacheRegionOptions.ChildRegions"/>.</summary>
     public List<CacheRegionOptions> Regions { get; set; } = new();
 
-    /// <summary>
-    /// PDX defaults declared in the XML (<c>&lt;pdx&gt;</c>).
-    /// </summary>
+    /// <summary>PDX defaults.</summary>
     public CachePdxOptions Pdx { get; set; } = new();
 
-    /// <summary>
-    /// Reusable region-attributes templates, keyed by name. A
-    /// <see cref="CacheRegionOptions"/> with non-empty
-    /// <see cref="CacheRegionOptions.RefId"/> looks up its template
-    /// here at <c>InitializeCoreAsync</c> time; the template's values
-    /// supply defaults that the region's inline
-    /// <see cref="CacheRegionOptions.Attributes"/> can override.
-    /// Mirrors cppcache <c>&lt;region-attributes id="..."&gt;</c> →
-    /// <c>&lt;region refid="..."&gt;</c> template inheritance
-    /// (<c>cppcache/src/CacheParser.cpp</c> <c>namedRegions_</c>).
-    /// </summary>
-    /// <remarks>
-    /// Single-level only — a template's own <c>RefId</c> is not
-    /// followed (no chained inheritance). Inner
-    /// <c>&lt;region-attributes refid="..."&gt;</c> is also unsupported
-    /// today; only the outer <see cref="CacheRegionOptions.RefId"/>
-    /// triggers resolution.
-    /// </remarks>
+    /// <summary>Reusable region-attributes templates referenced by <see cref="CacheRegionOptions.RefId"/>.</summary>
     public Dictionary<string, CacheRegionAttributesOptions> NamedAttributes { get; set; } = new();
 
     /// <summary>Deep clone via copy constructor.</summary>
     public CacheOptions Clone() => new(this);
     object ICloneable.Clone() => Clone();
 
-    /// <summary>
-    /// Validate. Rules migrated from <c>GeodeClientOptionsValidator</c>:
-    /// <see cref="Pools"/> must contain at least one entry; each region's
-    /// <see cref="CacheRegionOptions.RefId"/> must reference a key in
-    /// <see cref="NamedAttributes"/>. Recurses into pools and regions.
-    /// </summary>
+    /// <summary>Validate the tree: exactly one of <see cref="Endpoints"/> / <see cref="Pools"/> must be set; region <c>RefId</c>s must resolve to <see cref="NamedAttributes"/>; recurses into entries.</summary>
     public IEnumerable<string> Validate(string prefix)
     {
-        if (Pools.Count == 0)
-            yield return $"{prefix}.Pools must contain at least one pool.";
+        var hasEndpoints = Endpoints.Count > 0;
+        var hasPools = Pools.Count > 0;
+        if (!hasEndpoints && !hasPools)
+            yield return $"{prefix} must set either Endpoints or Pools.";
+        else if (hasEndpoints && hasPools)
+            yield return $"{prefix}.Endpoints and {prefix}.Pools are mutually exclusive — set one or the other.";
+
+        for (var i = 0; i < Endpoints.Count; i++)
+            foreach (var f in Endpoints[i].Validate($"{prefix}.Endpoints[{i}]"))
+                yield return f;
 
         for (var i = 0; i < Pools.Count; i++)
             foreach (var f in Pools[i].Validate($"{prefix}.Pools[{i}]"))

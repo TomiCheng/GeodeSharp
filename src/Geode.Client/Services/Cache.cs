@@ -271,30 +271,7 @@ internal sealed class Cache(
     /// </remarks>
     private async Task InitializeDeclarativeCacheAsync(CacheOptions cache, CancellationToken ct)
     {
-        // ── 4-5. Pools ──────────────────────────────────────────
-        // cppcache equivalent: CacheParser builds pools from <pool>
-        // elements during create().
-        foreach (var xmlPool in cache.Pools)
-        {
-            // ── 4. Build ThinClientPoolDM + register ────────────
-            // ctor enforces Phase 1.5 deferred limits (multi-server
-            // / locator) internally; here we just hand it the xml
-            // pool config and the shared TCCM.
-            // Positional args match ThinClientPoolDM's primary ctor
-            // (xmlPool + options + TCCM); ILogger is filled by DI.
-            var pool = ActivatorUtilities.CreateInstance<ThinClientPoolDM>(
-                serviceProvider, xmlPool, _options, tcrConnectionManager);
-            poolManager.AddPool(xmlPool.Name, pool);
-
-            // ── 5. Init pool — real TCP / handshake fires here ──
-            // Pool.InitAsync internally:
-            //   • locator query → endpoint list, OR direct server list
-            //   • foreach endpoint → TcrEndpoint.CreateNewConnectionAsync(...)
-            //       • socket open + handshake bytes
-            //       • receive server-issued uniqueId
-            //   • mark pool ready
-            await pool.InitAsync(ct).ConfigureAwait(false);
-        }
+        await InitializePoolsAsync(cache, ct).ConfigureAwait(false);
 
         // ── 6. Build regions ────────────────────────────────────
         // cppcache equivalent: CacheParser::create iterates
@@ -391,6 +368,69 @@ internal sealed class Cache(
                     "sub-region creation is deferred to a later phase.");
             }
         }
+    }
+
+    /// <summary>
+    /// Build and initialise every declared pool (or the synthesized
+    /// default pool when <see cref="CacheOptions.Endpoints"/> is set
+    /// instead). Real TCP / handshake fires inside each
+    /// <c>InitAsync</c>.
+    /// </summary>
+    /// <remarks>
+    /// cppcache <c>&lt;client-cache endpoints="..."&gt;</c> maps to
+    /// <c>poolFactory_-&gt;addServer(...)</c>
+    /// (<c>CacheXmlParser.cpp:553-560</c>). The validator guarantees
+    /// <see cref="CacheOptions.Endpoints"/> and
+    /// <see cref="CacheOptions.Pools"/> are mutually exclusive, so
+    /// exactly one branch fires. The synthesized pool is built into
+    /// a local list — we don't mutate the shared options instance,
+    /// which would bleed across caches built from the same
+    /// <c>IOptionsMonitor</c> snapshot.
+    /// </remarks>
+    private async Task InitializePoolsAsync(CacheOptions cache, CancellationToken ct)
+    {
+        foreach (var xmlPool in ResolvePoolsToBuild(cache))
+        {
+            // ctor enforces Phase 1.5 deferred limits (multi-server
+            // / locator) internally; here we just hand it the pool
+            // config and the shared TCCM. Positional args match
+            // ThinClientPoolDM's primary ctor (xmlPool + options +
+            // TCCM); ILogger is filled by DI.
+            var pool = ActivatorUtilities.CreateInstance<ThinClientPoolDM>(
+                serviceProvider, xmlPool, _options, tcrConnectionManager);
+            poolManager.AddPool(xmlPool.Name, pool);
+
+            // Pool.InitAsync internally:
+            //   • locator query → endpoint list, OR direct server list
+            //   • foreach endpoint → TcrEndpoint.CreateNewConnectionAsync(...)
+            //       • socket open + handshake bytes
+            //       • receive server-issued uniqueId
+            //   • mark pool ready
+            await pool.InitAsync(ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Pure projection from <see cref="CacheOptions"/> to the list of
+    /// pools the cache should build. When <see cref="CacheOptions.Endpoints"/>
+    /// is non-empty, synthesises a single <c>"default"</c>-named
+    /// <see cref="CachePoolOptions"/> whose <see cref="CachePoolOptions.Servers"/>
+    /// is a deep copy of the endpoint list; otherwise returns
+    /// <see cref="CacheOptions.Pools"/> as-is. Validator guarantees
+    /// the two are mutually exclusive.
+    /// </summary>
+    internal static IReadOnlyList<CachePoolOptions> ResolvePoolsToBuild(CacheOptions cache)
+    {
+        if (cache.Endpoints.Count == 0) return cache.Pools;
+
+        return
+        [
+            new()
+            {
+                Name = "default",
+                Servers = cache.Endpoints.Select(e => e.Clone()).ToList(),
+            },
+        ];
     }
 
     /// <summary>

@@ -26,15 +26,27 @@ public class CacheOptionsTests
     public void Clone_copies_primitive_attributes()
     {
         var original = MakeValid();
-        original.Endpoints = "ep";
         original.RedundancyLevel = "1";
         original.Version = "1.0";
 
         var clone = original.Clone();
 
-        Assert.Equal("ep", clone.Endpoints);
         Assert.Equal("1", clone.RedundancyLevel);
         Assert.Equal("1.0", clone.Version);
+    }
+
+    [Fact]
+    public void Clone_creates_independent_endpoint_instances()
+    {
+        var original = MakeValid();
+        original.Endpoints.Add(new CacheHostPortOptions { Host = "h", Port = 40404 });
+
+        var clone = original.Clone();
+
+        Assert.NotSame(original.Endpoints, clone.Endpoints);
+        Assert.NotSame(original.Endpoints[0], clone.Endpoints[0]);
+        Assert.Equal("h", clone.Endpoints[0].Host);
+        Assert.Equal(40404, clone.Endpoints[0].Port);
     }
 
     [Fact]
@@ -85,13 +97,32 @@ public class CacheOptionsTests
     }
 
     [Fact]
-    public void Validate_empty_pools_fails()
+    public void Validate_neither_endpoints_nor_pools_fails()
     {
         var opts = MakeValid();
         opts.Pools.Clear();
 
         var failures = opts.Validate("cx").ToList();
-        Assert.Contains(failures, f => f.Contains("cx.Pools must contain at least one pool"));
+        Assert.Contains(failures, f => f.Contains("cx must set either Endpoints or Pools"));
+    }
+
+    [Fact]
+    public void Validate_endpoints_and_pools_together_fails()
+    {
+        var opts = MakeValid();  // already has Pools
+        opts.Endpoints.Add(new CacheHostPortOptions { Host = "h", Port = 40404 });
+
+        var failures = opts.Validate("cx").ToList();
+        Assert.Contains(failures, f => f.Contains("cx.Endpoints and cx.Pools are mutually exclusive"));
+    }
+
+    [Fact]
+    public void Validate_endpoints_only_succeeds()
+    {
+        var opts = new CacheOptions();  // no Pools
+        opts.Endpoints.Add(new CacheHostPortOptions { Host = "h", Port = 40404 });
+
+        Assert.Empty(opts.Validate("cx"));
     }
 
     [Fact]

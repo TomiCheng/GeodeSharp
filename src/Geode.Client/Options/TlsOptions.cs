@@ -6,8 +6,18 @@ namespace Geode.Client.Options;
 /// (Phase 8) — file paths may be replaced or augmented with
 /// <c>X509Certificate2</c> handles when we get there.
 /// </summary>
-public class TlsOptions
+public class TlsOptions : ICloneable
 {
+    public TlsOptions() { }
+
+    public TlsOptions(TlsOptions other)
+    {
+        Enabled = other.Enabled;
+        KeyStorePath = other.KeyStorePath;
+        KeyStorePassword = other.KeyStorePassword;
+        TrustStorePath = other.TrustStorePath;
+    }
+
     /// <summary>
     /// Whether to upgrade the socket with TLS after TCP connect. Mirrors
     /// cppcache <c>ssl-enabled</c>; default <c>false</c>.
@@ -32,8 +42,9 @@ public class TlsOptions
     /// </summary>
     public string TrustStorePath { get; set; } = string.Empty;
 
-    /// <summary>Deep clone. Only primitives / string — MemberwiseClone is sufficient.</summary>
-    public TlsOptions DeepClone() => (TlsOptions)MemberwiseClone();
+    /// <summary>Deep clone via copy constructor.</summary>
+    public TlsOptions Clone() => new(this);
+    object ICloneable.Clone() => Clone();
 
     /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
     public IEnumerable<string> Validate(string prefix)

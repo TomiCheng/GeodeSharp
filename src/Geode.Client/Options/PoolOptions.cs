@@ -14,8 +14,21 @@ namespace Geode.Client.Options;
 /// consumes it (file:line), the abstraction level (pool / endpoint /
 /// connection), and any platform-specific quirks.
 /// </remarks>
-public class PoolOptions
+public class PoolOptions : ICloneable
 {
+    public PoolOptions() { }
+
+    public PoolOptions(PoolOptions other)
+    {
+        ConnectionPoolSize = other.ConnectionPoolSize;
+        ConnectTimeout = other.ConnectTimeout;
+        ConnectWaitTimeout = other.ConnectWaitTimeout;
+        MaxSocketBufferSize = other.MaxSocketBufferSize;
+        PingInterval = other.PingInterval;
+        ShuffleEndpoints = other.ShuffleEndpoints;
+        BucketWaitTimeout = other.BucketWaitTimeout;
+    }
+
     /// <summary>
     /// Number of TCP connections to maintain &#x2014; cppcache
     /// <c>connection-pool-size</c>; default 5.
@@ -197,8 +210,9 @@ public class PoolOptions
     /// </remarks>
     public TimeSpan BucketWaitTimeout { get; set; } = TimeSpan.Zero;
 
-    /// <summary>Deep clone. Only primitives / TimeSpan / bool — MemberwiseClone is sufficient.</summary>
-    public PoolOptions DeepClone() => (PoolOptions)MemberwiseClone();
+    /// <summary>Deep clone via copy constructor.</summary>
+    public PoolOptions Clone() => new(this);
+    object ICloneable.Clone() => Clone();
 
     /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
     public IEnumerable<string> Validate(string prefix)

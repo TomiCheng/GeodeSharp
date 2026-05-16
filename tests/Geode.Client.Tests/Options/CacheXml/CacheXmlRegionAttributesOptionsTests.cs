@@ -6,7 +6,7 @@ namespace Geode.Client.Tests.Options.CacheXml;
 public class CacheXmlRegionAttributesOptionsTests
 {
     [Fact]
-    public void DeepClone_copies_primitives()
+    public void Clone_copies_primitives()
     {
         var original = new CacheXmlRegionAttributesOptions
         {
@@ -24,7 +24,7 @@ public class CacheXmlRegionAttributesOptionsTests
             ConcurrencyChecksEnabled = false,
             RefId = "ref",
         };
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         Assert.Equal(true, clone.CachingEnabled);
         Assert.Equal(false, clone.CloningEnabled);
@@ -36,14 +36,14 @@ public class CacheXmlRegionAttributesOptionsTests
     }
 
     [Fact]
-    public void DeepClone_recursively_clones_nullable_expiration_options()
+    public void Clone_recursively_clones_nullable_expiration_options()
     {
         var original = new CacheXmlRegionAttributesOptions
         {
             RegionTimeToLive = new CacheXmlExpirationOptions { Timeout = TimeSpan.FromMinutes(5) },
             EntryIdleTime = new CacheXmlExpirationOptions { Timeout = TimeSpan.FromMinutes(1) },
         };
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         Assert.NotSame(original.RegionTimeToLive, clone.RegionTimeToLive);
         Assert.NotSame(original.EntryIdleTime, clone.EntryIdleTime);
@@ -53,7 +53,7 @@ public class CacheXmlRegionAttributesOptionsTests
     }
 
     [Fact]
-    public void DeepClone_polymorphically_clones_library_options_slots()
+    public void Clone_polymorphically_clones_library_options_slots()
     {
         var original = new CacheXmlRegionAttributesOptions
         {
@@ -65,7 +65,7 @@ public class CacheXmlRegionAttributesOptionsTests
                 Properties = { ["dir"] = "/data" },
             },
         };
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         Assert.NotSame(original.CacheLoader, clone.CacheLoader);
         Assert.Equal("loader", clone.CacheLoader!.LibraryName);
@@ -76,14 +76,14 @@ public class CacheXmlRegionAttributesOptionsTests
     }
 
     [Fact]
-    public void DeepClone_mutating_clone_nested_does_not_affect_original()
+    public void Clone_mutating_clone_nested_does_not_affect_original()
     {
         var original = new CacheXmlRegionAttributesOptions
         {
             RegionTimeToLive = new CacheXmlExpirationOptions { Timeout = TimeSpan.FromMinutes(5) },
             CacheLoader = new CacheXmlLibraryOptions { LibraryName = "loader" },
         };
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         clone.RegionTimeToLive!.Timeout = TimeSpan.FromHours(1);
         clone.CacheLoader!.LibraryName = "mutated";

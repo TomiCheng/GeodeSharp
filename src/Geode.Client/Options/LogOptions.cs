@@ -38,8 +38,18 @@ public enum LogLevel
 /// window can prove no consumer needs it; remove before Phase 5 ships if
 /// nothing reads from it.
 /// </remarks>
-public class LogOptions
+public class LogOptions : ICloneable
 {
+    public LogOptions() { }
+
+    public LogOptions(LogOptions other)
+    {
+        Filename = other.Filename;
+        Level = other.Level;
+        FileSizeLimit = other.FileSizeLimit;
+        DiskSpaceLimit = other.DiskSpaceLimit;
+    }
+
     /// <summary>
     /// Path to the log file. Mirrors cppcache <c>log-file</c>; default
     /// empty (= stdout in cppcache).
@@ -66,8 +76,9 @@ public class LogOptions
     /// </summary>
     public uint DiskSpaceLimit { get; set; }
 
-    /// <summary>Deep clone. Only primitives / string / enum — MemberwiseClone is sufficient.</summary>
-    public LogOptions DeepClone() => (LogOptions)MemberwiseClone();
+    /// <summary>Deep clone via copy constructor.</summary>
+    public LogOptions Clone() => new(this);
+    object ICloneable.Clone() => Clone();
 
     /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
     public IEnumerable<string> Validate(string prefix)

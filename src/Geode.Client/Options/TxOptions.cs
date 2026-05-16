@@ -5,8 +5,15 @@ namespace Geode.Client.Options;
 /// <c>SystemProperties</c>. Out of MVP scope per CLAUDE.md, included
 /// only for parity during the audit window.
 /// </summary>
-public class TxOptions
+public class TxOptions : ICloneable
 {
+    public TxOptions() { }
+
+    public TxOptions(TxOptions other)
+    {
+        SuspendedTimeout = other.SuspendedTimeout;
+    }
+
     /// <summary>
     /// How long the server retains a suspended transaction's state
     /// before discarding it. Mirrors cppcache <c>suspended-tx-timeout</c>;
@@ -14,8 +21,9 @@ public class TxOptions
     /// </summary>
     public TimeSpan SuspendedTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
-    /// <summary>Deep clone. TimeSpan-only — MemberwiseClone is sufficient.</summary>
-    public TxOptions DeepClone() => (TxOptions)MemberwiseClone();
+    /// <summary>Deep clone via copy constructor.</summary>
+    public TxOptions Clone() => new(this);
+    object ICloneable.Clone() => Clone();
 
     /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
     public IEnumerable<string> Validate(string prefix)

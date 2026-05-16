@@ -14,32 +14,32 @@ public class CacheXmlRegionOptionsTests
         };
     }
 
-    // ── DeepClone ─────────────────────────────────────────────────
+    // ── Clone ─────────────────────────────────────────────────
 
     [Fact]
-    public void DeepClone_copies_name_and_refid()
+    public void Clone_copies_name_and_refid()
     {
         var original = MakeRegion("r1");
         original.RefId = "tmpl";
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         Assert.Equal("r1", clone.Name);
         Assert.Equal("tmpl", clone.RefId);
     }
 
     [Fact]
-    public void DeepClone_returns_different_attributes_instance()
+    public void Clone_returns_different_attributes_instance()
     {
         var original = MakeRegion();
-        var clone = original.DeepClone();
+        var clone = original.Clone();
         Assert.NotSame(original.Attributes, clone.Attributes);
     }
 
     [Fact]
-    public void DeepClone_mutating_clone_attributes_does_not_affect_original()
+    public void Clone_mutating_clone_attributes_does_not_affect_original()
     {
         var original = MakeRegion();
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         clone.Attributes.PoolName = "mutated";
 
@@ -47,13 +47,13 @@ public class CacheXmlRegionOptionsTests
     }
 
     [Fact]
-    public void DeepClone_recursively_clones_child_regions()
+    public void Clone_recursively_clones_child_regions()
     {
         var original = MakeRegion("parent");
         original.ChildRegions.Add(MakeRegion("child-1"));
         original.ChildRegions.Add(MakeRegion("child-2"));
 
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         Assert.Equal(2, clone.ChildRegions.Count);
         Assert.Equal("child-1", clone.ChildRegions[0].Name);

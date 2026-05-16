@@ -443,7 +443,7 @@ VCOPL.FromData Step 7 gate: if (hasObjects && AddToLocalCache) → Phase 4+ NIE
 
 ## DI surface 重塑 — `IGeodeCacheFactory` + `GeodeClientExtensions`（未啟動）
 
-**性質**：Phase 0 既有設計的回頭重塑，不算新 phase。範圍 `src/Geode.Client/IGeodeCacheFactory.cs` + `src/Geode.Client/Services/GeodeCacheFactory.cs` + `src/Geode.Client/GeodeClientExtensions.cs` + 全部 options class（加 `DeepClone`）+ 對應測試。
+**性質**：Phase 0 既有設計的回頭重塑，不算新 phase。範圍 `src/Geode.Client/IGeodeCacheFactory.cs` + `src/Geode.Client/Services/GeodeCacheFactory.cs` + `src/Geode.Client/GeodeClientExtensions.cs` + 全部 options class（加 `ICloneable` + copy ctor，初版用 `DeepClone()`、後續反悔見「後續修正」段）+ 對應測試。
 
 ### 背景
 
@@ -460,8 +460,8 @@ Phase 0 的設計：`AddGeodeClient` 三個 overload（unnamed + optional `name`
 2. **Cache 是否該由 factory 統一管理** — 一度收斂到「完全只走 factory，砍掉 `IGeodeCache` 直接注入」。後來考慮到 95% 使用者只有一個 cluster + EF Core 的雙注入 pattern，改成兩層：簡易層直接注入 `IGeodeCache`、進階層走 `IGeodeCacheFactory`。
 3. **Manual Create 還是 auto Create** — 選 manual。`AddGeodeClient` 只負責註冊 config 與 `IGeodeCache` 注入點；`factory.Create()` 必須由使用者啟動時呼叫。`IGeodeCache` 注入若先於 `Create` 觸發 → `KeyNotFoundException`，fail fast 不 silent magic。production / 測試行為一致。
 4. **cacheName / configName 解耦** — 加進 `Create` 簽章。同一份 config 可給多個 cache 用（讀寫分流、tenant 隔離）。`Get` / `RemoveAsync` 只認 cacheName。
-5. **`Action<sp, opts>` 的 cascade 語意** — `Create` 的 `action` 是「lookup configName → DeepClone → action 在 clone 上改 → validator 重跑 → 用 clone 建 cache」。原 config 不污染。
-6. **DeepClone 方案** — 否決 `ICloneable`（MS 反對）跟 JSON round-trip（怕未來 options 加非 JSON 屬性）。選方案 B：每個 options class 自己加 `DeepClone()` 方法，不走 interface。
+5. **`Action<sp, opts>` 的 cascade 語意** — `Create` 的 `action` 是「lookup configName → Clone → action 在 clone 上改 → validator 重跑 → 用 clone 建 cache」。原 config 不污染。
+6. **DeepClone 方案** — 否決 `ICloneable`（MS 反對）跟 JSON round-trip（怕未來 options 加非 JSON 屬性）。選方案 B：每個 options class 自己加 `DeepClone()` 方法，不走 interface。**⚠️ 後續反悔，見「後續修正」段。**
 7. **`AddGeodeClient` / `AddGeodeFactory` 分層** — 兩個 method 各 3 overload。`AddGeodeClient` 永遠 unnamed、會註冊 `IGeodeCache` 直接注入；`AddGeodeFactory` name 在最後（有 default `""`），只往 factory 加 entry、不註冊 `IGeodeCache` alias。
 8. **驗證邏輯搬進 `GeodeClientOptions` 本身** — 在 options class 加一個 `Validate(string? name = null)` 方法，回 `ValidateOptionsResult`。原 `GeodeClientOptionsValidator` 縮成一行轉發 `opts.Validate(name)`。好處：(a) `factory.Create(action)` 在 DeepClone + action 後直接 `clone.Validate(configName)` 一行檢查，不用從 sp 撈 `IValidateOptions<T>`；(b) options 自己負責自己合法性，cohesion 高；(c) 測試可繞過 DI 直接驗。子 options class 同樣加 `Validate()`，root 跑時遞迴呼叫子物件。
 
@@ -504,17 +504,35 @@ public interface IGeodeCacheFactory
 - ❌ `Register` / `Unregister` runtime options（透過 `IOptionsMonitorCache<T>.TryAdd`）── 不需要,`Create(action)` 已涵蓋
 - ❌ `RegisteredNames` / `IsRegistered` 查詢介面 ── 「能不能查 config 組態」放棄
 - ❌ `GeodeClientRegistry` sidecar ── 不需要
-- ❌ `ICloneable` ── MS 反對的設計（type erasure + deep/shallow 語意不明）
+- ❌ `ICloneable` ── MS 反對的設計（type erasure + deep/shallow 語意不明）**⚠️ 後續反悔，見「後續修正」段。**
 - ❌ `IDeepCloneable<T>` interface ── 過度抽象,簡化成方案 B
 - ❌ `[FromKeyedServices]` keyed 注入 ── 全部走 factory（簡化 + 避免 stale instance 雷）
 - ❌ `AddGeodeClient` 自動 Create（hosted service）── manual,保持 production / 測試行為一致
 - ❌ `GetOrCreate(name, action)` 三合一 ── silent-ignore on second call 雷區
 - ❌ `IGeodeCache?` Get（nullable 回傳）── 改丟例外,不要強迫 caller 處理 null
 
+### 後續修正 — 反悔改用 `ICloneable` (2026-05-16)
+
+原本第 6 點否決 `ICloneable`，理由是「MS 反對 + deep/shallow 語意不明」。後續實作完一輪覺得每個 options class 自帶 `DeepClone()` 雖然 explicit，但少了一個共通的 marker interface — 看不出來「這 class 設計上就是可複製的」。改回 `ICloneable` + 顯式 `Clone()` 強型別公開 + copy ctor 做實質複製：
+
+```csharp
+public class XxxOptions : ICloneable
+{
+    public XxxOptions() { }                          // IConfiguration binding
+    public XxxOptions(XxxOptions other) { ... }      // 逐欄複製，含 nested deep clone
+    public XxxOptions Clone() => new(this);
+    object ICloneable.Clone() => Clone();            // 顯式接介面
+}
+```
+
+deep/shallow 語意問題：靠 `Clone()` 的 XMLdoc 一句「Deep clone via copy constructor.」收斂，且全部 options class 行為一致（都 deep）。多型 (`CacheXmlLibraryOptions` ↔ `CacheXmlPersistenceManagerOptions`) 走 `virtual Clone()` + covariant override，base 一個 explicit `ICloneable.Clone()` 就夠（virtual dispatch 會走到 subclass）。
+
+範圍：20 個 options class + 1 個呼叫點 (`GeodeCacheFactory.Create`) + 11 個 test 檔。
+
 ### 實施順序
 
 1. 列 `CacheXml*` 巢狀類別,補完 options class 完整名單
-2. 每個 options class 加 `DeepClone()` + `Validate(name)` 兩個方法
+2. 每個 options class 加 `DeepClone()` + `Validate(name)` 兩個方法（後續改成 `ICloneable.Clone()`）
 3. options unit tests（每個 class round-trip + mutation isolation + Validate 正反向）
 4. `GeodeClientOptionsValidator` 縮成轉發 `opts.Validate(name)` 的 thin wrapper(保留 DI 註冊以維持 `ValidateOnStart` pipeline)
 5. 重塑 `IGeodeCacheFactory` interface（5 個成員）

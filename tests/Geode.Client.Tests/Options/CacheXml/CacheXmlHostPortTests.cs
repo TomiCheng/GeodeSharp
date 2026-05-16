@@ -5,23 +5,23 @@ namespace Geode.Client.Tests.Options.CacheXml;
 
 public class CacheXmlHostPortTests
 {
-    // ── DeepClone ─────────────────────────────────────────────────
+    // ── Clone ─────────────────────────────────────────────────
 
     [Fact]
-    public void DeepClone_copies_values()
+    public void Clone_copies_values()
     {
         var original = new CacheXmlHostPort { Host = "h", Port = 42 };
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         Assert.Equal("h", clone.Host);
         Assert.Equal(42, clone.Port);
     }
 
     [Fact]
-    public void DeepClone_mutating_clone_does_not_affect_original()
+    public void Clone_mutating_clone_does_not_affect_original()
     {
         var original = new CacheXmlHostPort { Host = "h", Port = 42 };
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         clone.Host = "mutated";
         clone.Port = 9999;

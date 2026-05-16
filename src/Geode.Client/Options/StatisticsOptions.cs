@@ -10,8 +10,20 @@ namespace Geode.Client.Options;
 /// <c>EventCounters</c> / OpenTelemetry, so this whole group is on the
 /// deletion shortlist. Remove once we confirm no consumer reads from it.
 /// </remarks>
-public class StatisticsOptions
+public class StatisticsOptions : ICloneable
 {
+    public StatisticsOptions() { }
+
+    public StatisticsOptions(StatisticsOptions other)
+    {
+        Enabled = other.Enabled;
+        SampleInterval = other.SampleInterval;
+        ArchiveFile = other.ArchiveFile;
+        FileSizeLimit = other.FileSizeLimit;
+        DiskSpaceLimit = other.DiskSpaceLimit;
+        TimeStatisticsEnabled = other.TimeStatisticsEnabled;
+    }
+
     /// <summary>
     /// Whether to write a statistics archive at all. Mirrors cppcache
     /// <c>statistic-sampling-enabled</c>; default <c>false</c>.
@@ -50,8 +62,9 @@ public class StatisticsOptions
     /// </summary>
     public bool TimeStatisticsEnabled { get; set; }
 
-    /// <summary>Deep clone. Only primitives / string / TimeSpan — MemberwiseClone is sufficient.</summary>
-    public StatisticsOptions DeepClone() => (StatisticsOptions)MemberwiseClone();
+    /// <summary>Deep clone via copy constructor.</summary>
+    public StatisticsOptions Clone() => new(this);
+    object ICloneable.Clone() => Clone();
 
     /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
     public IEnumerable<string> Validate(string prefix)

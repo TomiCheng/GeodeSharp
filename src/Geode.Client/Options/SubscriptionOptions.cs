@@ -6,8 +6,21 @@ namespace Geode.Client.Options;
 /// <c>SystemProperties</c>. The whole group is dormant until Phase 12+
 /// adds CQ / register-interest / event listeners.
 /// </summary>
-public class SubscriptionOptions
+public class SubscriptionOptions : ICloneable
 {
+    public SubscriptionOptions() { }
+
+    public SubscriptionOptions(SubscriptionOptions other)
+    {
+        DurableClientId = other.DurableClientId;
+        DurableTimeout = other.DurableTimeout;
+        AutoReadyForEvents = other.AutoReadyForEvents;
+        RedundancyMonitorInterval = other.RedundancyMonitorInterval;
+        NotifyAckInterval = other.NotifyAckInterval;
+        NotifyDupCheckLife = other.NotifyDupCheckLife;
+        ConflateEvents = other.ConflateEvents;
+    }
+
     /// <summary>
     /// Stable client identifier that lets the server retain this client's
     /// subscription queue across reconnects. Mirrors cppcache
@@ -70,8 +83,9 @@ public class SubscriptionOptions
     /// </summary>
     public bool? ConflateEvents { get; set; }
 
-    /// <summary>Deep clone. Only primitives / string / TimeSpan / nullable — MemberwiseClone is sufficient.</summary>
-    public SubscriptionOptions DeepClone() => (SubscriptionOptions)MemberwiseClone();
+    /// <summary>Deep clone via copy constructor.</summary>
+    public SubscriptionOptions Clone() => new(this);
+    object ICloneable.Clone() => Clone();
 
     /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
     public IEnumerable<string> Validate(string prefix)

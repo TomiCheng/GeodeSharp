@@ -6,7 +6,7 @@ namespace Geode.Client.Tests.Options.CacheXml;
 public class CacheXmlPersistenceManagerOptionsTests
 {
     [Fact]
-    public void DeepClone_copies_base_and_subclass_state()
+    public void Clone_copies_base_and_subclass_state()
     {
         var original = new CacheXmlPersistenceManagerOptions
         {
@@ -14,7 +14,7 @@ public class CacheXmlPersistenceManagerOptionsTests
             LibraryFunctionName = "createPm",
             Properties = { ["disk-dir"] = "/var/cache", ["max-disk-size"] = "1G" },
         };
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         Assert.Equal("pm", clone.LibraryName);
         Assert.Equal("createPm", clone.LibraryFunctionName);
@@ -23,23 +23,23 @@ public class CacheXmlPersistenceManagerOptionsTests
     }
 
     [Fact]
-    public void DeepClone_returns_subclass_type_via_covariant_return()
+    public void Clone_returns_subclass_type_via_covariant_return()
     {
         // Static type is the subclass — no cast needed.
         var original = new CacheXmlPersistenceManagerOptions();
-        CacheXmlPersistenceManagerOptions clone = original.DeepClone();
+        CacheXmlPersistenceManagerOptions clone = original.Clone();
 
         Assert.NotNull(clone);
     }
 
     [Fact]
-    public void DeepClone_mutating_clone_dict_does_not_affect_original()
+    public void Clone_mutating_clone_dict_does_not_affect_original()
     {
         var original = new CacheXmlPersistenceManagerOptions
         {
             Properties = { ["k"] = "v" },
         };
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         Assert.NotSame(original.Properties, clone.Properties);
 

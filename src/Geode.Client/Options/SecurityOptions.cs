@@ -13,8 +13,17 @@ namespace Geode.Client.Options;
 /// likely to be deleted before Phase 9 (auth) lands.
 /// </para>
 /// </remarks>
-public class SecurityOptions
+public class SecurityOptions : ICloneable
 {
+    public SecurityOptions() { }
+
+    public SecurityOptions(SecurityOptions other)
+    {
+        ClientDhAlgo = other.ClientDhAlgo;
+        ClientKsPath = other.ClientKsPath;
+        Properties = new Dictionary<string, string>(other.Properties);
+    }
+
     /// <summary>
     /// Diffie-Hellman algorithm used to encrypt credentials in the
     /// handshake. Mirrors cppcache <c>security-client-dhalgo</c>;
@@ -34,21 +43,11 @@ public class SecurityOptions
     /// Mirrors cppcache's <c>security-*</c> property prefix bucket
     /// (<c>m_securityPropertiesPtr</c>).
     /// </summary>
-    /// <remarks>
-    /// Settable (rather than init-only) so <see cref="DeepClone"/> can
-    /// reassign with a new dict instance — <see cref="object.MemberwiseClone"/>
-    /// copies the reference only, leaving the clone aliased to the
-    /// original until we replace it.
-    /// </remarks>
     public Dictionary<string, string> Properties { get; set; } = new();
 
-    /// <summary>Deep clone. Strings + Dictionary&lt;string,string&gt; — shallow MemberwiseClone then dict copy.</summary>
-    public SecurityOptions DeepClone()
-    {
-        var clone = (SecurityOptions)MemberwiseClone();
-        clone.Properties = new Dictionary<string, string>(Properties);
-        return clone;
-    }
+    /// <summary>Deep clone via copy constructor.</summary>
+    public SecurityOptions Clone() => new(this);
+    object ICloneable.Clone() => Clone();
 
     /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
     public IEnumerable<string> Validate(string prefix)

@@ -24,10 +24,10 @@ public class GeodeClientOptionsTests
         };
     }
 
-    // ── DeepClone ─────────────────────────────────────────────────
+    // ── Clone ─────────────────────────────────────────────────
 
     [Fact]
-    public void DeepClone_copies_root_primitives()
+    public void Clone_copies_root_primitives()
     {
         var original = MakeValid();
         original.Name = "n";
@@ -35,7 +35,7 @@ public class GeodeClientOptionsTests
         original.ThreadPoolSize = 16;
         original.EnableChunkHandlerThread = true;
 
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         Assert.Equal("n", clone.Name);
         Assert.Equal("/file", clone.CacheXmlFile);
@@ -44,10 +44,10 @@ public class GeodeClientOptionsTests
     }
 
     [Fact]
-    public void DeepClone_creates_independent_sub_options()
+    public void Clone_creates_independent_sub_options()
     {
         var original = MakeValid();
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         // Every sub-options is a distinct instance.
         Assert.NotSame(original.Pool, clone.Pool);
@@ -64,20 +64,20 @@ public class GeodeClientOptionsTests
     }
 
     [Fact]
-    public void DeepClone_with_null_CacheXml_leaves_clone_null()
+    public void Clone_with_null_CacheXml_leaves_clone_null()
     {
         var original = new GeodeClientOptions();   // CacheXml defaults to null
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         Assert.Null(clone.CacheXml);
     }
 
     [Fact]
-    public void DeepClone_mutating_clone_does_not_affect_original()
+    public void Clone_mutating_clone_does_not_affect_original()
     {
         var original = MakeValid();
         original.Security.Properties["user"] = "alice";
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         clone.Name = "mutated";
         clone.Pool.ConnectionPoolSize = 99;

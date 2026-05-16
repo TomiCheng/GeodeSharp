@@ -15,8 +15,21 @@ namespace Geode.Client.Options;
 /// different sources (<c>SystemProperties</c> vs <c>PoolFactory</c> /
 /// <c>CacheXmlCreation</c>) — collapsing them would hide that.
 /// </remarks>
-public class CacheXmlOptions
+public class CacheXmlOptions : ICloneable
 {
+    public CacheXmlOptions() { }
+
+    public CacheXmlOptions(CacheXmlOptions other)
+    {
+        Endpoints = other.Endpoints;
+        RedundancyLevel = other.RedundancyLevel;
+        Version = other.Version;
+        Pools = other.Pools.Select(p => p.Clone()).ToList();
+        Regions = other.Regions.Select(r => r.Clone()).ToList();
+        Pdx = other.Pdx.Clone();
+        NamedAttributes = other.NamedAttributes.ToDictionary(kv => kv.Key, kv => kv.Value.Clone());
+    }
+
     /// <summary>
     /// Root <c>&lt;client-cache endpoints&gt;</c> attribute. Legacy
     /// inline endpoint list; default empty.
@@ -40,7 +53,6 @@ public class CacheXmlOptions
     /// (<c>&lt;pool&gt;</c>). cppcache stores these in
     /// <c>PoolManager</c>, keyed by <see cref="CacheXmlPoolOptions.Name"/>.
     /// </summary>
-    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
     public List<CacheXmlPoolOptions> Pools { get; set; } = new();
 
     /// <summary>
@@ -48,13 +60,11 @@ public class CacheXmlOptions
     /// (<c>&lt;region&gt;</c>). Regions can nest via
     /// <see cref="CacheXmlRegionOptions.ChildRegions"/>.
     /// </summary>
-    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
     public List<CacheXmlRegionOptions> Regions { get; set; } = new();
 
     /// <summary>
     /// PDX defaults declared in the XML (<c>&lt;pdx&gt;</c>).
     /// </summary>
-    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
     public CacheXmlPdxOptions Pdx { get; set; } = new();
 
     /// <summary>
@@ -75,19 +85,11 @@ public class CacheXmlOptions
     /// today; only the outer <see cref="CacheXmlRegionOptions.RefId"/>
     /// triggers resolution.
     /// </remarks>
-    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
     public Dictionary<string, CacheXmlRegionAttributesOptions> NamedAttributes { get; set; } = new();
 
-    /// <summary>Deep clone. Lists / dict / nested <see cref="CacheXmlPdxOptions"/> are deep-copied.</summary>
-    public CacheXmlOptions DeepClone()
-    {
-        var clone = (CacheXmlOptions)MemberwiseClone();
-        clone.Pools = Pools.Select(p => p.DeepClone()).ToList();
-        clone.Regions = Regions.Select(r => r.DeepClone()).ToList();
-        clone.Pdx = Pdx.DeepClone();
-        clone.NamedAttributes = NamedAttributes.ToDictionary(kv => kv.Key, kv => kv.Value.DeepClone());
-        return clone;
-    }
+    /// <summary>Deep clone via copy constructor.</summary>
+    public CacheXmlOptions Clone() => new(this);
+    object ICloneable.Clone() => Clone();
 
     /// <summary>
     /// Validate. Rules migrated from <c>GeodeClientOptionsValidator</c>:

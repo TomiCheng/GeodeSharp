@@ -6,8 +6,16 @@ namespace Geode.Client.Options;
 /// <c>SystemProperties</c> PDX flag) — different cppcache source
 /// (<c>CacheXmlParser</c> vs <c>SystemProperties</c>).
 /// </summary>
-public class CacheXmlPdxOptions
+public class CacheXmlPdxOptions : ICloneable
 {
+    public CacheXmlPdxOptions() { }
+
+    public CacheXmlPdxOptions(CacheXmlPdxOptions other)
+    {
+        IgnoreUnreadFields = other.IgnoreUnreadFields;
+        ReadSerialized = other.ReadSerialized;
+    }
+
     /// <summary>
     /// <c>ignore-unread-fields</c>. When true, fields the local schema
     /// doesn't know about are dropped on read instead of being
@@ -21,8 +29,9 @@ public class CacheXmlPdxOptions
     /// </summary>
     public bool? ReadSerialized { get; set; }
 
-    /// <summary>Deep clone. Nullable bools — MemberwiseClone is sufficient.</summary>
-    public CacheXmlPdxOptions DeepClone() => (CacheXmlPdxOptions)MemberwiseClone();
+    /// <summary>Deep clone via copy constructor.</summary>
+    public CacheXmlPdxOptions Clone() => new(this);
+    object ICloneable.Clone() => Clone();
 
     /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
     public IEnumerable<string> Validate(string prefix)

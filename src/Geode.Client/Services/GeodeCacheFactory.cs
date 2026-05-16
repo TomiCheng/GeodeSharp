@@ -90,11 +90,11 @@ internal sealed class GeodeCacheFactory(
             var options = baseOptions;
             if (action is not null)
             {
-                // DeepClone so action mutations stay local to this
-                // cache — IOptionsMonitor's cached options instance is
-                // not touched, so a second Create against the same
+                // Clone so action mutations stay local to this cache —
+                // IOptionsMonitor's cached options instance is not
+                // touched, so a second Create against the same
                 // configName starts from a fresh copy of the original.
-                var clone = baseOptions.DeepClone();
+                var clone = baseOptions.Clone();
                 action(rootServiceProvider, clone);
 
                 // Validate the modified clone. configName is the

@@ -5,8 +5,39 @@ namespace Geode.Client.Options;
 /// because the XSD defaults are unspecified — null means "fall back to
 /// whatever cppcache decides".
 /// </summary>
-public class CacheXmlRegionAttributesOptions
+public class CacheXmlRegionAttributesOptions : ICloneable
 {
+    public CacheXmlRegionAttributesOptions() { }
+
+    public CacheXmlRegionAttributesOptions(CacheXmlRegionAttributesOptions other)
+    {
+        CachingEnabled = other.CachingEnabled;
+        CloningEnabled = other.CloningEnabled;
+        Scope = other.Scope;
+        InitialCapacity = other.InitialCapacity;
+        LoadFactor = other.LoadFactor;
+        ConcurrencyLevel = other.ConcurrencyLevel;
+        LruEntriesLimit = other.LruEntriesLimit;
+        DiskPolicy = other.DiskPolicy;
+        Endpoints = other.Endpoints;
+        ClientNotification = other.ClientNotification;
+        PoolName = other.PoolName;
+        ConcurrencyChecksEnabled = other.ConcurrencyChecksEnabled;
+        RefId = other.RefId;
+        RegionTimeToLive = other.RegionTimeToLive?.Clone();
+        RegionIdleTime = other.RegionIdleTime?.Clone();
+        EntryTimeToLive = other.EntryTimeToLive?.Clone();
+        EntryIdleTime = other.EntryIdleTime?.Clone();
+        // Virtual Clone() on CacheXmlLibraryOptions dispatches to the
+        // runtime subtype (e.g. CacheXmlPersistenceManagerOptions),
+        // so polymorphism is preserved without a cast.
+        PartitionResolver = other.PartitionResolver?.Clone();
+        CacheLoader = other.CacheLoader?.Clone();
+        CacheListener = other.CacheListener?.Clone();
+        CacheWriter = other.CacheWriter?.Clone();
+        PersistenceManager = other.PersistenceManager?.Clone();
+    }
+
     /// <summary><c>caching-enabled</c>.</summary>
     public bool? CachingEnabled { get; set; }
 
@@ -80,26 +111,9 @@ public class CacheXmlRegionAttributesOptions
     /// <summary><c>&lt;persistence-manager&gt;</c>.</summary>
     public CacheXmlPersistenceManagerOptions? PersistenceManager { get; set; }
 
-    /// <summary>
-    /// Deep clone. All nested options are nullable — clone each
-    /// independently. Library options dispatch polymorphically (a slot
-    /// holding a <see cref="CacheXmlPersistenceManagerOptions"/> clones
-    /// as that subtype).
-    /// </summary>
-    public CacheXmlRegionAttributesOptions DeepClone()
-    {
-        var clone = (CacheXmlRegionAttributesOptions)MemberwiseClone();
-        clone.RegionTimeToLive = RegionTimeToLive?.DeepClone();
-        clone.RegionIdleTime = RegionIdleTime?.DeepClone();
-        clone.EntryTimeToLive = EntryTimeToLive?.DeepClone();
-        clone.EntryIdleTime = EntryIdleTime?.DeepClone();
-        clone.PartitionResolver = PartitionResolver?.DeepClone();
-        clone.CacheLoader = CacheLoader?.DeepClone();
-        clone.CacheListener = CacheListener?.DeepClone();
-        clone.CacheWriter = CacheWriter?.DeepClone();
-        clone.PersistenceManager = (CacheXmlPersistenceManagerOptions?)PersistenceManager?.DeepClone();
-        return clone;
-    }
+    /// <summary>Deep clone via copy constructor.</summary>
+    public CacheXmlRegionAttributesOptions Clone() => new(this);
+    object ICloneable.Clone() => Clone();
 
     /// <summary>Validate. Delegates to non-null nested options; this class has no own structural rules.</summary>
     public IEnumerable<string> Validate(string prefix)

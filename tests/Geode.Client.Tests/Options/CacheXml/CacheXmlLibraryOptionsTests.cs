@@ -6,14 +6,14 @@ namespace Geode.Client.Tests.Options.CacheXml;
 public class CacheXmlLibraryOptionsTests
 {
     [Fact]
-    public void DeepClone_copies_values()
+    public void Clone_copies_values()
     {
         var original = new CacheXmlLibraryOptions
         {
             LibraryName = "mylib",
             LibraryFunctionName = "createCacheLoader",
         };
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         Assert.Equal("mylib", clone.LibraryName);
         Assert.Equal("createCacheLoader", clone.LibraryFunctionName);
@@ -21,7 +21,7 @@ public class CacheXmlLibraryOptionsTests
     }
 
     [Fact]
-    public void DeepClone_on_subclass_via_base_reference_returns_subtype()
+    public void Clone_on_subclass_via_base_reference_returns_subtype()
     {
         // Polymorphic clone — slots typed as CacheXmlLibraryOptions
         // (e.g. RegionAttributes.CacheLoader) may hold a
@@ -34,7 +34,7 @@ public class CacheXmlLibraryOptionsTests
             Properties = { ["disk-dir"] = "/var/cache" },
         };
 
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         Assert.IsType<CacheXmlPersistenceManagerOptions>(clone);
         var pmClone = (CacheXmlPersistenceManagerOptions)clone;

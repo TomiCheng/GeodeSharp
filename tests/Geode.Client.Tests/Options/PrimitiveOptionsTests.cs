@@ -9,7 +9,7 @@ namespace Geode.Client.Tests.Options;
 /// collections, no validation rules. The shared pattern is:
 /// <list type="number">
 ///   <item>Set a non-default value on each property.</item>
-///   <item>DeepClone — assert each property round-trips.</item>
+///   <item>Clone — assert each property round-trips.</item>
 ///   <item>Validate returns empty (parity stubs, no structural rules yet).</item>
 /// </list>
 /// Per-class tests live as nested classes for keeping the file
@@ -20,7 +20,7 @@ public class PrimitiveOptionsTests
     public class SubscriptionOptionsTests
     {
         [Fact]
-        public void DeepClone_round_trips()
+        public void Clone_round_trips()
         {
             var original = new SubscriptionOptions
             {
@@ -32,7 +32,7 @@ public class PrimitiveOptionsTests
                 NotifyDupCheckLife = TimeSpan.FromMinutes(2),
                 ConflateEvents = true,
             };
-            var clone = original.DeepClone();
+            var clone = original.Clone();
 
             Assert.Equal("client-1", clone.DurableClientId);
             Assert.Equal(TimeSpan.FromMinutes(10), clone.DurableTimeout);
@@ -44,10 +44,10 @@ public class PrimitiveOptionsTests
         }
 
         [Fact]
-        public void DeepClone_mutation_isolation()
+        public void Clone_mutation_isolation()
         {
             var original = new SubscriptionOptions { DurableClientId = "a" };
-            var clone = original.DeepClone();
+            var clone = original.Clone();
             clone.DurableClientId = "mutated";
             Assert.Equal("a", original.DurableClientId);
         }
@@ -59,7 +59,7 @@ public class PrimitiveOptionsTests
     public class TlsOptionsTests
     {
         [Fact]
-        public void DeepClone_round_trips()
+        public void Clone_round_trips()
         {
             var original = new TlsOptions
             {
@@ -68,7 +68,7 @@ public class PrimitiveOptionsTests
                 KeyStorePassword = "pw",
                 TrustStorePath = "/ts",
             };
-            var clone = original.DeepClone();
+            var clone = original.Clone();
 
             Assert.True(clone.Enabled);
             Assert.Equal("/ks", clone.KeyStorePath);
@@ -83,7 +83,7 @@ public class PrimitiveOptionsTests
     public class LogOptionsTests
     {
         [Fact]
-        public void DeepClone_round_trips()
+        public void Clone_round_trips()
         {
             var original = new LogOptions
             {
@@ -92,7 +92,7 @@ public class PrimitiveOptionsTests
                 FileSizeLimit = 100,
                 DiskSpaceLimit = 1000,
             };
-            var clone = original.DeepClone();
+            var clone = original.Clone();
 
             Assert.Equal("/log", clone.Filename);
             Assert.Equal(LogLevel.Debug, clone.Level);
@@ -107,7 +107,7 @@ public class PrimitiveOptionsTests
     public class StatisticsOptionsTests
     {
         [Fact]
-        public void DeepClone_round_trips()
+        public void Clone_round_trips()
         {
             var original = new StatisticsOptions
             {
@@ -118,7 +118,7 @@ public class PrimitiveOptionsTests
                 DiskSpaceLimit = 500,
                 TimeStatisticsEnabled = true,
             };
-            var clone = original.DeepClone();
+            var clone = original.Clone();
 
             Assert.True(clone.Enabled);
             Assert.Equal(TimeSpan.FromSeconds(5), clone.SampleInterval);
@@ -135,10 +135,10 @@ public class PrimitiveOptionsTests
     public class TxOptionsTests
     {
         [Fact]
-        public void DeepClone_round_trips()
+        public void Clone_round_trips()
         {
             var original = new TxOptions { SuspendedTimeout = TimeSpan.FromMinutes(2) };
-            var clone = original.DeepClone();
+            var clone = original.Clone();
             Assert.Equal(TimeSpan.FromMinutes(2), clone.SuspendedTimeout);
         }
 
@@ -149,7 +149,7 @@ public class PrimitiveOptionsTests
     public class HeapOptionsTests
     {
         [Fact]
-        public void DeepClone_round_trips()
+        public void Clone_round_trips()
         {
             var original = new HeapOptions
             {
@@ -157,7 +157,7 @@ public class PrimitiveOptionsTests
                 LRUDelta = 20,
                 TombstoneTimeout = TimeSpan.FromMinutes(8),
             };
-            var clone = original.DeepClone();
+            var clone = original.Clone();
 
             Assert.Equal(1024ul, clone.LRULimit);
             Assert.Equal(20, clone.LRUDelta);
@@ -171,10 +171,10 @@ public class PrimitiveOptionsTests
     public class PdxOptionsTests
     {
         [Fact]
-        public void DeepClone_round_trips()
+        public void Clone_round_trips()
         {
             var original = new PdxOptions { ClearTypeIdsOnDisconnect = true };
-            var clone = original.DeepClone();
+            var clone = original.Clone();
             Assert.True(clone.ClearTypeIdsOnDisconnect);
         }
 
@@ -185,7 +185,7 @@ public class PrimitiveOptionsTests
     public class PoolOptionsTests
     {
         [Fact]
-        public void DeepClone_round_trips()
+        public void Clone_round_trips()
         {
             var original = new PoolOptions
             {
@@ -197,7 +197,7 @@ public class PrimitiveOptionsTests
                 ShuffleEndpoints = false,
                 BucketWaitTimeout = TimeSpan.FromSeconds(2),
             };
-            var clone = original.DeepClone();
+            var clone = original.Clone();
 
             Assert.Equal(10, clone.ConnectionPoolSize);
             Assert.Equal(TimeSpan.FromSeconds(30), clone.ConnectTimeout);
@@ -215,14 +215,14 @@ public class PrimitiveOptionsTests
     public class CacheXmlExpirationOptionsTests
     {
         [Fact]
-        public void DeepClone_round_trips()
+        public void Clone_round_trips()
         {
             var original = new CacheXmlExpirationOptions
             {
                 Timeout = TimeSpan.FromMinutes(15),
                 Action = CacheXmlExpirationAction.Invalidate,
             };
-            var clone = original.DeepClone();
+            var clone = original.Clone();
 
             Assert.Equal(TimeSpan.FromMinutes(15), clone.Timeout);
             Assert.Equal(CacheXmlExpirationAction.Invalidate, clone.Action);
@@ -235,14 +235,14 @@ public class PrimitiveOptionsTests
     public class CacheXmlPdxOptionsTests
     {
         [Fact]
-        public void DeepClone_round_trips()
+        public void Clone_round_trips()
         {
             var original = new CacheXmlPdxOptions
             {
                 IgnoreUnreadFields = true,
                 ReadSerialized = false,
             };
-            var clone = original.DeepClone();
+            var clone = original.Clone();
 
             Assert.Equal(true, clone.IgnoreUnreadFields);
             Assert.Equal(false, clone.ReadSerialized);

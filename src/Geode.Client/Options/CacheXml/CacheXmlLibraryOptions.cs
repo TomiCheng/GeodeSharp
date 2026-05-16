@@ -11,8 +11,16 @@ namespace Geode.Client.Options;
 /// translates to a delegate / DI-registered type; the field is kept
 /// here for parity only and is unlikely to ship in the .NET API.
 /// </remarks>
-public class CacheXmlLibraryOptions
+public class CacheXmlLibraryOptions : ICloneable
 {
+    public CacheXmlLibraryOptions() { }
+
+    public CacheXmlLibraryOptions(CacheXmlLibraryOptions other)
+    {
+        LibraryName = other.LibraryName;
+        LibraryFunctionName = other.LibraryFunctionName;
+    }
+
     /// <summary><c>library-name</c> attribute (optional).</summary>
     public string LibraryName { get; set; } = string.Empty;
 
@@ -20,19 +28,14 @@ public class CacheXmlLibraryOptions
     public string LibraryFunctionName { get; set; } = string.Empty;
 
     /// <summary>
-    /// Deep clone. Virtual so subclasses (e.g.
-    /// <see cref="CacheXmlPersistenceManagerOptions"/>) can extend
-    /// it; properties typed as <see cref="CacheXmlLibraryOptions"/>
-    /// will clone polymorphically.
+    /// Deep clone via copy constructor. Virtual so a slot typed as
+    /// <see cref="CacheXmlLibraryOptions"/> but holding a subclass
+    /// instance (e.g. <see cref="CacheXmlPersistenceManagerOptions"/>)
+    /// dispatches to the subclass's <c>Clone</c> and copies its
+    /// extra members.
     /// </summary>
-    public virtual CacheXmlLibraryOptions DeepClone()
-    {
-        // Only primitives + string at this level — MemberwiseClone
-        // preserves the runtime type, so subclass-only fields come
-        // along (subclasses override DeepClone to deep-copy their
-        // own reference-typed members).
-        return (CacheXmlLibraryOptions)MemberwiseClone();
-    }
+    public virtual CacheXmlLibraryOptions Clone() => new(this);
+    object ICloneable.Clone() => Clone();
 
     /// <summary>
     /// Validate. No structural rules at this level (cppcache parity

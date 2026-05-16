@@ -36,8 +36,18 @@ namespace Geode.Client.Options;
 /// payload our own reader would refuse.
 /// </para>
 /// </remarks>
-public class SerializationOptions
+public class SerializationOptions : ICloneable
 {
+    public SerializationOptions() { }
+
+    public SerializationOptions(SerializationOptions other)
+    {
+        MaxDepth = other.MaxDepth;
+        MaxArrayLength = other.MaxArrayLength;
+        MaxBytesLength = other.MaxBytesLength;
+        MaxStringLength = other.MaxStringLength;
+    }
+
     /// <summary>
     /// Maximum nested-container depth allowed when serialising or
     /// deserialising wire payloads. Default <b>64</b> (matches
@@ -152,8 +162,9 @@ public class SerializationOptions
     /// </remarks>
     public int MaxStringLength { get; set; } = 1_000_000;
 
-    /// <summary>Deep clone. Only primitives — MemberwiseClone is sufficient.</summary>
-    public SerializationOptions DeepClone() => (SerializationOptions)MemberwiseClone();
+    /// <summary>Deep clone via copy constructor.</summary>
+    public SerializationOptions Clone() => new(this);
+    object ICloneable.Clone() => Clone();
 
     /// <summary>
     /// Validate this section. Rules migrated from

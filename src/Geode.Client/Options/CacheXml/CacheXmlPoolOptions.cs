@@ -12,8 +12,36 @@ namespace Geode.Client.Options;
 /// "explicitly set" — when the field is null, cppcache falls back to its
 /// <see cref="PoolOptions"/>-equivalent global default.
 /// </remarks>
-public class CacheXmlPoolOptions
+public class CacheXmlPoolOptions : ICloneable
 {
+    public CacheXmlPoolOptions() { }
+
+    public CacheXmlPoolOptions(CacheXmlPoolOptions other)
+    {
+        Name = other.Name;
+        FreeConnectionTimeout = other.FreeConnectionTimeout;
+        LoadConditioningInterval = other.LoadConditioningInterval;
+        MinConnections = other.MinConnections;
+        MaxConnections = other.MaxConnections;
+        RetryAttempts = other.RetryAttempts;
+        IdleTimeout = other.IdleTimeout;
+        PingInterval = other.PingInterval;
+        ReadTimeout = other.ReadTimeout;
+        ServerGroup = other.ServerGroup;
+        SocketBufferSize = other.SocketBufferSize;
+        SubscriptionEnabled = other.SubscriptionEnabled;
+        SubscriptionMessageTrackingTimeout = other.SubscriptionMessageTrackingTimeout;
+        SubscriptionAckInterval = other.SubscriptionAckInterval;
+        SubscriptionRedundancy = other.SubscriptionRedundancy;
+        StatisticInterval = other.StatisticInterval;
+        PrSingleHopEnabled = other.PrSingleHopEnabled;
+        ThreadLocalConnections = other.ThreadLocalConnections;
+        MultiuserAuthentication = other.MultiuserAuthentication;
+        UpdateLocatorListInterval = other.UpdateLocatorListInterval;
+        Locators = other.Locators.Select(h => h.Clone()).ToList();
+        Servers = other.Servers.Select(h => h.Clone()).ToList();
+    }
+
     /// <summary><c>name</c> attribute (required). Region's
     /// <c>pool-name</c> references this.</summary>
     public string Name { get; set; } = string.Empty;
@@ -83,24 +111,17 @@ public class CacheXmlPoolOptions
     /// <c>&lt;locator&gt;</c> children. Pool must have at least one of
     /// <see cref="Locators"/> or <see cref="Servers"/> per XSD.
     /// </summary>
-    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
     public List<CacheXmlHostPort> Locators { get; set; } = new();
 
     /// <summary>
     /// <c>&lt;server&gt;</c> children. Direct server endpoints for
     /// pools that bypass locators.
     /// </summary>
-    /// <remarks>Settable so <see cref="DeepClone"/> can reassign — see <see cref="DeepClone"/>.</remarks>
     public List<CacheXmlHostPort> Servers { get; set; } = new();
 
-    /// <summary>Deep clone. Nested HostPort lists are deep-copied.</summary>
-    public CacheXmlPoolOptions DeepClone()
-    {
-        var clone = (CacheXmlPoolOptions)MemberwiseClone();
-        clone.Locators = Locators.Select(h => h.DeepClone()).ToList();
-        clone.Servers = Servers.Select(h => h.DeepClone()).ToList();
-        return clone;
-    }
+    /// <summary>Deep clone via copy constructor.</summary>
+    public CacheXmlPoolOptions Clone() => new(this);
+    object ICloneable.Clone() => Clone();
 
     /// <summary>
     /// Validate. Rules migrated from <c>GeodeClientOptionsValidator</c>:

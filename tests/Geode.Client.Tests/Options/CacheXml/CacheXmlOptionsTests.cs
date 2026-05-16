@@ -20,17 +20,17 @@ public class CacheXmlOptionsTests
         };
     }
 
-    // ── DeepClone ─────────────────────────────────────────────────
+    // ── Clone ─────────────────────────────────────────────────
 
     [Fact]
-    public void DeepClone_copies_primitive_attributes()
+    public void Clone_copies_primitive_attributes()
     {
         var original = MakeValid();
         original.Endpoints = "ep";
         original.RedundancyLevel = "1";
         original.Version = "1.0";
 
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         Assert.Equal("ep", clone.Endpoints);
         Assert.Equal("1", clone.RedundancyLevel);
@@ -38,13 +38,13 @@ public class CacheXmlOptionsTests
     }
 
     [Fact]
-    public void DeepClone_creates_independent_collections()
+    public void Clone_creates_independent_collections()
     {
         var original = MakeValid();
         original.Regions.Add(new CacheXmlRegionOptions { Name = "r" });
         original.NamedAttributes["tmpl"] = new CacheXmlRegionAttributesOptions { PoolName = "p1" };
 
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         Assert.NotSame(original.Pools, clone.Pools);
         Assert.NotSame(original.Regions, clone.Regions);
@@ -57,13 +57,13 @@ public class CacheXmlOptionsTests
     }
 
     [Fact]
-    public void DeepClone_mutating_clone_does_not_affect_original()
+    public void Clone_mutating_clone_does_not_affect_original()
     {
         var original = MakeValid();
         original.Regions.Add(new CacheXmlRegionOptions { Name = "r" });
         original.NamedAttributes["tmpl"] = new CacheXmlRegionAttributesOptions { PoolName = "p1" };
 
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         clone.Pools.Add(new CacheXmlPoolOptions { Name = "p2" });
         clone.Pools[0].Name = "mutated";

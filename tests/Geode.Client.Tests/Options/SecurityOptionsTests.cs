@@ -6,7 +6,7 @@ namespace Geode.Client.Tests.Options;
 public class SecurityOptionsTests
 {
     [Fact]
-    public void DeepClone_copies_strings_and_dictionary_entries()
+    public void Clone_copies_strings_and_dictionary_entries()
     {
         var original = new SecurityOptions
         {
@@ -14,7 +14,7 @@ public class SecurityOptionsTests
             ClientKsPath = "/path",
             Properties = { ["user"] = "alice", ["password"] = "s3cret" },
         };
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         Assert.Equal("DH", clone.ClientDhAlgo);
         Assert.Equal("/path", clone.ClientKsPath);
@@ -23,19 +23,19 @@ public class SecurityOptionsTests
     }
 
     [Fact]
-    public void DeepClone_returns_different_dictionary_instance()
+    public void Clone_returns_different_dictionary_instance()
     {
         var original = new SecurityOptions { Properties = { ["k"] = "v" } };
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         Assert.NotSame(original.Properties, clone.Properties);
     }
 
     [Fact]
-    public void DeepClone_mutating_clone_does_not_affect_original()
+    public void Clone_mutating_clone_does_not_affect_original()
     {
         var original = new SecurityOptions { Properties = { ["k"] = "v" } };
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         clone.Properties["k"] = "mutated";
         clone.Properties.Add("k2", "v2");

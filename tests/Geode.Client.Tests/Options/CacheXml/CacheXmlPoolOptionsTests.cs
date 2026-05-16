@@ -5,7 +5,7 @@ namespace Geode.Client.Tests.Options.CacheXml;
 
 /// <summary>
 /// Tests for <see cref="CacheXmlPoolOptions"/>:
-/// <see cref="CacheXmlPoolOptions.DeepClone"/> (round-trip + mutation
+/// <see cref="CacheXmlPoolOptions.Clone"/> (round-trip + mutation
 /// isolation for the nested <c>Locators</c> / <c>Servers</c> lists)
 /// and <see cref="CacheXmlPoolOptions.Validate"/> (Name, locators+servers
 /// count, Min/Max connection bounds, recursion into HostPort entries).
@@ -21,10 +21,10 @@ public class CacheXmlPoolOptionsTests
         Servers = { new CacheXmlHostPort { Host = "server", Port = 40404 } },
     };
 
-    // ── DeepClone ─────────────────────────────────────────────────
+    // ── Clone ─────────────────────────────────────────────────
 
     [Fact]
-    public void DeepClone_copies_all_primitive_values()
+    public void Clone_copies_all_primitive_values()
     {
         var original = MakeValidPool();
         original.IdleTimeout = TimeSpan.FromSeconds(42);
@@ -32,7 +32,7 @@ public class CacheXmlPoolOptionsTests
         original.SocketBufferSize = 4096;
         original.SubscriptionEnabled = true;
 
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         Assert.Equal(original.Name, clone.Name);
         Assert.Equal(original.MinConnections, clone.MinConnections);
@@ -44,10 +44,10 @@ public class CacheXmlPoolOptionsTests
     }
 
     [Fact]
-    public void DeepClone_returns_different_list_instances()
+    public void Clone_returns_different_list_instances()
     {
         var original = MakeValidPool();
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         // Mutation-isolation precondition: lists are distinct references.
         Assert.NotSame(original.Locators, clone.Locators);
@@ -55,10 +55,10 @@ public class CacheXmlPoolOptionsTests
     }
 
     [Fact]
-    public void DeepClone_mutating_clone_does_not_affect_original()
+    public void Clone_mutating_clone_does_not_affect_original()
     {
         var original = MakeValidPool();
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         clone.Locators.Add(new CacheXmlHostPort { Host = "new-locator", Port = 11111 });
         clone.Servers[0].Host = "mutated-server";

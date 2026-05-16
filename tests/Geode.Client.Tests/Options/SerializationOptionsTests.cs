@@ -5,10 +5,10 @@ namespace Geode.Client.Tests.Options;
 
 public class SerializationOptionsTests
 {
-    // ── DeepClone ─────────────────────────────────────────────────
+    // ── Clone ─────────────────────────────────────────────────
 
     [Fact]
-    public void DeepClone_copies_values()
+    public void Clone_copies_values()
     {
         var original = new SerializationOptions
         {
@@ -17,7 +17,7 @@ public class SerializationOptionsTests
             MaxBytesLength = 5_000_000,
             MaxStringLength = 250_000,
         };
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         Assert.Equal(32, clone.MaxDepth);
         Assert.Equal(500_000, clone.MaxArrayLength);
@@ -26,10 +26,10 @@ public class SerializationOptionsTests
     }
 
     [Fact]
-    public void DeepClone_mutating_clone_does_not_affect_original()
+    public void Clone_mutating_clone_does_not_affect_original()
     {
         var original = new SerializationOptions { MaxDepth = 32 };
-        var clone = original.DeepClone();
+        var clone = original.Clone();
 
         clone.MaxDepth = 999;
 

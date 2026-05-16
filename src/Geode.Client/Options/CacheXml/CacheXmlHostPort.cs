@@ -5,19 +5,25 @@ namespace Geode.Client.Options;
 /// <c>&lt;locator&gt;</c> and <c>&lt;server&gt;</c> entries inside a
 /// <c>&lt;pool&gt;</c>.
 /// </summary>
-public class CacheXmlHostPort
+public class CacheXmlHostPort : ICloneable
 {
+    public CacheXmlHostPort() { }
+
+    public CacheXmlHostPort(CacheXmlHostPort other)
+    {
+        Host = other.Host;
+        Port = other.Port;
+    }
+
     /// <summary><c>host</c> attribute (required).</summary>
     public string Host { get; set; } = string.Empty;
 
     /// <summary><c>port</c> attribute (required, 0–65535).</summary>
     public int Port { get; set; }
 
-    /// <summary>
-    /// Deep clone. Leaf type — only primitives + string, so
-    /// <see cref="object.MemberwiseClone"/> is sufficient.
-    /// </summary>
-    public CacheXmlHostPort DeepClone() => (CacheXmlHostPort)MemberwiseClone();
+    /// <summary>Deep clone via copy constructor.</summary>
+    public CacheXmlHostPort Clone() => new(this);
+    object ICloneable.Clone() => Clone();
 
     /// <summary>
     /// Validate this entry. Failures are returned as path-prefixed

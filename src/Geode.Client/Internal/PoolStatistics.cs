@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Reflection;
@@ -65,6 +66,37 @@ internal class PoolStatistics(string poolName)
             elapsed.TotalSeconds,
             new KeyValuePair<string, object?>("poolName", poolName));
     }
+
+
+    // Gauges — pull-based ObservableGauge with a static reader registry
+    // keyed by poolName. cppcache uses push (`setCurPoolConnections` etc.)
+    // on each modify; .NET idiomatic pull lets the listener decide cadence
+    // and avoids missing a modify site.
+
+    // poolConnections (cppcache PoolStatistics.cpp:51-52, IntGauge m_poolSize).
+    private static readonly ConcurrentDictionary<string, Func<int>> _poolConnectionsReaders = new();
+
+    readonly static ObservableGauge<int> _poolConnections = _meter.CreateObservableGauge(
+        "PoolConnections",
+        observeValues: ObservePoolConnections,
+        unit: "connections",
+        description: "Current number of connections held by the pool. Mirrors cppcache `poolConnections` IntGauge (m_poolSize).");
+
+    private static IEnumerable<Measurement<int>> ObservePoolConnections()
+    {
+        foreach (var (name, reader) in _poolConnectionsReaders)
+        {
+            yield return new Measurement<int>(
+                reader(),
+                new KeyValuePair<string, object?>("poolName", name));
+        }
+    }
+
+    public void SetPoolConnectionsReader(Func<int> reader) =>
+        _poolConnectionsReaders[poolName] = reader;
+
+    public void ClearPoolConnectionsReader() =>
+        _poolConnectionsReaders.TryRemove(poolName, out _);
 
 
     // Activity

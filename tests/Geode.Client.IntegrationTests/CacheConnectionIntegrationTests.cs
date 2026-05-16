@@ -148,6 +148,64 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
     }
 
     [Fact]
+    public async Task PoolConnections_gauge_reports_current_pool_size()
+    {
+        using var cts = new CancellationTokenSource(TestTimeout);
+
+        // Subscribe before cache init so the ObservableGauge instrument
+        // is picked up regardless of static-field init ordering.
+        using var poolConnections = new MeterCapture("Geode.Client.Pool", "PoolConnections");
+
+        await using var services = new ServiceCollection()
+            .AddLogging()
+            .AddGeodeClient(config => config.Cache = new CacheOptions
+            {
+                Pools =
+                {
+                    new CachePoolOptions
+                    {
+                        Name = "testPool",
+                        Servers =
+                        {
+                            new CacheHostPortOptions
+                            {
+                                Host = _fx.LocatorHost,
+                                Port = _fx.ServerPort,
+                            },
+                        },
+                        IdleTimeout = TimeSpan.FromMilliseconds(100),
+                    },
+                },
+            })
+            .BuildServiceProvider();
+
+        var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();
+        await cache.EnsureInitializedAsync(cts.Token);
+
+        var pool = (ThinClientPoolDM)((Cache)cache).PoolManager.DefaultPool!;
+
+        // Wait for the conn-management loop to bring pool size to >= 1
+        // (same path as ConnManageLoop_opens_first_connection_against_real_server).
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < deadline && pool.PoolSize < 1)
+        {
+            await Task.Delay(50, cts.Token);
+        }
+        Assert.True(
+            pool.PoolSize >= 1,
+            $"Pool failed to open MinConnections within deadline; PoolSize={pool.PoolSize}.");
+
+        // Pull the gauge — ObservableGauge fires its callback synchronously
+        // and routes through the listener back into MeterCapture.LastValue.
+        poolConnections.Observe();
+        Assert.True(
+            poolConnections.LastValue >= 1,
+            $"Expected PoolConnections gauge >= 1 after pool opens MinConnections, got {poolConnections.LastValue}.");
+
+        await cache.CloseAsync(cts.Token);
+    }
+
+    [Fact]
     public async Task ConnManageLoop_opens_MinConnections_against_real_server()
     {
         using var cts = new CancellationTokenSource(TestTimeout);

@@ -207,6 +207,10 @@ internal sealed class ThinClientPoolDM(
         //   _endpoints (ConnManager.RemoveRefToTcrEndpointAsync). Phase
         //   1.1: rely on cache-scope dispose to cascade.
         _endpoints.Clear();
+
+        // 5c. Unregister the PoolConnections gauge reader so the static
+        // registry in PoolStatistics doesn't leak this pool's entry.
+        _stats.ClearPoolConnectionsReader();
     }
 
     // ── Lifecycle (override base + add pool-mode init) ──────────
@@ -229,6 +233,11 @@ internal sealed class ThinClientPoolDM(
         {
             return Task.CompletedTask;
         }
+
+        // Register the PoolConnections gauge reader so a listener sees
+        // a fresh value from the moment init completes (cppcache pushes
+        // via setCurPoolConnections; we pull). Cleared in DestroyAsync.
+        _stats.SetPoolConnectionsReader(() => Volatile.Read(ref _poolSize));
 
         // ── 2. Pool-level flags ─────────────────────────────────
         // cppcache equivalent (ThinClientPoolDM.cpp:217-224):

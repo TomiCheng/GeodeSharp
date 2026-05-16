@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using System.Threading.Channels;
 using Geode.Client.Options;
@@ -1134,16 +1135,7 @@ internal sealed class ThinClientPoolDM(
     private readonly SemaphoreSlim _updateLocatorSignal = new(0, int.MaxValue);
     private Task? _updateLocatorLoop;
     private PeriodicTimer? _updateLocatorTimer;
-    private int _updateLocatorTickCount;
     private ThinClientLocatorHelper? _locatorHelper;
-
-    /// <summary>
-    /// Test-only: number of updateLocatorList ticks that have entered
-    /// <see cref="UpdateLocatorsLocalAsync"/>. Same purpose as
-    /// <see cref="PingTickCount"/> — proves the loop is alive without
-    /// scraping logs.
-    /// </summary>
-    internal int UpdateLocatorTickCount => Volatile.Read(ref _updateLocatorTickCount);
 
     /// <summary>
     /// Maybe launch <see cref="UpdateLocatorLoopAsync"/>. Mirrors
@@ -1249,14 +1241,21 @@ internal sealed class ThinClientPoolDM(
     /// scaffolding (timer, cancellation, error survival) is verified
     /// first so its replacement only has to fill in the wire I/O.
     /// </remarks>
-    private Task UpdateLocatorsLocalAsync(CancellationToken ct)
+    private async Task UpdateLocatorsLocalAsync(CancellationToken ct)
     {
-        Interlocked.Increment(ref _updateLocatorTickCount);
-
         // _locatorHelper is non-null here: ScheduleUpdateLocatorLoop
         // both builds it and launches this loop only when locators
         // are configured (same gate, same call site).
-        return _locatorHelper!.UpdateLocatorsAsync(xmlPool.ServerGroup, ct);
+        using var activity = _stats.StartLocatorListRequest();
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            await _locatorHelper!.UpdateLocatorsAsync(xmlPool.ServerGroup, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _stats.LocatorListRequest(stopwatch.Elapsed);
+        }
     }
 
     /// <summary>
@@ -1273,11 +1272,20 @@ internal sealed class ThinClientPoolDM(
     {
         logger.LogDebug("ThinClientPoolDM: Asking locator for server from group [{Group}]", xmlPool.ServerGroup);
 
-        // cppcache ThinClientPoolDM.cpp:587 — incLoctorRequests() before helper call.
-        _stats.LocatorRequest();
-
-        var server = await _locatorHelper!.GetEndpointForNewFwdConnAsync(xmlPool.ServerGroup, [], ct)
-            .ConfigureAwait(false);
+        // cppcache ThinClientPoolDM.cpp:587 — incLoctorRequests() before
+        // helper call. Maps to ClientConnectionRequest wire RPC.
+        using var activity = _stats.StartClientConnectionRequest();
+        var stopwatch = Stopwatch.StartNew();
+        ServerLocation server;
+        try
+        {
+            server = await _locatorHelper!.GetEndpointForNewFwdConnAsync(xmlPool.ServerGroup, [], ct)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            _stats.ClientConnectionRequest(stopwatch.Elapsed);
+        }
 
         var endpoint = new DnsEndPoint(server.Host, server.Port);
 

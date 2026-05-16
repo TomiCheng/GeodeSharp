@@ -60,9 +60,11 @@ public class LocatorModeIntegrationTests(GeodeFixture fx)
         using var cts = new CancellationTokenSource(TestTimeout);
 
         // Listen before cache init so MeterListener.Start() runs while
-        // the static Counter instruments may or may not yet be published —
-        // either way Start() retroactively picks them up.
-        using var locatorRequests = new MeterCapture("Geode.Client.Pool", "LocatorRequests");
+        // the static Histogram instruments may or may not yet be
+        // published — either way Start() retroactively picks them up.
+        // RestoreMinConnectionsAsync → SelectEndpointFromLocatorAsync
+        // path records here.
+        using var clientConnectionRequests = new MeterCapture("Geode.Client.Pool", "ClientConnectionRequestTime");
 
         await using var services = new ServiceCollection()
             .AddLogging()
@@ -79,16 +81,15 @@ public class LocatorModeIntegrationTests(GeodeFixture fx)
         // ConnManageLoopAsync fires RestoreMinConnectionsAsync ~1s after
         // init (cppcache mirror); RestoreMinConnectionsAsync →
         // CreatePoolConnectionAsync → SelectEndpointFromLocatorAsync →
-        // PoolStatistics.LocatorRequest(). Poll up to 5s — same pattern
-        // as UpdateLocatorList_loop_ticks_against_real_locator.
+        // PoolStatistics.ClientConnectionRequest(). Poll up to 5s.
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (DateTime.UtcNow < deadline && locatorRequests.Value < 1)
+        while (DateTime.UtcNow < deadline && clientConnectionRequests.Count < 1)
         {
             await Task.Delay(50, cts.Token);
         }
         Assert.True(
-            locatorRequests.Value >= 1,
-            $"Expected LocatorRequests counter >= 1 within deadline, got {locatorRequests.Value}.");
+            clientConnectionRequests.Count >= 1,
+            $"Expected ClientConnectionRequestTime histogram count >= 1 within deadline, got {clientConnectionRequests.Count}.");
 
         await cache.CloseAsync(cts.Token);
         Assert.True(cache.IsClosed);
@@ -98,6 +99,8 @@ public class LocatorModeIntegrationTests(GeodeFixture fx)
     public async Task UpdateLocatorList_loop_ticks_against_real_locator()
     {
         using var cts = new CancellationTokenSource(TestTimeout);
+
+        using var locatorListRequests = new MeterCapture("Geode.Client.Pool", "LocatorListRequestTime");
 
         // Tighten the refresh interval so multiple ticks happen within
         // the test budget. cppcache initial delay is fixed 1s, so first
@@ -128,21 +131,21 @@ public class LocatorModeIntegrationTests(GeodeFixture fx)
         var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();
         await cache.EnsureInitializedAsync(cts.Token);
 
-        var pool = (ThinClientPoolDM)((Cache)cache).PoolManager.DefaultPool!;
-
         // 1s initial delay + ≥2 × 200ms intervals — deadline 5s is generous.
-        // Ticks prove (a) timer fires, (b) LocatorListRequest reaches
-        // the locator and the locator replies, (c) LocatorListResponse
-        // decodes without throwing (else the ConnManageLoop's catch-and-
-        // retry would log but tick count still advances).
+        // Histogram records on every UpdateLocatorsLocalAsync tick
+        // (finally clause covers exception path too). Count >= 2 proves
+        // (a) timer fires, (b) LocatorListRequest reaches the locator
+        // and the locator replies, (c) LocatorListResponse decodes
+        // without throwing (else the ConnManageLoop's catch-and-retry
+        // would log but the histogram still records).
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (DateTime.UtcNow < deadline && pool.UpdateLocatorTickCount < 2)
+        while (DateTime.UtcNow < deadline && locatorListRequests.Count < 2)
         {
             await Task.Delay(50, cts.Token);
         }
         Assert.True(
-            pool.UpdateLocatorTickCount >= 2,
-            $"Expected UpdateLocatorTickCount >= 2 within deadline, got {pool.UpdateLocatorTickCount}.");
+            locatorListRequests.Count >= 2,
+            $"Expected LocatorListRequestTime histogram count >= 2 within deadline, got {locatorListRequests.Count}.");
 
         await cache.CloseAsync(cts.Token);
     }

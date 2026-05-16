@@ -1,7 +1,6 @@
-using System;
-using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using System.Text;
+using System.Reflection;
 
 namespace Geode.Client.Internal;
 
@@ -29,12 +28,55 @@ internal class PoolStatistics(string poolName)
     //   processedDeltaMessagesTime
     //   receivedBytes、messagesBeingReceived
 
-    readonly static Meter _meter = new ("Geode.Client.Pool");
-    readonly static Counter<long> _locatorRequestsCounter = _meter.CreateCounter<long>("LocatorRequests");
+    private static readonly string AssemblyVersion =
+        typeof(PoolStatistics).Assembly.GetName().Version?.ToString() ?? "0.0.0";
 
-    public void LocatorRequest()
+
+    // Meter
+    readonly static Meter _meter = new ("Geode.Client.Pool", AssemblyVersion);
+
+    // Background locator-list refresh loop (UpdateLocatorsLocalAsync,
+    // wire: LocatorListRequest -54 / LocatorListResponse -51).
+    readonly static Histogram<double> _locatorListRequestTime = _meter.CreateHistogram<double>(
+        "LocatorListRequestTime",
+        unit: "s",
+        description: "Elapsed time of LocatorListRequest RPCs issued by the pool's background locator-list refresh loop.");
+
+    // On-demand endpoint selection (SelectEndpointFromLocatorAsync,
+    // wire: ClientConnectionRequest -53 / ClientConnectionResponse -50).
+    // cppcache `incLoctorRequests` / `incLoctorResposes` (PoolStatistics.cpp:43-50)
+    // counted the request + response halves of this RPC; merged here into one
+    // Histogram (.Count subsumes both — outcome split deferred until needed).
+    readonly static Histogram<double> _clientConnectionRequestTime = _meter.CreateHistogram<double>(
+        "ClientConnectionRequestTime",
+        unit: "s",
+        description: "Elapsed time of ClientConnectionRequest RPCs issued by the pool when opening a new server connection through a locator.");
+
+    public void LocatorListRequest(TimeSpan elapsed)
     {
-        _locatorRequestsCounter.Add(1,
+        _locatorListRequestTime.Record(
+            elapsed.TotalSeconds,
             new KeyValuePair<string, object?>("poolName", poolName));
     }
+
+    public void ClientConnectionRequest(TimeSpan elapsed)
+    {
+        _clientConnectionRequestTime.Record(
+            elapsed.TotalSeconds,
+            new KeyValuePair<string, object?>("poolName", poolName));
+    }
+
+
+    // Activity
+    readonly static ActivitySource _activitySource = new ("Geode.Client.Pool", AssemblyVersion);
+
+    public Activity? StartLocatorListRequest() =>
+        _activitySource.StartActivity("LocatorListRequest", ActivityKind.Client)?.SetTag("poolName", poolName);
+
+    public Activity? StartClientConnectionRequest() =>
+        _activitySource.StartActivity("ClientConnectionRequest", ActivityKind.Client)?.SetTag("poolName", poolName);
+
+
+
+
 }

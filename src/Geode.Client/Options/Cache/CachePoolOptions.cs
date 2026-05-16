@@ -54,13 +54,21 @@ public class CachePoolOptions : ICloneable
     public TimeSpan? FreeConnectionTimeout { get; set; }
 
     /// <summary>
-    /// <c>load-conditioning-interval</c>.
+    /// How long before a connection is forcibly rotated to spread
+    /// load across the server cluster, independent of idle status.
     /// </summary>
-    public TimeSpan? LoadConditioningInterval { get; set; }
+    /// <remarks>
+    /// default 5min; <see cref="TimeSpan.Zero"/> disables load conditioning.
+    /// </remarks>
+    public TimeSpan LoadConditioningInterval { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
-    /// <c>min-connections</c>.
+    /// Minimum number of connections the pool keeps open; warmed up at init
+    /// and treated as a floor when cleaning up idle connections.
     /// </summary>
+    /// <remarks>
+    /// default 1; <c>0</c> = pure lazy (open on demand only).
+    /// </remarks>
     public int MinConnections { get; set; } = 1;
 
     /// <summary>
@@ -74,8 +82,12 @@ public class CachePoolOptions : ICloneable
     public int? RetryAttempts { get; set; }
 
     /// <summary>
-    /// <c>idle-timeout</c>.
+    /// How long a connection can sit unused before the pool may close it
+    /// to shrink back toward <see cref="MinConnections"/>.
     /// </summary>
+    /// <remarks>
+    /// default 10s.
+    /// </remarks>
     public TimeSpan IdleTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
     /// <summary>
@@ -151,14 +163,12 @@ public class CachePoolOptions : ICloneable
     public TimeSpan UpdateLocatorListInterval { get; set; } = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// <c>&lt;locator&gt;</c> children. Pool must have at least one of
-    /// <see cref="Locators"/> or <see cref="Servers"/> per XSD.
+    /// Pool must have at least one of <see cref="Locators"/> or <see cref="Servers"/> per.
     /// </summary>
     public List<CacheHostPortOptions> Locators { get; set; } = [];
 
     /// <summary>
-    /// <c>&lt;server&gt;</c> children. Direct server endpoints for
-    /// pools that bypass locators.
+    /// Direct server endpoints for pools that bypass locators.
     /// </summary>
     public List<CacheHostPortOptions> Servers { get; set; } = [];
 
@@ -194,6 +204,18 @@ public class CachePoolOptions : ICloneable
         // allowed and means "disable the refresh loop".
         if (UpdateLocatorListInterval < TimeSpan.Zero)
             yield return $"{prefix}.UpdateLocatorListInterval must be >= 0 (got {UpdateLocatorListInterval}).";
+
+        // Mirrors cppcache PoolFactory::setLoadConditioningInterval
+        // (PoolFactory.cpp:83-86): negative durations are rejected with
+        // IllegalArgumentException; 0 = disable load conditioning.
+        if (LoadConditioningInterval < TimeSpan.Zero)
+            yield return $"{prefix}.LoadConditioningInterval must be >= 0 (got {LoadConditioningInterval}).";
+
+        // Mirrors cppcache PoolFactory::setIdleTimeout
+        // (PoolFactory.cpp same pattern): negative durations are rejected;
+        // 0 = disable idle-driven shrink (load conditioning takes over).
+        if (IdleTimeout < TimeSpan.Zero)
+            yield return $"{prefix}.IdleTimeout must be >= 0 (got {IdleTimeout}).";
 
         for (var i = 0; i < Locators.Count; i++)
         {

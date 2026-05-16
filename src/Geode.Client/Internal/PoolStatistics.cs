@@ -68,6 +68,38 @@ internal class PoolStatistics(string poolName)
     }
 
 
+    // Load conditioning — periodic forced rotation of long-lived conns
+    // (CleanStaleConnectionsAsync replace path).
+    // cppcache loadConditioningConnects / loadConditioningDisconnects
+    // (PoolStatistics.cpp:63-73, IntCounter pair).
+    readonly static Counter<int> _loadConditioningConnects = _meter.CreateCounter<int>(
+        "LoadConditioningConnects",
+        unit: "connections",
+        description: "Total connections opened to replace load-conditioning-expired conns.");
+
+    readonly static Counter<int> _loadConditioningDisconnects = _meter.CreateCounter<int>(
+        "LoadConditioningDisconnects",
+        unit: "connections",
+        description: "Total connections closed because they hit the load-conditioning expiry threshold.");
+
+    public void LoadConditioningConnect() =>
+        _loadConditioningConnects.Add(1, new KeyValuePair<string, object?>("poolName", poolName));
+
+    public void LoadConditioningDisconnect() =>
+        _loadConditioningDisconnects.Add(1, new KeyValuePair<string, object?>("poolName", poolName));
+
+    // Idle shrink — conn unused beyond IdleTimeout while _poolSize > Min,
+    // closed without replacement (CleanStaleConnectionsAsync pure-shrink path).
+    // cppcache idleDisconnects (PoolStatistics.cpp:66-69, IntCounter).
+    readonly static Counter<int> _idleDisconnects = _meter.CreateCounter<int>(
+        "IdleDisconnects",
+        unit: "connections",
+        description: "Total connections closed because they sat idle beyond the IdleTimeout while the pool was above MinConnections.");
+
+    public void IdleDisconnect() =>
+        _idleDisconnects.Add(1, new KeyValuePair<string, object?>("poolName", poolName));
+
+
     // Gauges — pull-based ObservableGauge with a static reader registry
     // keyed by poolName. cppcache uses push (`setCurPoolConnections` etc.)
     // on each modify; .NET idiomatic pull lets the listener decide cadence

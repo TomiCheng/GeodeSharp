@@ -18,11 +18,10 @@ namespace Geode.Client.Protocol;
 /// </para>
 /// <para>
 /// Pure functions: no I/O, no hidden state. The "send it + handle the
-/// reply" half lives separately on <see cref="TcrConnection"/>
-/// extensions (<see cref="Operations.PingExtensions"/> etc.); callers
-/// can also compose <see cref="TcrConnection.SendRequestAsync"/> with a
-/// builder result directly when they want full control over reply
-/// dispatch.
+/// reply" half lives on <see cref="TcrConnection"/> as op methods
+/// (<see cref="TcrConnection.PingAsync"/> etc.); callers can also
+/// compose <see cref="TcrConnection.SendRequestAsync"/> with a builder
+/// result directly when they want full control over reply dispatch.
 /// </para>
 /// <para>
 /// All MessageTypes use <see cref="MetaTransactionId"/> = -1 unless they

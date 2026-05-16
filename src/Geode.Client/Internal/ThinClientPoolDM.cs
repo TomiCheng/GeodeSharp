@@ -295,33 +295,7 @@ internal sealed class ThinClientPoolDM(
         //       manageConnections, 10s initial delay, interval);
         _connManageLoop = ConnManageLoopAsync(_backgroundCts.Token);
 
-        // Ping loop — cppcache ThinClientPoolDM.cpp:269-290 splits this in
-        // two: a long-running pingServer Task that blocks on
-        // ping_semaphore_.acquire(), plus a FunctionExpiryTask scheduled by
-        // ExpiryTaskManager that releases the semaphore every PingInterval.
-        // We collapse to one loop driven by PeriodicTimer; _pingSignal stays
-        // declared so Phase 1.5's failover path can release it for an
-        // immediate probe (then this loop becomes WaitAny(timer, signal)).
-        //
-        // Interval resolution mirrors cppcache getPingInterval(): per-pool
-        // override (CachePoolOptions.PingInterval) wins, otherwise fall
-        // back to the system default (PoolOptions.PingInterval, 10s).
-        // Interval <= 0 disables ping entirely (cppcache L286-289).
-        var pingInterval = xmlPool.PingInterval ?? options.Pool.PingInterval;
-        if (pingInterval > TimeSpan.Zero)
-        {
-            logger.LogDebug(
-                "ThinClientPoolDM::startBackgroundThreads: Scheduling ping task at {Interval}",
-                pingInterval);
-            _pingTimer = new PeriodicTimer(pingInterval);
-            _pingLoop = PingLoopAsync(_backgroundCts.Token);
-        }
-        else
-        {
-            logger.LogDebug(
-                "ThinClientPoolDM::startBackgroundThreads: Not scheduling ping task as ping interval {Interval}",
-                pingInterval);
-        }
+        SchedulePingLoop();
 
         ScheduleUpdateLocatorLoop();
 
@@ -958,10 +932,9 @@ internal sealed class ThinClientPoolDM(
     /// </summary>
     private ValueTask PutInQueueAsync(TcrConnection conn, CancellationToken ct)
     {
-        // Stamp last-access before queueing so cleanStaleConnections
-        // (Phase 1.5) can age out idle conns. Currently a no-op inside
-        // TcrConnection.Touch() until the _lastAccessed field lands.
-        //   Phase 6: route to sticky-tx queue when forTransaction=true.
+        // Stamp last-access before queueing so CleanStaleConnectionsAsync
+        // can age out idle conns. Phase 6: route to sticky-tx queue when
+        // forTransaction=true.
         conn.Touch();
         return _opConnections.Writer.WriteAsync(conn, ct);
     }
@@ -982,6 +955,43 @@ internal sealed class ThinClientPoolDM(
     private int _pingSuccessCount;
     private PeriodicTimer? _pingTimer;
     private readonly SemaphoreSlim _pingSignal = new(0, int.MaxValue);
+
+    /// <summary>
+    /// Schedule the periodic ping loop, mirroring cppcache
+    /// <c>ThinClientPoolDM.cpp:269-290</c>. cppcache splits this in two:
+    /// a long-running <c>pingServer</c> Task that blocks on
+    /// <c>ping_semaphore_.acquire()</c>, plus a <c>FunctionExpiryTask</c>
+    /// scheduled by <c>ExpiryTaskManager</c> that releases the semaphore
+    /// every <c>PingInterval</c>. We collapse to one loop driven by
+    /// <see cref="PeriodicTimer"/>; <see cref="_pingSignal"/> stays
+    /// declared so Phase 1.5's failover path can release it for an
+    /// immediate probe (then this loop becomes <c>WaitAny(timer, signal)</c>).
+    /// </summary>
+    /// <remarks>
+    /// Interval resolution mirrors cppcache <c>getPingInterval()</c>:
+    /// per-pool override (<see cref="CachePoolOptions.PingInterval"/>)
+    /// wins, otherwise fall back to the system default
+    /// (<see cref="PoolOptions.PingInterval"/>, 10 s).
+    /// Interval <c>&lt;= 0</c> disables ping entirely (cppcache L286-289).
+    /// </remarks>
+    private void SchedulePingLoop()
+    {
+        var pingInterval = xmlPool.PingInterval ?? options.Pool.PingInterval;
+        if (pingInterval > TimeSpan.Zero)
+        {
+            logger.LogDebug(
+                "ThinClientPoolDM::startBackgroundThreads: Scheduling ping task at {Interval}",
+                pingInterval);
+            _pingTimer = new PeriodicTimer(pingInterval);
+            _pingLoop = PingLoopAsync(_backgroundCts.Token);
+        }
+        else
+        {
+            logger.LogDebug(
+                "ThinClientPoolDM::startBackgroundThreads: Not scheduling ping task as ping interval {Interval}",
+                pingInterval);
+        }
+    }
 
     /// <summary>
     /// Test-only: number of ping-loop ticks that have entered
@@ -1117,7 +1127,7 @@ internal sealed class ThinClientPoolDM(
             {
                 try
                 {
-                    // TODO Phase 1.5: await CleanStaleConnectionsAsync(ct);
+                    await CleanStaleConnectionsAsync(ct).ConfigureAwait(false);
                     await RestoreMinConnectionsAsync(ct).ConfigureAwait(false);
                     // TODO Phase 6:    await CleanStickyConnectionsAsync(ct);
                 }
@@ -1135,6 +1145,120 @@ internal sealed class ThinClientPoolDM(
         {
             // graceful shutdown via _backgroundCts.Cancel().
         }
+    }
+
+    /// <summary>
+    /// One sweep of the idle queue: drop / replace stale connections.
+    /// Mirrors cppcache <c>ThinClientPoolDM::cleanStaleConnections</c>
+    /// (<c>ThinClientPoolDM.cpp:402-~500</c>). Called once per
+    /// <see cref="ConnManageLoopAsync"/> tick before
+    /// <see cref="RestoreMinConnectionsAsync"/>.
+    /// </summary>
+    private enum RemovalReason { LoadConditioning, Idle }
+
+    private async Task CleanStaleConnectionsAsync(CancellationToken ct)
+    {
+        // Two staleness reasons:
+        //   load conditioning — age > LoadConditioningInterval (forced rotation).
+        //   idle              — unused > IdleTimeout AND _poolSize > Min (shrink).
+
+        // ── Step B — Classify (cppcache L412-436) ────────────────────
+        var idle = xmlPool.IdleTimeout;
+        var loadCond = xmlPool.LoadConditioningInterval;
+        var min = xmlPool.MinConnections;
+
+        // Bound the sweep by initial queue depth (cppcache `availableConns = size()`):
+        // own re-pushes don't re-inspect; other-thread returns wait for next tick.
+        var snapshot = _opConnections.Reader.Count;
+        var removelist = new List<(TcrConnection Conn, RemovalReason Reason)>();
+        var savedConns = 0;
+
+        for (var i = 0; i < snapshot; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (!_opConnections.Reader.TryRead(out var conn))
+            {
+                // Drained early (cppcache `getNoWait → nullptr`).
+                break;
+            }
+
+            // cppcache canItBeDeleted (L2107-2121): idle threshold falls back
+            // to loadCond when shorter / disabled. Subscription-queue guard
+            // (L2124-2140) is Phase 2+ HA. Split per reason so Step C can
+            // pick the right counter (cppcache lumps both into incLoadCondDisconnects).
+            var effectiveIdle = (loadCond > TimeSpan.Zero && (loadCond < idle || idle <= TimeSpan.Zero))
+                ? loadCond
+                : idle;
+
+            if (conn.HasExpired(loadCond))
+            {
+                removelist.Add((conn, RemovalReason.LoadConditioning));
+            }
+            else if (conn.IsIdle(effectiveIdle) && Volatile.Read(ref _poolSize) > min)
+            {
+                removelist.Add((conn, RemovalReason.Idle));
+            }
+            else
+            {
+                await _opConnections.Writer.WriteAsync(conn, ct).ConfigureAwait(false);
+                savedConns++;
+            }
+        }
+
+        // ── Step C — Replace vs delete (cppcache L444-499) ───────────
+        var replaceCount = min - savedConns;
+        foreach (var (conn, reason) in removelist)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (replaceCount <= 0)
+            {
+                // Pure shrink — savedConns covers Min, close without replacement.
+                await conn.CloseAsync(_keepAlive, ct).ConfigureAwait(false);
+                Interlocked.Decrement(ref _poolSize);
+                switch (reason)
+                {
+                    case RemovalReason.LoadConditioning: _stats.LoadConditioningDisconnect(); break;
+                    case RemovalReason.Idle:             _stats.IdleDisconnect();             break;
+                }
+            }
+            else
+            {
+                // TODO Phase 1.5: CreatePoolConnectionAsync needs excludeServers +
+                // currentServer hint overloads (cppcache passes both for recycle /
+                // different-server choice).
+                var newConn = await CreatePoolConnectionAsync(ct).ConfigureAwait(false);
+                if (newConn is not null)
+                {
+                    await _opConnections.Writer.WriteAsync(newConn, ct).ConfigureAwait(false);
+                    // newConn == conn means cppcache recycle; only close on real swap.
+                    if (!ReferenceEquals(newConn, conn))
+                    {
+                        await conn.CloseAsync(_keepAlive, ct).ConfigureAwait(false);
+                        Interlocked.Decrement(ref _poolSize);
+                        _stats.LoadConditioningDisconnect();
+                        _stats.LoadConditioningConnect();
+                    }
+                }
+                else if (conn.HasExpired(loadCond))
+                {
+                    // Replacement failed AND past loadCond → close anyway (doomed).
+                    await conn.CloseAsync(_keepAlive, ct).ConfigureAwait(false);
+                    Interlocked.Decrement(ref _poolSize);
+                    _stats.LoadConditioningDisconnect();
+                }
+                else
+                {
+                    // Replacement failed, not expired → reset age + push back
+                    // (cppcache :488); else re-elected every sweep.
+                    conn.UpdateCreationTime();
+                    await _opConnections.Writer.WriteAsync(conn, ct).ConfigureAwait(false);
+                }
+                replaceCount--;
+            }
+        }
+
     }
 
     #endregion

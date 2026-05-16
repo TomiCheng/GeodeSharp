@@ -1,5 +1,4 @@
 using Geode.Client.Protocol;
-using Geode.Client.Protocol.Operations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;

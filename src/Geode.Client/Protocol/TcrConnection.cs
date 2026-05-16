@@ -1,7 +1,9 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.IO;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using Geode.Client.Internal;
 using Geode.Client.Options;
@@ -70,25 +72,84 @@ internal sealed class TcrConnection(
     /// </summary>
     private bool _deltaEnabled;
 
+    private long _createdAt = Stopwatch.GetTimestamp();         // creationTime_ (mutable: UpdateCreationTime resets it)
+    private long _lastAccessed = Stopwatch.GetTimestamp();      // lastAccessed_
+    // cppcache TcrConnection.cpp:65-70,98 — each conn picks its own [-9, +9]
+    // jitter at construction to spread load-conditioning expiry across the
+    // pool and avoid synchronised mass-rotation.
+    private readonly int _expiryTimeVariancePercentage = RandomNumberGenerator.GetInt32(-9, 10);
+
+    // ── cppcache TcrConnection member mirror (TcrConnection.hpp:272-363) ──
+    // Phase 1.5 mirror-then-prune. Most fields are zero / null until
+    // the wire path that fills them lands; back-refs are nullable typed
+    // so we can swap in real DI plumbing without changing the shape.
+#pragma warning disable CS0169, CS0414, CS0649 // placeholder mirror fields wired up phase by phase
+    private long _connectionId;                                 // connectionId
+    private TcrConnectionManager? _connectionManager;           // connectionManager_
+    private TcrEndpoint? _endpointObj;                          // endpointObj_
+    // _tcpClient + _stream above cover cppcache `conn_` (Connector).
+    private ushort _port;                                       // port_
+    private object? _chunksProcessSemaphore;                    // binary_semaphore chunks_process_semaphore_ (≈ SemaphoreSlim)
+
+    private int _isBeingUsed;                                   // volatile bool isBeingUsed_ (Interlocked 0/1)
+    private uint _isUsed;                                       // atomic<uint32_t> isUsed_
+    private ThinClientPoolDM? _poolDM;                          // poolDM_
+
+#pragma warning restore CS0169, CS0414, CS0649
+
     /// <summary>
     /// Stamp this connection's last-access time. Mirrors cppcache
     /// <c>TcrConnection::touch()</c>
-    /// (<c>cppcache/src/TcrConnection.hpp:252</c>) — pool managers call
-    /// it on borrow / return so <c>cleanStaleConnections</c> can later
-    /// distinguish idle conns from active ones.
+    /// (<c>cppcache/src/TcrConnection.cpp:1201</c>) — pool managers call
+    /// it on borrow / return so <c>cleanStaleConnections</c> /
+    /// <see cref="IsIdle"/> can distinguish idle conns from active ones.
+    /// </summary>
+    public void Touch()
+        => Volatile.Write(ref _lastAccessed, Stopwatch.GetTimestamp());
+
+    /// <summary>
+    /// Reset both the creation clock and the last-access clock. Mirrors
+    /// cppcache <c>TcrConnection::updateCreationTime()</c>
+    /// (<c>cppcache/src/TcrConnection.cpp:1222</c>) — the pool calls this
+    /// when load-conditioning replacement fails but the conn isn't
+    /// expired yet, so the same conn isn't immediately re-elected on
+    /// the next <c>cleanStaleConnections</c> sweep.
+    /// </summary>
+    public void UpdateCreationTime()
+    {
+        var now = Stopwatch.GetTimestamp();
+        Volatile.Write(ref _createdAt, now);
+        Volatile.Write(ref _lastAccessed, now);
+    }
+
+    /// <summary>
+    /// Has this connection been unused longer than <paramref name="idleTimeout"/>?
+    /// Mirrors cppcache <c>TcrConnection::isIdle</c>
+    /// (<c>cppcache/src/TcrConnection.cpp:1193</c>).
+    /// </summary>
+    public bool IsIdle(TimeSpan idleTimeout)
+    {
+        if (idleTimeout <= TimeSpan.Zero) return false;
+        var elapsed = Stopwatch.GetElapsedTime(Volatile.Read(ref _lastAccessed));
+        return elapsed > idleTimeout;
+    }
+
+    /// <summary>
+    /// Has this connection lived longer than <paramref name="loadConditioningInterval"/>
+    /// since it was opened? Mirrors cppcache <c>TcrConnection::hasExpired</c>
+    /// (<c>cppcache/src/TcrConnection.cpp:1183</c>).
     /// </summary>
     /// <remarks>
-    /// Phase 1.5 — empty stub until <c>lastAccessed_</c> field + the
-    /// <c>cleanStaleConnections</c> background sweep land. Caller is
-    /// already in place: <see cref="Internal.ThinClientPoolDM.PutInQueueAsync"/>
-    /// should invoke it before writing back to the idle channel.
+    /// Applies the <see cref="_expiryTimeVariancePercentage"/> jitter from
+    /// cppcache (default 0 = exact threshold; non-zero spreads expiry
+    /// across a pool to avoid synchronised mass-rotation).
     /// </remarks>
-    public void Touch()
+    public bool HasExpired(TimeSpan loadConditioningInterval)
     {
-        // TODO Phase 1.5 — _lastAccessed = DateTime.UtcNow (or
-        // Stopwatch.GetTimestamp() for monotonic). Add the field +
-        // IsIdle(TimeSpan) / HasExpired(TimeSpan) helpers in the same
-        // change. cppcache uses std::chrono::steady_clock::now().
+        if (loadConditioningInterval <= TimeSpan.Zero) return false;
+        var jitter = loadConditioningInterval * _expiryTimeVariancePercentage / 100;
+        var threshold = loadConditioningInterval + jitter;
+        return Stopwatch.GetElapsedTime(Volatile.Read(ref _createdAt)) > threshold;
     }
 
     /// <summary>
@@ -718,6 +779,27 @@ internal sealed class TcrConnection(
         return (
             ChunkLen: BinaryPrimitives.ReadInt32BigEndian(buffer.AsSpan(0, 4)),
             Flags: buffer[4]);
+    }
+
+    /// <summary>
+    /// Send a <see cref="MessageType.Ping"/> (5) and wait for the server's
+    /// <see cref="MessageType.Reply"/> (6). Mirrors cppcache
+    /// <c>TcrMessagePing</c>.
+    /// </summary>
+    /// <exception cref="GeodeException">
+    /// Server returned a <see cref="TcrMessage.MessageType"/> other than
+    /// <see cref="MessageType.Reply"/> (e.g. an Exception reply carrying
+    /// error text in its parts).
+    /// </exception>
+    public async Task PingAsync(CancellationToken cancellationToken = default)
+    {
+        var reply = await SendRequestAsync(messageBuilder.Ping(), cancellationToken).ConfigureAwait(false);
+        if (reply.MessageType != MessageType.Reply)
+        {
+            throw new GeodeException(
+                $"Expected Reply ({(int)MessageType.Reply}) to Ping, got " +
+                $"{reply.MessageType} ({(int)reply.MessageType}).");
+        }
     }
 
     /// <summary>

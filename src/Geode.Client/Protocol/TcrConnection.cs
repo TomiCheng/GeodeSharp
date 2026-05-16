@@ -383,8 +383,8 @@ internal sealed class TcrConnection(
     /// </summary>
     private byte MapConflateEvents() => _options.Subscription.ConflateEvents switch
     {
-        null  => 0,   // CONFLATION_DEFAULT — let the server decide
-        true  => 1,   // CONFLATION_ON
+        null => 0,   // CONFLATION_DEFAULT — let the server decide
+        true => 1,   // CONFLATION_ON
         false => 2,   // CONFLATION_OFF
     };
 

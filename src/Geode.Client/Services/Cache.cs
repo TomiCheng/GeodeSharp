@@ -81,7 +81,7 @@ internal sealed class Cache(
     // cppcache m_regions is std::map<string, shared_ptr<Region>>; we
     // hold the non-generic IRegion base because XML-driven population
     // happens before TKey/TValue are known.
-    private readonly ConcurrentDictionary<string, IRegion> _regions = new(StringComparer.Ordinal); 
+    private readonly ConcurrentDictionary<string, IRegion> _regions = new(StringComparer.Ordinal);
 
     // ── Connection / Pool (CacheImpl.hpp:330, 362-363, 369) ──
     private object? _distributedSystem;   // m_distributedSystem
@@ -438,20 +438,20 @@ internal sealed class Cache(
         return new CacheXmlRegionAttributesOptions
         {
             // Nullable value types: inline non-null wins.
-            CachingEnabled           = inline.CachingEnabled           ?? template.CachingEnabled,
-            CloningEnabled           = inline.CloningEnabled           ?? template.CloningEnabled,
-            Scope                    = inline.Scope                    ?? template.Scope,
-            InitialCapacity          = inline.InitialCapacity          ?? template.InitialCapacity,
-            LoadFactor               = inline.LoadFactor               ?? template.LoadFactor,
-            ConcurrencyLevel         = inline.ConcurrencyLevel         ?? template.ConcurrencyLevel,
-            LruEntriesLimit          = inline.LruEntriesLimit          ?? template.LruEntriesLimit,
-            DiskPolicy               = inline.DiskPolicy               ?? template.DiskPolicy,
-            ClientNotification       = inline.ClientNotification       ?? template.ClientNotification,
+            CachingEnabled = inline.CachingEnabled ?? template.CachingEnabled,
+            CloningEnabled = inline.CloningEnabled ?? template.CloningEnabled,
+            Scope = inline.Scope ?? template.Scope,
+            InitialCapacity = inline.InitialCapacity ?? template.InitialCapacity,
+            LoadFactor = inline.LoadFactor ?? template.LoadFactor,
+            ConcurrencyLevel = inline.ConcurrencyLevel ?? template.ConcurrencyLevel,
+            LruEntriesLimit = inline.LruEntriesLimit ?? template.LruEntriesLimit,
+            DiskPolicy = inline.DiskPolicy ?? template.DiskPolicy,
+            ClientNotification = inline.ClientNotification ?? template.ClientNotification,
             ConcurrencyChecksEnabled = inline.ConcurrencyChecksEnabled ?? template.ConcurrencyChecksEnabled,
 
             // Plain strings: inline non-empty wins.
             Endpoints = string.IsNullOrEmpty(inline.Endpoints) ? template.Endpoints : inline.Endpoints,
-            PoolName  = string.IsNullOrEmpty(inline.PoolName)  ? template.PoolName  : inline.PoolName,
+            PoolName = string.IsNullOrEmpty(inline.PoolName) ? template.PoolName : inline.PoolName,
 
             // Inner RefId is not honoured (mirrors decision in
             // CacheXmlRegionAttributesOptions doc); leave empty so the
@@ -460,14 +460,14 @@ internal sealed class Cache(
             RefId = string.Empty,
 
             // Reference types: inline non-null replaces wholesale (no deep merge).
-            RegionTimeToLive   = inline.RegionTimeToLive   ?? template.RegionTimeToLive,
-            RegionIdleTime     = inline.RegionIdleTime     ?? template.RegionIdleTime,
-            EntryTimeToLive    = inline.EntryTimeToLive    ?? template.EntryTimeToLive,
-            EntryIdleTime      = inline.EntryIdleTime      ?? template.EntryIdleTime,
-            PartitionResolver  = inline.PartitionResolver  ?? template.PartitionResolver,
-            CacheLoader        = inline.CacheLoader        ?? template.CacheLoader,
-            CacheListener      = inline.CacheListener      ?? template.CacheListener,
-            CacheWriter        = inline.CacheWriter        ?? template.CacheWriter,
+            RegionTimeToLive = inline.RegionTimeToLive ?? template.RegionTimeToLive,
+            RegionIdleTime = inline.RegionIdleTime ?? template.RegionIdleTime,
+            EntryTimeToLive = inline.EntryTimeToLive ?? template.EntryTimeToLive,
+            EntryIdleTime = inline.EntryIdleTime ?? template.EntryIdleTime,
+            PartitionResolver = inline.PartitionResolver ?? template.PartitionResolver,
+            CacheLoader = inline.CacheLoader ?? template.CacheLoader,
+            CacheListener = inline.CacheListener ?? template.CacheListener,
+            CacheWriter = inline.CacheWriter ?? template.CacheWriter,
             PersistenceManager = inline.PersistenceManager ?? template.PersistenceManager,
         };
     }

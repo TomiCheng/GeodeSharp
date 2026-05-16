@@ -184,24 +184,24 @@ internal sealed class StringDataConverter(CacheScopeContext cacheScopeContext)
         switch (dsCode)
         {
             case DSCode.CacheableASCIIString:
-            {
-                // u16 length is wire-bounded to 65535 (already a
-                // ~130KB allocation max). Still apply MaxStringLength
-                // so a user who tightened the cap to e.g. 100 sees
-                // it honoured on every variant.
-                int length = reader.ReadUInt16();
-                EnsureStringLength(length);
-                return ReadAsciiBytes(reader, length);
-            }
+                {
+                    // u16 length is wire-bounded to 65535 (already a
+                    // ~130KB allocation max). Still apply MaxStringLength
+                    // so a user who tightened the cap to e.g. 100 sees
+                    // it honoured on every variant.
+                    int length = reader.ReadUInt16();
+                    EnsureStringLength(length);
+                    return ReadAsciiBytes(reader, length);
+                }
 
             case DSCode.CacheableASCIIStringHuge:
-            {
-                // i32 length is the primary attack surface — can be
-                // pinned at int.MaxValue by a hostile server.
-                int length = reader.ReadInt32();
-                EnsureStringLength(length);
-                return ReadAsciiBytes(reader, length);
-            }
+                {
+                    // i32 length is the primary attack surface — can be
+                    // pinned at int.MaxValue by a hostile server.
+                    int length = reader.ReadInt32();
+                    EnsureStringLength(length);
+                    return ReadAsciiBytes(reader, length);
+                }
 
             case DSCode.CacheableString:
                 // u16 byte-length is wire-bounded to 65535 → at most
@@ -212,17 +212,17 @@ internal sealed class StringDataConverter(CacheScopeContext cacheScopeContext)
                 return reader.ReadJavaModifiedUtf8();
 
             case DSCode.CacheableStringHuge:
-            {
-                int charCount = reader.ReadInt32();
-                if (charCount == 0) return string.Empty;
-                EnsureStringLength(charCount);
-                var chars = new char[charCount];
-                for (var i = 0; i < charCount; i++)
                 {
-                    chars[i] = (char)reader.ReadUInt16();
+                    int charCount = reader.ReadInt32();
+                    if (charCount == 0) return string.Empty;
+                    EnsureStringLength(charCount);
+                    var chars = new char[charCount];
+                    for (var i = 0; i < charCount; i++)
+                    {
+                        chars[i] = (char)reader.ReadUInt16();
+                    }
+                    return new string(chars);
                 }
-                return new string(chars);
-            }
 
             case DSCode.CacheableNullString:
                 // cppcache typed-string-slot null sentinel. Registry

@@ -268,7 +268,7 @@ public class ClientProxyMembershipIdBuilderTests
                 42 => ReadModUtf8AsAscii(b, ref pos),
                 // CacheableNullString = 69 → no body.
                 69 => null!,
-                _  => throw new InvalidOperationException(
+                _ => throw new InvalidOperationException(
                     $"Unexpected string DSCode {dsCode} at position {pos - 1}; " +
                     "either the writer mis-emitted a string or the schema drifted."),
             };

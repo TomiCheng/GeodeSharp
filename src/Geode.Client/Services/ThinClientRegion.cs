@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
@@ -29,7 +30,7 @@ namespace Geode.Client.Services;
 /// is <c>object</c>-typed; strong typing is compile-time only.
 /// </para>
 /// </remarks>
-internal sealed class ThinClientRegion(
+internal sealed partial class ThinClientRegion(
     IServiceProvider serviceProvider,
     ILogger<ThinClientRegion> logger,
     TcrMessageBuilder tcrMessageBuilder,
@@ -47,6 +48,9 @@ internal sealed class ThinClientRegion(
     /// always carries a <see cref="ThinClientPoolDM"/> here.
     /// </summary>
     internal ThinClientBaseDM DistributionManager => dm;
+
+
+
 
     public override async Task PutAsync(object key, object value, CancellationToken ct = default)
     {
@@ -663,7 +667,7 @@ internal sealed class ThinClientRegion(
         // IReadOnlyCollection<object> is not indexable. Cheap fast path
         // for the common case where RegionView already produced an
         // object[] (see RegionView.GetAllAsync's boxing step).
-        var keyList = keys as IReadOnlyList<object> ?? keys.ToArray();
+        var keyList = keys as IReadOnlyList<object> ?? [.. keys];
 
         // ─── Step 2: build request frame ──────────────────────
         // 3 parts (region / keys-as-CacheableObjectArray / int(0)
@@ -753,6 +757,79 @@ internal sealed class ThinClientRegion(
     }
 
     /// <summary>
+    /// Shared OQL routing for region convenience methods
+    /// (<see cref="ExistsValueAsync"/> / <see cref="SelectValueAsync"/>).
+    /// Mirrors cppcache <c>Region::query</c>
+    /// (<c>cppcache/src/ThinClientRegion.cpp:518-553</c>): validate the
+    /// predicate, build <c>select distinct * from &lt;FullPath&gt; this
+    /// where &lt;predicate&gt;</c> (verbatim if predicate already starts
+    /// with <c>SELECT</c>/<c>IMPORT</c>), dispatch via the pool DM's
+    /// <see cref="RemoteQueryService"/>.
+    /// </summary>
+    /// <remarks>
+    /// The <c>this</c> alias in FROM is required for <c>WHERE this = …</c>
+    /// / <c>WHERE this.field</c> to resolve server-side. Non-pool DM
+    /// routing is deferred (memory <c>pool-only-no-non-pool</c>).
+    /// <c>&lt;object&gt;</c> mirrors cppcache
+    /// <c>shared_ptr&lt;Serializable&gt;</c> — row type is untyped at the
+    /// API boundary; <see cref="TypedResultAdapter"/> short-circuits to
+    /// identity.
+    /// </remarks>
+    private async Task<IReadOnlyList<object>> QueryAsync(
+        string predicate, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(predicate))
+        {
+            logger.LogError("Region query predicate string is empty");
+            throw new ArgumentException(
+                "Region query predicate string is empty.", nameof(predicate));
+        }
+
+        logger.LogTrace(
+            "Region::query: region={RegionPath}, predicate={Predicate}",
+            FullPath, predicate);
+
+        var oql = FullQueryRegex1().IsMatch(predicate)
+            ? predicate
+            : $"select distinct * from {FullPath} this where {predicate}";
+
+        if (dm is not ThinClientPoolDM poolDm)
+        {
+            throw new NotImplementedException(
+                "Non-pool DistributionManager query routing is not implemented.");
+        }
+
+        var query = poolDm.QueryService.NewQuery<object>(oql);
+        return await query.ExecuteAsync(ct).ConfigureAwait(false);
+    }
+
+    public override async Task<bool> ExistsValueAsync(string predicate, CancellationToken ct = default)
+    {
+        // Mirrors cppcache ThinClientRegion::existsValue
+        // (cppcache/src/ThinClientRegion.cpp:555-566).
+        var results = await QueryAsync(predicate, ct).ConfigureAwait(false);
+        return results.Count > 0;
+    }
+
+    public override async Task<object?> SelectValueAsync(string predicate, CancellationToken ct = default)
+    {
+        // Mirrors cppcache ThinClientRegion::selectValue
+        // (cppcache/src/ThinClientRegion.cpp:618-631).
+        var results = await QueryAsync(predicate, ct).ConfigureAwait(false);
+
+        // cppcache: 0 → null; 1 → results[0]; >1 → QueryException
+        // ("selectValue has more than one result"). Java's variant
+        // includes the actual count — kept for diagnostics.
+        return results.Count switch
+        {
+            0 => null,
+            1 => results[0],
+            _ => throw new GeodeException(
+                $"selectValue has more than one result (got {results.Count})."),
+        };
+    }
+
+    /// <summary>
     /// Best-effort ASCII preview of an Exception reply's Part 0. The
     /// server typically returns the Java exception class name +
     /// message there as a <c>CacheableASCIIString</c>; until
@@ -776,4 +853,7 @@ internal sealed class ThinClientRegion(
         }
         return sb.ToString();
     }
+
+    [GeneratedRegex(@"^\s*(?:select|import)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant)]
+    private static partial Regex FullQueryRegex1();
 }

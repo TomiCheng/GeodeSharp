@@ -528,7 +528,7 @@ public interface IGeodeCacheFactory
 
 ---
 
-## Phase 1.4 — OQL Query（進行中）
+## Phase 1.4 — OQL Query ✅
 
 ### 已完成
 
@@ -560,15 +560,34 @@ public interface IGeodeCacheFactory
 - [x] **單元測試**（39 個）：`QueryStructTests` (16) +
       `QueryExtensionsTests` (18) + `TcrMessageBuilderQueryTests` (17)
       + `TcrMessageBuilderQueryWithParametersTests` (22)
-- [x] **整合測試**（7 個，全 PASS）：`QueryIntegrationTests` 覆蓋
+- [x] **整合測試**（14 個，全 PASS）：`QueryIntegrationTests` (7) 覆蓋
       `SELECT *` ResultSet、`SELECT COUNT(*)` scalar、
       `QueryWithParameters(80)` + bind values、`ExecuteSingleAsync` 組
-      合 extension、type 不符 → `InvalidCastException`
+      合 extension、type 不符 → `InvalidCastException`；
+      `RegionQueryConvenienceIntegrationTests` (7) 覆蓋 region
+      convenience（見下方）
+- [x] **Region convenience：`ExistsValueAsync` / `SelectValueAsync`** —
+      `IRegion.ExistsValueAsync` / `IRegion.SelectValueAsync` + 泛型
+      overlay `IRegion<TKey,TValue>.SelectValueAsync` (typed,
+      `new Task<TValue?>`)。實作走 `ThinClientRegion.QueryAsync` 私有
+      helper (mirror cppcache `Region::query` 共用體)；OQL 字串組裝邏輯：
+      caller 給 full query (`^\s*(?:select|import)\b` 偵測) → verbatim；
+      否則 prepend `select distinct * from <FullPath> this where `（`this`
+      alias 在 FROM 子句宣告，跟 cppcache `ThinClientRegion.cpp:536-540`
+      一致）。`RegionView<TKey,TValue>` 加 3 個 forwarder（`ExistsValueAsync`
+      / typed `SelectValueAsync<TValue>` 走 adapter / explicit
+      `IRegion.SelectValueAsync` 跳 adapter）。
+- [x] **`RemoteQueryService.NewQuery<object>` 白名單** — type guard 加
+      `typeof(T) != typeof(object)` 例外，承認 cppcache
+      `shared_ptr<Serializable>` (≈ `object?`) 的基底路徑。
+      `TypedResultAdapter.Convert<object>` 早已是 identity（`IsInstanceOfType`
+      永真），所以這條開放零成本。Region convenience 內部就吃這條路徑。
+- [x] **`ProxyRemoteQueryService` 殼**（Phase 3 預先) — mirror cppcache
+      `ProxyRemoteQueryService` (sibling of `RemoteQueryService` under
+      `IQueryService`)，`NewQuery<T>` NIE，Phase 3 multi-user 才填。
 
 ### 待做
 
-- [ ] Region convenience：`ExistsValueAsync` / `SelectValueAsync`
-      （cppcache `Region::existsValue` / `Region::selectValue`）
 - [ ] 多欄 projection / StructSet 整合測試 — 需要 server 端 PDX 結構化
       資料（gfsh JSON put 或 Java 預載），暫時 deferred
 
@@ -597,11 +616,14 @@ chunked decoder 都用正 DSFid（`VersionedObjectPartList = 7` 等），
 （memory note：deferred to PDX phase 才會再回頭整合 `TypedResultAdapter`
 + ORM mapping）。
 
-**OQL `this` 在 WHERE clause 不 work**（至少對 int region；可能跟
-`/region` scan 的隱式 iterator 命名規則有關）— 整合測試一律用顯式
-alias `SELECT t FROM /test t WHERE t = ...`。將來 region convenience
-方法（`ExistsValueAsync` / `SelectValueAsync`）也要採同樣 alias 寫法
-或 client side 改寫 caller predicate。
+**OQL `this` 的真相**（前述「在 WHERE 不 work」描述不準）— `this`
+**會 work**，但前提是 FROM 子句要明確宣告它作 region iteration alias：
+`SELECT * FROM /region this WHERE this = ...`。我們之前的整合測試寫
+`SELECT * FROM /test WHERE this = ...`（缺 `this` alias 宣告）所以炸；
+cppcache `ThinClientRegion::query` (`cppcache/src/ThinClientRegion.cpp:536-540`)
+也是這麼 prepend 的，region convenience 方法 `QueryAsync` helper 跟它
+對齊。既有 `QueryIntegrationTests` 改用 alias `t` 是 caller 風格選擇，
+不是被迫。
 
 **拉前 projection 理由**：B10 ResultSet / StructSet 分支跟
 `ChunkedQueryResponse.HandleChunk` 是同一條解碼路徑 — fieldNames 解碼跟
@@ -609,6 +631,15 @@ row values 解碼在 cppcache 同一個 `readObjectPartList`。若 StructSet 留
 Phase 2，會出現「結構在但不解 fieldNames / 不 reshape」的
 silent-corruption 半成品（caller 寫 `SELECT id, total` 拿到攤平 list，
 無錯誤、無警告）。同期完成才不留漏洞。
+
+**`NewQuery<object>` 白名單的設計含義** — 開放 `IQuery<object>` 為公開
+API 等於正式承認「我接 wire 解出來的原樣，自己處理 row shape」這條
+路徑（≈ cppcache `shared_ptr<Serializable>` 基底）。release 後不能撤；
+但這條本來就是 cppcache 唯一的 row 型別契約，`<T>` 才是 .NET 端加的
+type-safety 糖衣，補上 `<object>` 才完整。
+
+**下一步入口**：Phase 1.5 — Connection management。Phase 1 MVP 只剩
+連線池 / locator / failover / 健康監控。
 
 ---
 

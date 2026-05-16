@@ -81,7 +81,7 @@ mirror cppcache file-for-file unless explicitly noted, per the
 | `ThinClientRegion` | `Geode.Client.Services.ThinClientRegion` (non-generic) | 2 | ✅ | 1.2–1.3.c | All bulk + single-key ops end-to-end (Put / Get / Remove / ContainsKey / Clear / Invalidate / RemoveAll / PutAll / GetAll). Stays non-generic to mirror cppcache native; typed surface goes through `RegionView` wrapper. Sub-region path / caching-enabled local map deferred (Phase 2+) |
 | `LocalRegion` | `Geode.Client.Internal.LocalRegion` (abstract) | 2 | 🔨 | 1.2 | Empty placeholder layer; just holds Name / FullPath / Parent. Local-cache machinery (`m_entries` / listener / writer / loader) deferred to Phase 2+ when `caching-enabled` is honoured |
 | `RegionInternal` | `Geode.Client.Internal.RegionInternal` (abstract) | 2 | 🔨 | 1.2 | Empty placeholder layer; holds `Attributes` and forwards `PoolName`. Internal-only API surface (EventId-aware ops, version stamps, tombstones) deferred to Phase 2+ |
-| `Region` (base) | `Geode.Client.IRegion` (non-generic) + `Geode.Client.IRegion<TKey,TValue>` (typed overlay) | 2 | 🔨 | 1.2 | Non-generic interface holds the real op surface (`object` keys / values); typed interface is overload-only sugar |
+| `Region` (base) | `Geode.Client.IRegion` (non-generic) + `Geode.Client.IRegion<TKey,TValue>` (typed overlay) | 2 | 🔨 | 1.2–1.4 | Non-generic interface holds the real op surface (`object` keys / values); typed interface is overload-only sugar. **Covered:** Put / Get / Remove / ContainsKey (=`containsKeyOnServer`) / Clear / Invalidate / PutAll / GetAll / RemoveAll / ExistsValue / SelectValue. **Routed elsewhere:** `query(predicate)` → `IQueryService.NewQuery<T>`; `getStatistics` → `System.Diagnostics.Metrics.Meter`. **Deferred (Phase 1.5):** full `IPool` accessor (today only `PoolName`). **Deferred (Phase 2+):** `create` / `destroy` / `destroyRegion` / `invalidateRegion` / `removeEx` (distinct-from-`put`/`remove` exception semantics), `getEntry` / `keys` / `values` / `entries` / `size` / `isDestroyed`, `getAttributes` / `getAttributesMutator` (needs `RegionAttributes` port). **Cut (per CLAUDE.md «Not implemented»):** sub-regions (`getParentRegion` / `getSubregion` / `createSubregion` / `subregions` / `localDestroyRegion`), local-* mirrors (`localPut` / `localCreate` / `localInvalidate` / `localDestroy` / `localRemove` / `localRemoveEx` / `localClear` / `localInvalidateRegion`), interest-list / CQ subscription (`getInterestList[Regex]` / `register[All]Keys` / `unregister[All]Keys` / `register[Unregister]Regex`). |
 | (no cppcache analogue) | `Geode.Client.Services.RegionView<TKey,TValue>` | — | ✅ | 1.2 | Compile-time-only typed wrapper; new instance per `Cache.GetRegion<K,V>(name)` call. cppcache splits typed/untyped across native + clicache layers; C# folds both into one |
 
 ### Distribution managers (Phase 1.5)
@@ -105,6 +105,14 @@ mirror cppcache file-for-file unless explicitly noted, per the
 | `TcrPoolEndPoint` | `Geode.Client.Internal.TcrPoolEndPoint` | 2 | ⏳ | 1.5 | endpoint variant for pool mode |
 | `ConnectionQueue<T>` | (wrapper over `Channel<T>`) | 3 | ⏳ | 1.5 | thin wrapper that adds timed-get-or-create |
 | `ThinClientLocatorHelper` | `Geode.Client.Internal.ThinClientLocatorHelper` | 2 | ⏳ | 1.5 | locator wire protocol |
+
+### Query (Phase 1.4)
+
+| cppcache | C# | Bucket | Status | Phase | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `RemoteQueryService` | `Geode.Client.Internal.RemoteQueryService` | 2 | ✅ | 1.4 | Pool-scoped `IQueryService` impl; `NewQuery<T>` Phase 1.4 surface. CQ entry points + non-pool `init()` reappear Phase 2 |
+| `RemoteQuery<T>` | `Geode.Client.Internal.RemoteQuery<T>` | 2 | ✅ | 1.4 | `IQuery<T>` impl; `ExecuteCoreAsync` B1-B11 incl. `Query(34)` / `QueryWithParameters(80)` wire dispatch |
+| `ProxyRemoteQueryService` | `Geode.Client.Internal.ProxyRemoteQueryService` | 2 | 🔨 | 3 | Empty shell — Phase 3 multi-user wiring point; `NewQuery<T>` NIE, no CQ methods until Phase 2 |
 
 ### Wire protocol primitives
 

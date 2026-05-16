@@ -79,6 +79,21 @@ internal sealed class RegionView<TKey, TValue> : IRegion<TKey, TValue>
     public Task InvalidateAsync(TKey key, CancellationToken ct = default)
         => _inner.InvalidateAsync(key!, ct);
 
+    // No alias needed — bool return doesn't depend on TValue, the base
+    // IRegion's ExistsValueAsync member satisfies the inherited contract
+    // and is picked up by the typed view automatically.
+    public Task<bool> ExistsValueAsync(string predicate, CancellationToken ct = default)
+        => _inner.ExistsValueAsync(predicate, ct);
+
+    public async Task<TValue?> SelectValueAsync(string predicate, CancellationToken ct = default)
+    {
+        var raw = await _inner.SelectValueAsync(predicate, ct).ConfigureAwait(false);
+        // Same adapter path as GetAsync: scalar/array shortcut via
+        // IsInstanceOfType, otherwise reshape wire-canonical containers
+        // (List<object?>, etc.) into TValue. Null in → default(TValue?).
+        return _adapter.Convert<TValue>(raw);
+    }
+
     public Task RemoveAllAsync(IReadOnlyCollection<TKey> keys, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(keys);
@@ -197,4 +212,11 @@ internal sealed class RegionView<TKey, TValue> : IRegion<TKey, TValue>
     Task<IReadOnlyDictionary<object, object?>> IRegion.GetAllAsync(
         IReadOnlyCollection<object> keys, CancellationToken ct)
         => _inner.GetAllAsync(keys, ct);
+
+    // Explicit-interface overload for the object-typed SelectValueAsync;
+    // the typed implicit member above shadows the base via `new`, so
+    // calls through an IRegion reference need this explicit forwarder
+    // to skip the adapter and return the raw object?.
+    Task<object?> IRegion.SelectValueAsync(string predicate, CancellationToken ct)
+        => _inner.SelectValueAsync(predicate, ct);
 }

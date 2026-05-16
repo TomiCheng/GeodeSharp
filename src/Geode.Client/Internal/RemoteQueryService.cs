@@ -76,17 +76,26 @@ internal sealed class RemoteQueryService : IQueryService
         ArgumentException.ThrowIfNullOrWhiteSpace(oql);
 
         // step 2 — Phase 1.4 row-type guard. Supports:
-        //   bucket 1 (single-column basic) — T has a SerializationRegistry
-        //       converter (int / string / byte[] / List<int> / ...).
-        //   bucket 3 (multi-column projection) — T == QueryStruct.
+        //   bucket 0 (untyped passthrough)        — T == object. cppcache
+        //       Query::execute returns shared_ptr<Serializable> (≈ object?);
+        //       this T is the .NET equivalent and the path region
+        //       convenience methods (ExistsValue / SelectValue) take.
+        //       TypedResultAdapter.Convert<object> is a clean identity.
+        //   bucket 1 (single-column basic)        — T has a
+        //       SerializationRegistry converter (int / string / byte[] /
+        //       List<int> / ...).
+        //   bucket 3 (multi-column projection)    — T == QueryStruct.
         // Buckets 2 (PDX single-column) and 4 (ORM-mapped multi-column)
         // ship in later phases; throw NotSupportedException early so
         // caller doesn't discover the gap mid-flight.
-        if (typeof(T) != typeof(QueryStruct) && !_serializationRegistry.IsRegistered(typeof(T)))
+        if (typeof(T) != typeof(object)
+            && typeof(T) != typeof(QueryStruct)
+            && !_serializationRegistry.IsRegistered(typeof(T)))
         {
             throw new NotSupportedException(
-                $"IQuery<{typeof(T).Name}>: Phase 1.4 supports basic wire-registered " +
-                $"types and {nameof(QueryStruct)} only. PDX (single-column custom) and " +
+                $"IQuery<{typeof(T).Name}>: Phase 1.4 supports {nameof(Object)} " +
+                $"(cppcache-parity untyped), basic wire-registered types, and " +
+                $"{nameof(QueryStruct)} only. PDX (single-column custom) and " +
                 "ORM mapping (multi-column to user types) land in later phases.");
         }
 

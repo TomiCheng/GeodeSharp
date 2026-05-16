@@ -25,19 +25,15 @@ namespace Geode.Client.Internal;
 /// 1.5) will add it.
 /// </para>
 /// </remarks>
-internal abstract class RegionInternal : IRegion
+internal abstract class RegionInternal(CacheXmlRegionAttributesOptions attributes)
+    : IRegion
 {
-    protected RegionInternal(CacheXmlRegionAttributesOptions attributes)
-    {
-        ArgumentNullException.ThrowIfNull(attributes);
-        Attributes = attributes;
-    }
 
     /// <summary>
     /// XML-declared region attributes. Mirrors cppcache
     /// <c>RegionInternal::m_regionAttributes</c>.
     /// </summary>
-    protected CacheXmlRegionAttributesOptions Attributes { get; }
+    protected CacheXmlRegionAttributesOptions Attributes { get; } = attributes;
 
     // ── IRegion (forward to derived) ───────────────────────────
     public abstract string Name { get; }
@@ -58,6 +54,8 @@ internal abstract class RegionInternal : IRegion
     public abstract Task RemoveAllAsync(IReadOnlyCollection<object> keys, CancellationToken ct = default);
     public abstract Task PutAllAsync(IReadOnlyDictionary<object, object> map, CancellationToken ct = default);
     public abstract Task<IReadOnlyDictionary<object, object?>> GetAllAsync(IReadOnlyCollection<object> keys, CancellationToken ct = default);
+    public abstract Task<bool> ExistsValueAsync(string predicate, CancellationToken ct = default);
+    public abstract Task<object?> SelectValueAsync(string predicate, CancellationToken ct = default);
 
     // TODO future phases — internal-only API surface that cppcache
     // RegionInternal exposes; add as their respective phases ship:

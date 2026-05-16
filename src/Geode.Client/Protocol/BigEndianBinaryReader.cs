@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Text;
 
 namespace Geode.Client.Protocol;
 
@@ -130,24 +131,50 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
 
     /// <summary>
     /// Read a Java-formatted string. Mirrors cppcache
-    /// <c>DataInput::readString</c>: 1-byte type header (
-    /// <see cref="DSCode.CacheableASCIIString"/> /
-    /// <see cref="DSCode.CacheableString"/> /
-    /// <see cref="DSCode.CacheableStringHuge"/> / NullObj) followed
-    /// by length + content (UTF-8 modified or UTF-16 BE depending on
-    /// variant).
+    /// <c>DataInput::readString</c>: 1-byte DSCode followed by
+    /// length-prefixed body. Returns <see langword="null"/> for the
+    /// explicit <see cref="DSCode.CacheableNullString"/> sentinel.
     /// </summary>
     /// <remarks>
-    /// Phase 1.3.b stub &#x2014; NIE until the
-    /// <c>VersionedCacheableObjectPartList::readObjectPart</c>
-    /// exception branch is reachable (Phase 1.3.c GetAll with
-    /// server-side exceptions). Body can dispatch through the
-    /// existing <see cref="Serialization.StringDataConverter"/>.
+    /// Dispatched DSCodes:
+    /// <list type="bullet">
+    ///   <item><see cref="DSCode.CacheableNullString"/> (69) → <see langword="null"/></item>
+    ///   <item><see cref="DSCode.CacheableASCIIString"/> (87) → u16 length + ASCII bytes</item>
+    ///   <item><see cref="DSCode.CacheableString"/> (42) → Java modified UTF-8 (see <see cref="ReadJavaModifiedUtf8"/>)</item>
+    ///   <item><see cref="DSCode.CacheableStringHuge"/> (89) → UTF-16 BE (Phase 4, currently NIE)</item>
+    ///   <item><see cref="DSCode.CacheableASCIIStringHuge"/> (88) → Phase 4 NIE</item>
+    /// </list>
     /// </remarks>
     public string? ReadString()
     {
-        throw new NotImplementedException(
-            "BigEndianBinaryReader.ReadString pending Phase 1.3.c.");
+        var dscode = ReadByte();
+        return dscode switch
+        {
+            DSCode.CacheableNullString => null,
+            DSCode.CacheableASCIIString => ReadAsciiString(ReadUInt16()),
+            DSCode.CacheableString => ReadJavaModifiedUtf8(),
+            DSCode.CacheableASCIIStringHuge => throw new NotImplementedException(
+                "CacheableASCIIStringHuge (DSCode 88) — Phase 4."),
+            DSCode.CacheableStringHuge => ReadUtf16Huge(),
+            _ => throw new GeodeException(
+                $"BigEndianBinaryReader.ReadString: unexpected DSCode 0x{dscode:X2}."),
+        };
+    }
+
+    /// <summary>Length-prefixed-ASCII body reader shared by the u16 and i32 prefix variants.</summary>
+    private string ReadAsciiString(int length)
+    {
+        if (length < 0)
+        {
+            throw new GeodeException(
+                $"BigEndianBinaryReader.ReadString: negative ASCII length {length}.");
+        }
+        if (length == 0) return string.Empty;
+
+        EnsureAvailable(length);
+        var span = buffer.Span.Slice(_position, length);
+        _position += length;
+        return Encoding.ASCII.GetString(span);
     }
 
     /// <summary>

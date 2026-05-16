@@ -63,17 +63,17 @@ internal sealed class ThinClientPoolDM(
     private int _server;                                              // m_server
     private readonly Lock _endpointSelectionLock = new();             // m_endpointSelectionLock
 
-    // ── Locator (Phase 1.5) ──
-    private object? _locatorHelper;                // m_locHelper (ThinClientLocatorHelper)
+
 
     // ── Background workers (Phase 1.5, pool-mode equivalents of TCCM trio) ──
     private Task? _pingLoop;                       // m_pingTask
     private Task? _connManageLoop;                 // m_connManageTask
-    private Task? _updateLocatorLoop;              // m_updateLocatorListTask
+
     private readonly SemaphoreSlim _pingSignal = new(0, int.MaxValue);
     private readonly SemaphoreSlim _connManageSignal = new(0, int.MaxValue);
-    private readonly SemaphoreSlim _updateLocatorSignal = new(0, int.MaxValue);
+
     private PeriodicTimer? _pingTimer;
+
     private readonly CancellationTokenSource _backgroundCts = new();
 
     // ── Single-hop metadata (Phase 4) ──
@@ -149,6 +149,8 @@ internal sealed class ThinClientPoolDM(
     /// </summary>
     internal int PingSuccessCount => Volatile.Read(ref _pingSuccessCount);
 
+
+
     // ── IPool ────────────────────────────────────────────────────
 
     public override async Task DestroyAsync(bool keepAlive = false, CancellationToken ct = default)
@@ -200,11 +202,15 @@ internal sealed class ThinClientPoolDM(
             try { await _pingLoop.ConfigureAwait(false); }
             catch (OperationCanceledException) { /* expected */ }
         }
-        // TODO Phase 1.5: same await pattern for _updateLocatorLoop once
-        //   it's launched.
+        if (_updateLocatorLoop is not null)
+        {
+            try { await _updateLocatorLoop.ConfigureAwait(false); }
+            catch (OperationCanceledException) { /* expected */ }
+        }
 
         // 4. Dispose timers + sync primitives owned by this pool.
         _pingTimer?.Dispose();
+        _updateLocatorTimer?.Dispose();
         _pingSignal.Dispose();
         _connManageSignal.Dispose();
         _updateLocatorSignal.Dispose();
@@ -335,16 +341,17 @@ internal sealed class ThinClientPoolDM(
                 pingInterval);
         }
 
-        // TODO Phase 1.5: launch the rest of the workers and timers:
-        //   • _updateLocatorLoop = Task.Run(() => UpdateLocatorLoopAsync(_backgroundCts.Token));
-        //       only when _xmlPool.Locators.Count > 0.
-        //   • Statistics sampler             — bucket-1 (Meter-based).
+        ScheduleUpdateLocatorLoop();
+
+        // TODO Phase 1.5: Statistics sampler — bucket-1 (Meter-based).
         //
         // RemoteQueryService has no init step in Phase 1.4 (cppcache
         // RemoteQueryService::init() only does work when CQ is enabled;
         // pure OQL has nothing to initialise). Reappears with CQ in
         // Phase 2.
     }
+
+
 
     /// <summary>
     /// Periodic ping loop. Mirrors cppcache
@@ -447,6 +454,10 @@ internal sealed class ThinClientPoolDM(
             }
         }
     }
+
+
+
+
 
     /// <summary>
     /// Periodic conn-management loop. Mirrors cppcache
@@ -563,50 +574,18 @@ internal sealed class ThinClientPoolDM(
     /// refresh paths.
     /// </para>
     /// </remarks>
-    private Task<DnsEndPoint> SelectEndpointAsync(CancellationToken ct = default)
+    private async Task<DnsEndPoint> SelectEndpointAsync(CancellationToken ct = default)
     {
-        // Locator branch (priority) — cppcache ThinClientPoolDM.cpp:579-602.
+        // Locator branch (priority) — cppcache ThinClientPoolDM.cpp:577-604.
         if (xmlPool.Locators.Count > 0)
         {
-            // TODO Phase 1.5: await _locatorHelper.GetEndpointForNewFwdConnAsync(
-            //   excludeServers, _xmlPool.ServerGroup, currentServer, ct);
-            // then return new DnsEndPoint(outEndpoint.Host, outEndpoint.Port).
-            throw new NotImplementedException(
-                "TODO Phase 1.5: locator branch (ThinClientLocatorHelper).");
+            return await SelectEndpointFromLocatorAsync(ct).ConfigureAwait(false);
         }
 
-        // Static server branch — cppcache ThinClientPoolDM.cpp:603-628.
+        // Static server branch — cppcache ThinClientPoolDM.cpp:605-627.
         if (xmlPool.Servers.Count > 0)
         {
-            // Round-robin: read cursor, post-increment with wrap, all under
-            // the selection lock. Phase 1.5 will turn this into a do-while
-            // that skips entries in `excludeServers` (cppcache excludeServer
-            // helper) and throws NotConnectedException once every server is
-            // excluded.
-            int position;
-            CacheHostPortOptions server;
-            lock (_endpointSelectionLock)
-            {
-                if (_server >= xmlPool.Servers.Count)
-                {
-                    _server = 0;
-                }
-                position = _server;
-                server = xmlPool.Servers[position];
-                _server++;
-            }
-
-            // Convert from the Options-layer CacheHostPortOptions (XML/JSON
-            // bindable, mutable) to the runtime-layer DnsEndPoint (BCL,
-            // immutable, hashable). This is the single conversion point.
-            var endpoint = new DnsEndPoint(server.Host, server.Port);
-
-            // cppcache: LOGFINE("ThinClientPoolDM: Selecting endpoint [%s] from position %d", ...)
-            logger.LogDebug(
-                "ThinClientPoolDM: Selecting endpoint [{Host}:{Port}] from position {Position}",
-                endpoint.Host, endpoint.Port, position);
-
-            return Task.FromResult(endpoint);
+            return SelectEndpointFromStaticServerList();
         }
 
         // Unreachable: AddGeodeClient options validation rejects pools with
@@ -614,6 +593,47 @@ internal sealed class ThinClientPoolDM(
         // IllegalStateException("No locators or servers provided").
         throw new InvalidOperationException(
             $"Pool '{xmlPool.Name}' has neither Locators nor Servers configured.");
+    }
+
+
+
+    /// <summary>
+    /// Pick the next entry from the configured <c>Servers</c> list using
+    /// the round-robin cursor. Mirrors cppcache
+    /// <c>ThinClientPoolDM::selectEndpoint</c> static-server branch
+    /// (<c>ThinClientPoolDM.cpp:605-627</c>).
+    /// </summary>
+    /// <remarks>
+    /// Phase 1.5 will turn this into a do-while that skips entries in
+    /// <c>excludeServers</c> (cppcache <c>excludeServer</c> helper) and
+    /// throws <c>NotConnectedException</c> once every server is excluded.
+    /// </remarks>
+    private DnsEndPoint SelectEndpointFromStaticServerList()
+    {
+        int position;
+        CacheHostPortOptions server;
+        lock (_endpointSelectionLock)
+        {
+            if (_server >= xmlPool.Servers.Count)
+            {
+                _server = 0;
+            }
+            position = _server;
+            server = xmlPool.Servers[position];
+            _server++;
+        }
+
+        // Convert from the Options-layer CacheHostPortOptions (XML/JSON
+        // bindable, mutable) to the runtime-layer DnsEndPoint (BCL,
+        // immutable, hashable). This is the single conversion point.
+        var endpoint = new DnsEndPoint(server.Host, server.Port);
+
+        // cppcache: LOGFINE("ThinClientPoolDM: Selecting endpoint [%s] from position %d", ...)
+        logger.LogDebug(
+            "ThinClientPoolDM: Selecting endpoint [{Host}:{Port}] from position {Position}",
+            endpoint.Host, endpoint.Port, position);
+
+        return endpoint;
     }
 
     /// <summary>
@@ -1126,4 +1146,160 @@ internal sealed class ThinClientPoolDM(
     //   Task PingServerAsync(CancellationToken ct);
     //   Task RestoreMinConnectionsAsync(CancellationToken ct);
     //   Task CleanStaleConnectionsAsync(CancellationToken ct);
+
+
+    #region Locator
+
+    private readonly SemaphoreSlim _updateLocatorSignal = new(0, int.MaxValue);
+    private Task? _updateLocatorLoop;
+    private PeriodicTimer? _updateLocatorTimer;
+    private int _updateLocatorTickCount;
+    private ThinClientLocatorHelper? _locatorHelper;
+
+    /// <summary>
+    /// Test-only: number of updateLocatorList ticks that have entered
+    /// <see cref="UpdateLocatorsLocalAsync"/>. Same purpose as
+    /// <see cref="PingTickCount"/> — proves the loop is alive without
+    /// scraping logs.
+    /// </summary>
+    internal int UpdateLocatorTickCount => Volatile.Read(ref _updateLocatorTickCount);
+
+    /// <summary>
+    /// Maybe launch <see cref="UpdateLocatorLoopAsync"/>. Mirrors
+    /// cppcache <c>ThinClientPoolDM.cpp:292-302</c>: only fires when
+    /// the pool actually has locators configured (no locators ⇒
+    /// nothing to refresh). Default 5s baked into
+    /// <see cref="CachePoolOptions.UpdateLocatorListInterval"/>
+    /// (cppcache <c>PoolFactory.cpp:51</c>); validator rejects
+    /// negatives. Interval <c>== 0</c> disables (matches cppcache
+    /// <c>L286-289</c>).
+    /// </summary>
+    private void ScheduleUpdateLocatorLoop()
+    {
+        if (xmlPool.Locators.Count == 0) return;
+
+        // Build the helper once we know locators are configured. cppcache
+        // ThinClientPoolDM ctor builds m_locHelper unconditionally; we
+        // gate on Locators so the field stays null when the pool runs
+        // static-server mode (Step E's SelectEndpointAsync locator branch
+        // never fires either, so no consumer of _locatorHelper exists).
+        // CacheHostPortOptions → ServerLocation conversion is the
+        // options-layer ↔ wire-layer boundary.
+        var initialLocators = xmlPool.Locators
+            .Select(l => new ServerLocation(l.Host, l.Port))
+            .ToList();
+        // cppcache: getConnRetries() reads m_poolDM->getRetryAttempts(),
+        // falling back to 3 when ≤0 (ThinClientLocatorHelper.cpp:66-68).
+        // We pass it once at construction — Phase 1.5 MVP doesn't reload.
+        var connectionRetries = xmlPool.RetryAttempts ?? 0;
+        _locatorHelper = ActivatorUtilities.CreateInstance<ThinClientLocatorHelper>(
+            serviceProvider, initialLocators, connectionRetries);
+
+        var updateInterval = xmlPool.UpdateLocatorListInterval;
+        if (updateInterval <= TimeSpan.Zero)
+        {
+            logger.LogDebug(
+                "ThinClientPoolDM::startBackgroundThreads: Not scheduling updateLocatorList as interval {Interval}",
+                updateInterval);
+            return;
+        }
+
+        logger.LogDebug(
+            "ThinClientPoolDM::startBackgroundThreads: Scheduling updateLocatorList task at {Interval}",
+            updateInterval);
+        _updateLocatorTimer = new PeriodicTimer(updateInterval);
+        _updateLocatorLoop = UpdateLocatorLoopAsync(_backgroundCts.Token);
+    }
+
+    /// <summary>
+    /// Periodic locator-list refresh loop. Mirrors cppcache
+    /// <c>ThinClientPoolDM::updateLocatorList</c>
+    /// (<c>ThinClientPoolDM.cpp:2042-2053</c>): each tick asks every
+    /// configured locator who's alive and updates the pool's known
+    /// locator list accordingly. cppcache's body is a
+    /// <c>semaphore.acquire()</c>-blocked task whose semaphore is
+    /// released by a separate <c>FunctionExpiryTask</c>; we collapse
+    /// that two-piece pattern into a single <see cref="PeriodicTimer"/>
+    /// loop (same shape as <see cref="PingLoopAsync"/>).
+    /// </summary>
+    private async Task UpdateLocatorLoopAsync(CancellationToken ct)
+    {
+        // cppcache schedules with the same fixed 1 s initial delay as
+        // ping; first refresh fires ~1 s after pool init rather than
+        // after a full interval.
+        var initialDelay = TimeSpan.FromSeconds(1);
+
+        // cppcache LOGFINE("Starting updateLocatorList thread for pool %s", ...)
+        logger.LogDebug("Starting updateLocatorList loop for pool {Pool}", Name);
+        try
+        {
+            await Task.Delay(initialDelay, ct).ConfigureAwait(false);
+
+            do
+            {
+                try
+                {
+                    await UpdateLocatorsLocalAsync(ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    // One bad refresh must not kill the loop — next tick retries.
+                    logger.LogWarning(ex, "updateLocatorList tick failed for pool {Pool}", Name);
+                }
+            }
+            while (await _updateLocatorTimer!.WaitForNextTickAsync(ct).ConfigureAwait(false));
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // graceful shutdown via _backgroundCts.Cancel().
+        }
+        logger.LogDebug("Ending updateLocatorList loop for pool {Pool}", Name);
+    }
+
+    /// <summary>
+    /// One locator-list refresh. Mirrors cppcache
+    /// <c>(m_locHelper)-&gt;updateLocators(getServerGroup())</c>
+    /// (<c>ThinClientPoolDM.cpp:2048</c>): asks the configured
+    /// locators for the current authoritative locator set so the pool
+    /// can drop dead locators and pick up newly-added ones.
+    /// </summary>
+    /// <remarks>
+    /// Stub until <c>ThinClientLocatorHelper</c> lands; the loop's
+    /// scaffolding (timer, cancellation, error survival) is verified
+    /// first so its replacement only has to fill in the wire I/O.
+    /// </remarks>
+    private Task UpdateLocatorsLocalAsync(CancellationToken ct)
+    {
+        Interlocked.Increment(ref _updateLocatorTickCount);
+
+        // _locatorHelper is non-null here: ScheduleUpdateLocatorLoop
+        // both builds it and launches this loop only when locators
+        // are configured (same gate, same call site).
+        return _locatorHelper!.UpdateLocatorsAsync(xmlPool.ServerGroup, ct);
+    }
+
+    /// <summary>
+    /// Query the pool's <see cref="ThinClientLocatorHelper"/> for one
+    /// server. Mirrors cppcache <c>ThinClientPoolDM::selectEndpoint</c>
+    /// locator branch (<c>ThinClientPoolDM.cpp:580-604</c>).
+    /// </summary>
+    /// <remarks>
+    /// Phase 1.5 MVP: empty <c>excludeServers</c> and no
+    /// <c>currentServer</c> — neither failover-driven retry exclusion
+    /// nor server replacement is wired in yet.
+    /// </remarks>
+    private async Task<DnsEndPoint> SelectEndpointFromLocatorAsync(CancellationToken ct)
+    {
+        logger.LogDebug("ThinClientPoolDM: Asking locator for server from group [{Group}]", xmlPool.ServerGroup);
+
+        var server = await _locatorHelper!.GetEndpointForNewFwdConnAsync(xmlPool.ServerGroup, [], ct)
+            .ConfigureAwait(false);
+
+        var endpoint = new DnsEndPoint(server.Host, server.Port);
+
+        logger.LogDebug("ThinClientPoolDM: Locator returned endpoint [{Host}:{Port}]", endpoint.Host, endpoint.Port);
+        return endpoint;
+    }
+
+    #endregion
 }

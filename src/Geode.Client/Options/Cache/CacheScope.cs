@@ -4,7 +4,7 @@ namespace Geode.Client.Options;
 /// <c>region-attributes/scope</c> enumeration. Source:
 /// <c>cpp-cache-1.0.xsd</c>.
 /// </summary>
-public enum CacheXmlScope
+public enum CacheScope
 {
     Local,
     DistributedNoAck,

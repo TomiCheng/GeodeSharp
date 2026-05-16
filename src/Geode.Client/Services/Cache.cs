@@ -204,13 +204,13 @@ internal sealed class Cache(
     /// <para>
     /// <b>Path (b)</b>: caller used <see cref="PoolOptions"/> /
     /// <c>Action&lt;GeodeClientOptions&gt;</c> — equivalent to
-    /// cppcache programmatic API. <c>_options.CacheXml is null</c>.
+    /// cppcache programmatic API. <c>_options.Cache is null</c>.
     /// </para>
     /// <para>
     /// <b>Path (a)</b>: caller supplied declarative cache.xml-style
     /// config — equivalent to cppcache
     /// <c>initializeDeclarativeCache()</c>.
-    /// <c>_options.CacheXml is not null</c>.
+    /// <c>_options.Cache is not null</c>.
     /// </para>
     /// </remarks>
     private async Task InitializeCoreAsync(CancellationToken ct)
@@ -229,18 +229,18 @@ internal sealed class Cache(
         await tcrConnectionManager.InitAsync(isPool: true, ct).ConfigureAwait(false);
 
         // ── 3-5. Build and init pools ───────────────────────────
-        // Both paths produce a sequence of CacheXmlPoolOptions; the
+        // Both paths produce a sequence of CachePoolOptions; the
         // foreach below builds + inits each one uniformly. Multi-pool /
         // multi-server / locator gating now lives inside
         // ThinClientPoolDM's ctor, so Cache stays generic. Required-
         // field validation is the Options layer's job (Phase 1.1 收尾);
         // here we trust the input.
-        if (_options.CacheXml is null)
+        if (_options.Cache is null)
         {
             // path (b) — Options-based (programmatic, the default).
             // TODO step 3.b: enumerate a yet-to-be-added programmatic
             //   pool-config surface (e.g. _options.Pools) and project
-            //   into CacheXmlPoolOptions-shape items.
+            //   into CachePoolOptions-shape items.
             throw new NotImplementedException(
                 "TODO: Cache.InitializeCoreAsync step 3.b (path b — Options-based)");
         }
@@ -248,17 +248,17 @@ internal sealed class Cache(
         {
             // path (a) — Declarative cache.xml-style. Mirrors cppcache
             // CacheImpl::initializeDeclarativeCache(xml).
-            await InitializeDeclarativeCacheAsync(_options.CacheXml, ct).ConfigureAwait(false);
+            await InitializeDeclarativeCacheAsync(_options.Cache, ct).ConfigureAwait(false);
         }
 
         // ── 7. PDX / serialization registration (Phase 2+) ──────
-        // TODO: if (_options.CacheXml?.Pdx is { } pdx) apply pdx
+        // TODO: if (_options.Cache?.Pdx is { } pdx) apply pdx
         //   ignoreUnreadFields / readSerialized to _pdxTypeRegistry.
     }
 
     /// <summary>
     /// Build pools and regions from an already-bound
-    /// <see cref="CacheXmlOptions"/> tree. Mirrors cppcache
+    /// <see cref="CacheOptions"/> tree. Mirrors cppcache
     /// <c>CacheImpl::initializeDeclarativeCache(const std::string&amp;)</c>
     /// — the difference is we work off already-parsed options instead
     /// of running an XML parser (Xerces is bucket 1, cut per
@@ -269,12 +269,12 @@ internal sealed class Cache(
     /// references), then regions. Each pool's <c>InitAsync</c> opens
     /// real sockets — this is where I/O actually fires.
     /// </remarks>
-    private async Task InitializeDeclarativeCacheAsync(CacheXmlOptions cacheXml, CancellationToken ct)
+    private async Task InitializeDeclarativeCacheAsync(CacheOptions cache, CancellationToken ct)
     {
         // ── 4-5. Pools ──────────────────────────────────────────
-        // cppcache equivalent: CacheXmlParser builds pools from <pool>
+        // cppcache equivalent: CacheParser builds pools from <pool>
         // elements during create().
-        foreach (var xmlPool in cacheXml.Pools)
+        foreach (var xmlPool in cache.Pools)
         {
             // ── 4. Build ThinClientPoolDM + register ────────────
             // ctor enforces Phase 1.5 deferred limits (multi-server
@@ -297,11 +297,11 @@ internal sealed class Cache(
         }
 
         // ── 6. Build regions ────────────────────────────────────
-        // cppcache equivalent: CacheXmlParser::create iterates
+        // cppcache equivalent: CacheParser::create iterates
         // <region> elements and calls CacheImpl::createRegion(name,
         // attrs) for each top-level region (sub-regions handled
         // recursively in the parser itself).
-        foreach (var xmlRegion in cacheXml.Regions)
+        foreach (var xmlRegion in cache.Regions)
         {
             // Name structural validation (non-empty / non-whitespace)
             // and RefId existence are enforced by
@@ -309,12 +309,12 @@ internal sealed class Cache(
             // inline checks needed here.
 
             // ── 6.1 Resolve refid template ─────────────────
-            // cppcache CacheXmlParser folds <region refid="..."> onto
+            // cppcache CacheParser folds <region refid="..."> onto
             // a previously declared <region-attributes id="..."> at
-            // parse time (CacheXmlParser.cpp:777-786). We do the same
+            // parse time (CacheParser.cpp:777-786). We do the same
             // here: clone the template, then let xmlRegion.Attributes
             // override non-null / non-empty fields.
-            var attributes = ResolveAttributes(xmlRegion, cacheXml.NamedAttributes);
+            var attributes = ResolveAttributes(xmlRegion, cache.NamedAttributes);
 
             // ── 6.2 Resolve pool ───────────────────────────
             // cppcache CacheImpl::createRegion_internal
@@ -325,7 +325,7 @@ internal sealed class Cache(
             if (pool is null)
             {
                 // Either PoolName references a pool not declared in
-                // CacheXml.Pools, or PoolName is empty and no pools
+                // Cache.Pools, or PoolName is empty and no pools
                 // are registered (the validator should have caught
                 // the second case; defensive guard).
                 throw new InvalidOperationException(
@@ -367,13 +367,13 @@ internal sealed class Cache(
             // cppcache CacheImpl::createRegion throws
             // RegionExistsException when m_regions already holds
             // the name. Future: GeodeClientOptionsValidator should
-            // also flag duplicate names in CacheXml.Regions at
+            // also flag duplicate names in Cache.Regions at
             // startup so this guard becomes pure belt-and-braces.
             if (!_regions.TryAdd(xmlRegion.Name, region))
             {
                 throw new InvalidOperationException(
                     $"Region '{xmlRegion.Name}' is declared more than once " +
-                    "in CacheXml.Regions.");
+                    "in Cache.Regions.");
             }
 
             // ── 6.6 Sub-region children ────────────────────
@@ -381,7 +381,7 @@ internal sealed class Cache(
             {
                 // TODO: recurse into ChildRegions and build each as
                 //   a sub-region of `region`. Mirrors cppcache
-                //   CacheXmlParser walking nested <region> elements
+                //   CacheParser walking nested <region> elements
                 //   and calling RegionInternal::createSubregion on
                 //   the parent. Currently throws so XML-declared
                 //   sub-regions aren't silently dropped.
@@ -396,29 +396,29 @@ internal sealed class Cache(
     /// <summary>
     /// Apply a refid template (if any) and merge the region's inline
     /// attribute overrides on top. Mirrors cppcache
-    /// <c>CacheXmlParser</c> refid handling
-    /// (<c>CacheXmlParser.cpp:777-786</c>): non-empty
-    /// <see cref="CacheXmlRegionOptions.RefId"/> clones the named
-    /// template; inline <see cref="CacheXmlRegionOptions.Attributes"/>
+    /// <c>CacheParser</c> refid handling
+    /// (<c>CacheParser.cpp:777-786</c>): non-empty
+    /// <see cref="CacheRegionOptions.RefId"/> clones the named
+    /// template; inline <see cref="CacheRegionOptions.Attributes"/>
     /// then overrides each field that is non-null (for value-type
     /// nullables) or non-empty (for plain strings).
     /// </summary>
     /// <remarks>
     /// <para>
     /// Chained refid is not honoured — a template's own
-    /// <see cref="CacheXmlRegionAttributesOptions.RefId"/> is ignored;
+    /// <see cref="CacheRegionAttributesOptions.RefId"/> is ignored;
     /// templates must be self-contained.
     /// </para>
     /// <para>
     /// Returns <paramref name="xmlRegion"/>'s
-    /// <see cref="CacheXmlRegionOptions.Attributes"/> verbatim (same
+    /// <see cref="CacheRegionOptions.Attributes"/> verbatim (same
     /// reference) when there is no <c>RefId</c> — no merge work, no
     /// allocation.
     /// </para>
     /// </remarks>
-    private static CacheXmlRegionAttributesOptions ResolveAttributes(
-        CacheXmlRegionOptions xmlRegion,
-        IReadOnlyDictionary<string, CacheXmlRegionAttributesOptions> namedAttributes)
+    private static CacheRegionAttributesOptions ResolveAttributes(
+        CacheRegionOptions xmlRegion,
+        IReadOnlyDictionary<string, CacheRegionAttributesOptions> namedAttributes)
     {
         if (string.IsNullOrEmpty(xmlRegion.RefId))
         {
@@ -431,11 +431,11 @@ internal sealed class Cache(
         {
             throw new InvalidOperationException(
                 $"Region '{xmlRegion.Name}' RefId='{xmlRegion.RefId}' " +
-                "does not match any key in CacheXml.NamedAttributes.");
+                "does not match any key in Cache.NamedAttributes.");
         }
 
         var inline = xmlRegion.Attributes;
-        return new CacheXmlRegionAttributesOptions
+        return new CacheRegionAttributesOptions
         {
             // Nullable value types: inline non-null wins.
             CachingEnabled = inline.CachingEnabled ?? template.CachingEnabled,
@@ -454,7 +454,7 @@ internal sealed class Cache(
             PoolName = string.IsNullOrEmpty(inline.PoolName) ? template.PoolName : inline.PoolName,
 
             // Inner RefId is not honoured (mirrors decision in
-            // CacheXmlRegionAttributesOptions doc); leave empty so the
+            // CacheRegionAttributesOptions doc); leave empty so the
             // resolved attributes don't accidentally trigger a second
             // round of resolution somewhere.
             RefId = string.Empty,

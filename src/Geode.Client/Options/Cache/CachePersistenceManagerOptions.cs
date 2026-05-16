@@ -2,14 +2,14 @@ namespace Geode.Client.Options;
 
 /// <summary>
 /// Mirrors <c>&lt;persistence-manager&gt;</c>. Extends
-/// <see cref="CacheXmlLibraryOptions"/> with a free-form
+/// <see cref="CacheLibraryOptions"/> with a free-form
 /// <c>&lt;properties&gt;&lt;property name= value=&gt;</c> bag.
 /// </summary>
-public class CacheXmlPersistenceManagerOptions : CacheXmlLibraryOptions
+public class CachePersistenceManagerOptions : CacheLibraryOptions
 {
-    public CacheXmlPersistenceManagerOptions() { }
+    public CachePersistenceManagerOptions() { }
 
-    public CacheXmlPersistenceManagerOptions(CacheXmlPersistenceManagerOptions other) : base(other)
+    public CachePersistenceManagerOptions(CachePersistenceManagerOptions other) : base(other)
     {
         Properties = new Dictionary<string, string>(other.Properties);
     }
@@ -24,7 +24,7 @@ public class CacheXmlPersistenceManagerOptions : CacheXmlLibraryOptions
     /// Covariant return — a base-typed slot dispatches virtually to
     /// this override and gets the subclass runtime type back.
     /// </remarks>
-    public override CacheXmlPersistenceManagerOptions Clone() => new(this);
+    public override CachePersistenceManagerOptions Clone() => new(this);
 
     /// <inheritdoc />
     public override IEnumerable<string> Validate(string prefix)

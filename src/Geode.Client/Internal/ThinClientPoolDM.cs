@@ -35,7 +35,7 @@ namespace Geode.Client.Internal;
 /// </remarks>
 #pragma warning disable CS0169, CS0414, CS0649, CS9113 // placeholder fields mirroring ThinClientPoolDM; wired up phase by phase
 internal sealed class ThinClientPoolDM(
-    CacheXmlPoolOptions xmlPool,
+    CachePoolOptions xmlPool,
     GeodeClientOptions options,
     TcrConnectionManager connManager,
     IServiceProvider serviceProvider,
@@ -316,7 +316,7 @@ internal sealed class ThinClientPoolDM(
         // immediate probe (then this loop becomes WaitAny(timer, signal)).
         //
         // Interval resolution mirrors cppcache getPingInterval(): per-pool
-        // override (CacheXmlPoolOptions.PingInterval) wins, otherwise fall
+        // override (CachePoolOptions.PingInterval) wins, otherwise fall
         // back to the system default (PoolOptions.PingInterval, 10s).
         // Interval <= 0 disables ping entirely (cppcache L286-289).
         var pingInterval = xmlPool.PingInterval ?? options.Pool.PingInterval;
@@ -584,7 +584,7 @@ internal sealed class ThinClientPoolDM(
             // helper) and throws NotConnectedException once every server is
             // excluded.
             int position;
-            CacheXmlHostPort server;
+            CacheHostPortOptions server;
             lock (_endpointSelectionLock)
             {
                 if (_server >= xmlPool.Servers.Count)
@@ -596,7 +596,7 @@ internal sealed class ThinClientPoolDM(
                 _server++;
             }
 
-            // Convert from the Options-layer CacheXmlHostPort (XML/JSON
+            // Convert from the Options-layer CacheHostPortOptions (XML/JSON
             // bindable, mutable) to the runtime-layer DnsEndPoint (BCL,
             // immutable, hashable). This is the single conversion point.
             var endpoint = new DnsEndPoint(server.Host, server.Port);

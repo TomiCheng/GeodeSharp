@@ -1,20 +1,20 @@
 using Geode.Client.Options;
 using Xunit;
 
-namespace Geode.Client.Tests.Options.CacheXml;
+namespace Geode.Client.Tests.Options.Cache;
 
-public class CacheXmlOptionsTests
+public class CacheOptionsTests
 {
-    private static CacheXmlOptions MakeValid()
+    private static CacheOptions MakeValid()
     {
-        return new CacheXmlOptions
+        return new CacheOptions
         {
             Pools =
             {
-                new CacheXmlPoolOptions
+                new CachePoolOptions
                 {
                     Name = "p1",
-                    Locators = { new CacheXmlHostPort { Host = "locator", Port = 10334 } },
+                    Locators = { new CacheHostPortOptions { Host = "locator", Port = 10334 } },
                 },
             },
         };
@@ -41,8 +41,8 @@ public class CacheXmlOptionsTests
     public void Clone_creates_independent_collections()
     {
         var original = MakeValid();
-        original.Regions.Add(new CacheXmlRegionOptions { Name = "r" });
-        original.NamedAttributes["tmpl"] = new CacheXmlRegionAttributesOptions { PoolName = "p1" };
+        original.Regions.Add(new CacheRegionOptions { Name = "r" });
+        original.NamedAttributes["tmpl"] = new CacheRegionAttributesOptions { PoolName = "p1" };
 
         var clone = original.Clone();
 
@@ -60,12 +60,12 @@ public class CacheXmlOptionsTests
     public void Clone_mutating_clone_does_not_affect_original()
     {
         var original = MakeValid();
-        original.Regions.Add(new CacheXmlRegionOptions { Name = "r" });
-        original.NamedAttributes["tmpl"] = new CacheXmlRegionAttributesOptions { PoolName = "p1" };
+        original.Regions.Add(new CacheRegionOptions { Name = "r" });
+        original.NamedAttributes["tmpl"] = new CacheRegionAttributesOptions { PoolName = "p1" };
 
         var clone = original.Clone();
 
-        clone.Pools.Add(new CacheXmlPoolOptions { Name = "p2" });
+        clone.Pools.Add(new CachePoolOptions { Name = "p2" });
         clone.Pools[0].Name = "mutated";
         clone.Regions[0].Name = "mutated-region";
         clone.NamedAttributes["tmpl"].PoolName = "mutated-pool";
@@ -108,7 +108,7 @@ public class CacheXmlOptionsTests
     public void Validate_region_refid_unmatched_fails()
     {
         var opts = MakeValid();
-        opts.Regions.Add(new CacheXmlRegionOptions { Name = "r", RefId = "missing-template" });
+        opts.Regions.Add(new CacheRegionOptions { Name = "r", RefId = "missing-template" });
         // No NamedAttributes entry — refid dangling.
 
         var failures = opts.Validate("cx").ToList();
@@ -119,8 +119,8 @@ public class CacheXmlOptionsTests
     public void Validate_region_refid_matched_passes()
     {
         var opts = MakeValid();
-        opts.NamedAttributes["tmpl"] = new CacheXmlRegionAttributesOptions { PoolName = "p1" };
-        opts.Regions.Add(new CacheXmlRegionOptions { Name = "r", RefId = "tmpl" });
+        opts.NamedAttributes["tmpl"] = new CacheRegionAttributesOptions { PoolName = "p1" };
+        opts.Regions.Add(new CacheRegionOptions { Name = "r", RefId = "tmpl" });
 
         Assert.Empty(opts.Validate("cx"));
     }
@@ -130,7 +130,7 @@ public class CacheXmlOptionsTests
     {
         // RefId = "" means "no template" — no cross-ref to satisfy.
         var opts = MakeValid();
-        opts.Regions.Add(new CacheXmlRegionOptions { Name = "r", RefId = "" });
+        opts.Regions.Add(new CacheRegionOptions { Name = "r", RefId = "" });
 
         Assert.Empty(opts.Validate("cx"));
     }

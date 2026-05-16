@@ -20,24 +20,24 @@ public class RegionQueryConvenienceIntegrationTests(GeodeFixture fx)
 
     private const string RegionName = "test";
 
-    private void ConfigureCacheXml(GeodeClientOptions config)
+    private void ConfigureCache(GeodeClientOptions config)
     {
-        config.CacheXml = new CacheXmlOptions
+        config.Cache = new CacheOptions
         {
             Pools =
             {
-                new CacheXmlPoolOptions
+                new CachePoolOptions
                 {
                     Name = "testPool",
                     Servers =
                     {
-                        new CacheXmlHostPort { Host = fx.LocatorHost, Port = fx.ServerPort },
+                        new CacheHostPortOptions { Host = fx.LocatorHost, Port = fx.ServerPort },
                     },
                 },
             },
             Regions =
             {
-                new CacheXmlRegionOptions
+                new CacheRegionOptions
                 {
                     Name = RegionName,
                     Attributes = { PoolName = "testPool" },
@@ -53,7 +53,7 @@ public class RegionQueryConvenienceIntegrationTests(GeodeFixture fx)
 
         var services = new ServiceCollection()
             .AddLogging()
-            .AddGeodeClient(ConfigureCacheXml)
+            .AddGeodeClient(ConfigureCache)
             .BuildServiceProvider();
 
         var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();

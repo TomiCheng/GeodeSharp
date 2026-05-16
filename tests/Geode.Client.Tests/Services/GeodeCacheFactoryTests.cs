@@ -18,14 +18,14 @@ namespace Geode.Client.Tests.Services;
 public class GeodeCacheFactoryTests
 {
     private static void MinimalPool(GeodeClientOptions opt) =>
-        opt.CacheXml = new CacheXmlOptions
+        opt.Cache = new CacheOptions
         {
             Pools =
             {
-                new CacheXmlPoolOptions
+                new CachePoolOptions
                 {
                     Name = "test",
-                    Servers = { new CacheXmlHostPort { Host = "localhost", Port = 40404 } },
+                    Servers = { new CacheHostPortOptions { Host = "localhost", Port = 40404 } },
                 },
             },
         };
@@ -100,16 +100,16 @@ public class GeodeCacheFactoryTests
         var monitor = sp.GetRequiredService<IOptionsMonitor<GeodeClientOptions>>();
 
         // Snapshot the registered options BEFORE Create's action runs.
-        var beforePoolName = monitor.Get("").CacheXml!.Pools[0].Name;
+        var beforePoolName = monitor.Get("").Cache!.Pools[0].Name;
         Assert.Equal("test", beforePoolName);
 
         f.Create(action: (_, o) =>
         {
-            o.CacheXml!.Pools[0].Name = "mutated-by-action";
+            o.Cache!.Pools[0].Name = "mutated-by-action";
         });
 
         // Registered options must be untouched — the action ran on a clone.
-        var afterPoolName = monitor.Get("").CacheXml!.Pools[0].Name;
+        var afterPoolName = monitor.Get("").Cache!.Pools[0].Name;
         Assert.Equal("test", afterPoolName);
     }
 
@@ -137,7 +137,7 @@ public class GeodeCacheFactoryTests
 
         // Action breaks validation: clear all pools.
         var ex = Assert.Throws<OptionsValidationException>(() =>
-            f.Create(action: (_, o) => o.CacheXml!.Pools.Clear()));
+            f.Create(action: (_, o) => o.Cache!.Pools.Clear()));
 
         Assert.Contains(ex.Failures, msg => msg.Contains("Pools"));
 

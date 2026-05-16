@@ -4,7 +4,7 @@ namespace Geode.Client.Options;
 /// Mirrors the cppcache <c>cache.xml</c> declarative-cache schema
 /// (<c>xsds/cpp-cache-1.0.xsd</c>, root element
 /// <c>&lt;client-cache&gt;</c>). Parser source:
-/// <c>cppcache/src/CacheXmlParser.cpp</c>.
+/// <c>cppcache/src/CacheParser.cpp</c>.
 /// </summary>
 /// <remarks>
 /// CLAUDE.md cuts <c>cache.xml</c> entirely; this whole tree is on the
@@ -13,13 +13,13 @@ namespace Geode.Client.Options;
 /// <c>SystemProperties</c>-derived options (<see cref="PoolOptions"/>,
 /// <see cref="PdxOptions"/>, ...) because cppcache models these as two
 /// different sources (<c>SystemProperties</c> vs <c>PoolFactory</c> /
-/// <c>CacheXmlCreation</c>) — collapsing them would hide that.
+/// <c>CacheCreation</c>) — collapsing them would hide that.
 /// </remarks>
-public class CacheXmlOptions : ICloneable
+public class CacheOptions : ICloneable
 {
-    public CacheXmlOptions() { }
+    public CacheOptions() { }
 
-    public CacheXmlOptions(CacheXmlOptions other)
+    public CacheOptions(CacheOptions other)
     {
         Endpoints = other.Endpoints;
         RedundancyLevel = other.RedundancyLevel;
@@ -51,50 +51,50 @@ public class CacheXmlOptions : ICloneable
     /// <summary>
     /// Named connection pools declared in the XML
     /// (<c>&lt;pool&gt;</c>). cppcache stores these in
-    /// <c>PoolManager</c>, keyed by <see cref="CacheXmlPoolOptions.Name"/>.
+    /// <c>PoolManager</c>, keyed by <see cref="CachePoolOptions.Name"/>.
     /// </summary>
-    public List<CacheXmlPoolOptions> Pools { get; set; } = new();
+    public List<CachePoolOptions> Pools { get; set; } = new();
 
     /// <summary>
     /// Top-level regions declared in the XML
     /// (<c>&lt;region&gt;</c>). Regions can nest via
-    /// <see cref="CacheXmlRegionOptions.ChildRegions"/>.
+    /// <see cref="CacheRegionOptions.ChildRegions"/>.
     /// </summary>
-    public List<CacheXmlRegionOptions> Regions { get; set; } = new();
+    public List<CacheRegionOptions> Regions { get; set; } = new();
 
     /// <summary>
     /// PDX defaults declared in the XML (<c>&lt;pdx&gt;</c>).
     /// </summary>
-    public CacheXmlPdxOptions Pdx { get; set; } = new();
+    public CachePdxOptions Pdx { get; set; } = new();
 
     /// <summary>
     /// Reusable region-attributes templates, keyed by name. A
-    /// <see cref="CacheXmlRegionOptions"/> with non-empty
-    /// <see cref="CacheXmlRegionOptions.RefId"/> looks up its template
+    /// <see cref="CacheRegionOptions"/> with non-empty
+    /// <see cref="CacheRegionOptions.RefId"/> looks up its template
     /// here at <c>InitializeCoreAsync</c> time; the template's values
     /// supply defaults that the region's inline
-    /// <see cref="CacheXmlRegionOptions.Attributes"/> can override.
+    /// <see cref="CacheRegionOptions.Attributes"/> can override.
     /// Mirrors cppcache <c>&lt;region-attributes id="..."&gt;</c> →
     /// <c>&lt;region refid="..."&gt;</c> template inheritance
-    /// (<c>cppcache/src/CacheXmlParser.cpp</c> <c>namedRegions_</c>).
+    /// (<c>cppcache/src/CacheParser.cpp</c> <c>namedRegions_</c>).
     /// </summary>
     /// <remarks>
     /// Single-level only — a template's own <c>RefId</c> is not
     /// followed (no chained inheritance). Inner
     /// <c>&lt;region-attributes refid="..."&gt;</c> is also unsupported
-    /// today; only the outer <see cref="CacheXmlRegionOptions.RefId"/>
+    /// today; only the outer <see cref="CacheRegionOptions.RefId"/>
     /// triggers resolution.
     /// </remarks>
-    public Dictionary<string, CacheXmlRegionAttributesOptions> NamedAttributes { get; set; } = new();
+    public Dictionary<string, CacheRegionAttributesOptions> NamedAttributes { get; set; } = new();
 
     /// <summary>Deep clone via copy constructor.</summary>
-    public CacheXmlOptions Clone() => new(this);
+    public CacheOptions Clone() => new(this);
     object ICloneable.Clone() => Clone();
 
     /// <summary>
     /// Validate. Rules migrated from <c>GeodeClientOptionsValidator</c>:
     /// <see cref="Pools"/> must contain at least one entry; each region's
-    /// <see cref="CacheXmlRegionOptions.RefId"/> must reference a key in
+    /// <see cref="CacheRegionOptions.RefId"/> must reference a key in
     /// <see cref="NamedAttributes"/>. Recurses into pools and regions.
     /// </summary>
     public IEnumerable<string> Validate(string prefix)
@@ -111,8 +111,8 @@ public class CacheXmlOptions : ICloneable
             foreach (var f in Regions[i].Validate($"{prefix}.Regions[{i}]")) yield return f;
 
             // Cross-ref check needs NamedAttributes — done here, not in
-            // CacheXmlRegionOptions.Validate (which doesn't see siblings).
-            // Mirrors cppcache CacheXmlParser.cpp:777-786.
+            // CacheRegionOptions.Validate (which doesn't see siblings).
+            // Mirrors cppcache CacheParser.cpp:777-786.
             var refId = Regions[i].RefId;
             if (!string.IsNullOrEmpty(refId) && !NamedAttributes.ContainsKey(refId))
                 yield return $"{prefix}.Regions[{i}].RefId='{refId}' does not match any key in {prefix}.NamedAttributes.";

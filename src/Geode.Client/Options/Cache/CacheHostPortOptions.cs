@@ -5,11 +5,11 @@ namespace Geode.Client.Options;
 /// <c>&lt;locator&gt;</c> and <c>&lt;server&gt;</c> entries inside a
 /// <c>&lt;pool&gt;</c>.
 /// </summary>
-public class CacheXmlHostPort : ICloneable
+public class CacheHostPortOptions : ICloneable
 {
-    public CacheXmlHostPort() { }
+    public CacheHostPortOptions() { }
 
-    public CacheXmlHostPort(CacheXmlHostPort other)
+    public CacheHostPortOptions(CacheHostPortOptions other)
     {
         Host = other.Host;
         Port = other.Port;
@@ -22,13 +22,13 @@ public class CacheXmlHostPort : ICloneable
     public int Port { get; set; }
 
     /// <summary>Deep clone via copy constructor.</summary>
-    public CacheXmlHostPort Clone() => new(this);
+    public CacheHostPortOptions Clone() => new(this);
     object ICloneable.Clone() => Clone();
 
     /// <summary>
     /// Validate this entry. Failures are returned as path-prefixed
     /// strings (the caller supplies the prefix, e.g.
-    /// <c>"GeodeClientOptions.CacheXml.Pools[0].Locators[2]"</c>).
+    /// <c>"GeodeClientOptions.Cache.Pools[0].Locators[2]"</c>).
     /// </summary>
     public IEnumerable<string> Validate(string prefix)
     {

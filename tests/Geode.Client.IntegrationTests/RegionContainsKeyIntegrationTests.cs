@@ -26,18 +26,18 @@ public class RegionContainsKeyIntegrationTests(GeodeFixture fx)
     /// pre-creates as REPLICATE inside the container). Pure defaults
     /// — no overrides, matches cppcache default usage.
     /// </summary>
-    private void ConfigureCacheXml(GeodeClientOptions config)
+    private void ConfigureCache(GeodeClientOptions config)
     {
-        config.CacheXml = new CacheXmlOptions
+        config.Cache = new CacheOptions
         {
             Pools =
             {
-                new CacheXmlPoolOptions
+                new CachePoolOptions
                 {
                     Name = "testPool",
                     Servers =
                     {
-                        new CacheXmlHostPort
+                        new CacheHostPortOptions
                         {
                             Host = fx.LocatorHost,
                             Port = fx.ServerPort,
@@ -47,7 +47,7 @@ public class RegionContainsKeyIntegrationTests(GeodeFixture fx)
             },
             Regions =
             {
-                new CacheXmlRegionOptions
+                new CacheRegionOptions
                 {
                     Name = "test",
                     Attributes = { PoolName = "testPool" },
@@ -63,7 +63,7 @@ public class RegionContainsKeyIntegrationTests(GeodeFixture fx)
 
         await using var services = new ServiceCollection()
             .AddLogging()
-            .AddGeodeClient(ConfigureCacheXml)
+            .AddGeodeClient(ConfigureCache)
             .BuildServiceProvider();
 
         var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();

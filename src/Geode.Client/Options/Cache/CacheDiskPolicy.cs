@@ -3,7 +3,7 @@ namespace Geode.Client.Options;
 /// <summary>
 /// <c>region-attributes/disk-policy</c> enumeration.
 /// </summary>
-public enum CacheXmlDiskPolicy
+public enum CacheDiskPolicy
 {
     None,
     Overflows,

@@ -37,7 +37,7 @@ internal sealed partial class ThinClientRegion(
     SerializationRegistry serializationRegistry,
     EventIdGenerator eventIdGenerator,
     string name,
-    CacheXmlRegionAttributesOptions attributes,
+    CacheRegionAttributesOptions attributes,
     ThinClientBaseDM dm)
     : LocalRegion(name, null, attributes)
 {

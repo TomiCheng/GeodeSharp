@@ -212,32 +212,32 @@ public class PrimitiveOptionsTests
         public void Validate_empty() => Assert.Empty(new PoolOptions().Validate("p"));
     }
 
-    public class CacheXmlExpirationOptionsTests
+    public class CacheExpirationOptionsTests
     {
         [Fact]
         public void Clone_round_trips()
         {
-            var original = new CacheXmlExpirationOptions
+            var original = new CacheExpirationOptions
             {
                 Timeout = TimeSpan.FromMinutes(15),
-                Action = CacheXmlExpirationAction.Invalidate,
+                Action = CacheExpirationAction.Invalidate,
             };
             var clone = original.Clone();
 
             Assert.Equal(TimeSpan.FromMinutes(15), clone.Timeout);
-            Assert.Equal(CacheXmlExpirationAction.Invalidate, clone.Action);
+            Assert.Equal(CacheExpirationAction.Invalidate, clone.Action);
         }
 
         [Fact]
-        public void Validate_empty() => Assert.Empty(new CacheXmlExpirationOptions().Validate("e"));
+        public void Validate_empty() => Assert.Empty(new CacheExpirationOptions().Validate("e"));
     }
 
-    public class CacheXmlPdxOptionsTests
+    public class CachePdxOptionsTests
     {
         [Fact]
         public void Clone_round_trips()
         {
-            var original = new CacheXmlPdxOptions
+            var original = new CachePdxOptions
             {
                 IgnoreUnreadFields = true,
                 ReadSerialized = false,
@@ -249,6 +249,6 @@ public class PrimitiveOptionsTests
         }
 
         [Fact]
-        public void Validate_empty() => Assert.Empty(new CacheXmlPdxOptions().Validate("px"));
+        public void Validate_empty() => Assert.Empty(new CachePdxOptions().Validate("px"));
     }
 }

@@ -5,11 +5,11 @@ namespace Geode.Client.Options;
 /// because the XSD defaults are unspecified — null means "fall back to
 /// whatever cppcache decides".
 /// </summary>
-public class CacheXmlRegionAttributesOptions : ICloneable
+public class CacheRegionAttributesOptions : ICloneable
 {
-    public CacheXmlRegionAttributesOptions() { }
+    public CacheRegionAttributesOptions() { }
 
-    public CacheXmlRegionAttributesOptions(CacheXmlRegionAttributesOptions other)
+    public CacheRegionAttributesOptions(CacheRegionAttributesOptions other)
     {
         CachingEnabled = other.CachingEnabled;
         CloningEnabled = other.CloningEnabled;
@@ -28,8 +28,8 @@ public class CacheXmlRegionAttributesOptions : ICloneable
         RegionIdleTime = other.RegionIdleTime?.Clone();
         EntryTimeToLive = other.EntryTimeToLive?.Clone();
         EntryIdleTime = other.EntryIdleTime?.Clone();
-        // Virtual Clone() on CacheXmlLibraryOptions dispatches to the
-        // runtime subtype (e.g. CacheXmlPersistenceManagerOptions),
+        // Virtual Clone() on CacheLibraryOptions dispatches to the
+        // runtime subtype (e.g. CachePersistenceManagerOptions),
         // so polymorphism is preserved without a cast.
         PartitionResolver = other.PartitionResolver?.Clone();
         CacheLoader = other.CacheLoader?.Clone();
@@ -45,7 +45,7 @@ public class CacheXmlRegionAttributesOptions : ICloneable
     public bool? CloningEnabled { get; set; }
 
     /// <summary><c>scope</c>.</summary>
-    public CacheXmlScope? Scope { get; set; }
+    public CacheScope? Scope { get; set; }
 
     /// <summary><c>initial-capacity</c>.</summary>
     public int? InitialCapacity { get; set; }
@@ -60,7 +60,7 @@ public class CacheXmlRegionAttributesOptions : ICloneable
     public int? LruEntriesLimit { get; set; }
 
     /// <summary><c>disk-policy</c>.</summary>
-    public CacheXmlDiskPolicy? DiskPolicy { get; set; }
+    public CacheDiskPolicy? DiskPolicy { get; set; }
 
     /// <summary><c>endpoints</c>.</summary>
     public string Endpoints { get; set; } = string.Empty;
@@ -69,8 +69,8 @@ public class CacheXmlRegionAttributesOptions : ICloneable
     public bool? ClientNotification { get; set; }
 
     /// <summary><c>pool-name</c> — references a
-    /// <see cref="CacheXmlPoolOptions.Name"/> in
-    /// <see cref="CacheXmlOptions.Pools"/>.</summary>
+    /// <see cref="CachePoolOptions.Name"/> in
+    /// <see cref="CacheOptions.Pools"/>.</summary>
     public string PoolName { get; set; } = string.Empty;
 
     /// <summary><c>concurrency-checks-enabled</c>.</summary>
@@ -79,40 +79,40 @@ public class CacheXmlRegionAttributesOptions : ICloneable
     /// <summary>
     /// Inner <c>&lt;region-attributes refid="..."&gt;</c> reference.
     /// Mirrors the cppcache schema; currently ignored — refid resolution
-    /// only honours the outer <see cref="CacheXmlRegionOptions.RefId"/>.
+    /// only honours the outer <see cref="CacheRegionOptions.RefId"/>.
     /// Wire this in when a consumer actually needs inner-element refid.
     /// </summary>
     public string RefId { get; set; } = string.Empty;
 
     /// <summary><c>&lt;region-time-to-live&gt;</c>.</summary>
-    public CacheXmlExpirationOptions? RegionTimeToLive { get; set; }
+    public CacheExpirationOptions? RegionTimeToLive { get; set; }
 
     /// <summary><c>&lt;region-idle-time&gt;</c>.</summary>
-    public CacheXmlExpirationOptions? RegionIdleTime { get; set; }
+    public CacheExpirationOptions? RegionIdleTime { get; set; }
 
     /// <summary><c>&lt;entry-time-to-live&gt;</c>.</summary>
-    public CacheXmlExpirationOptions? EntryTimeToLive { get; set; }
+    public CacheExpirationOptions? EntryTimeToLive { get; set; }
 
     /// <summary><c>&lt;entry-idle-time&gt;</c>.</summary>
-    public CacheXmlExpirationOptions? EntryIdleTime { get; set; }
+    public CacheExpirationOptions? EntryIdleTime { get; set; }
 
     /// <summary><c>&lt;partition-resolver&gt;</c>.</summary>
-    public CacheXmlLibraryOptions? PartitionResolver { get; set; }
+    public CacheLibraryOptions? PartitionResolver { get; set; }
 
     /// <summary><c>&lt;cache-loader&gt;</c>.</summary>
-    public CacheXmlLibraryOptions? CacheLoader { get; set; }
+    public CacheLibraryOptions? CacheLoader { get; set; }
 
     /// <summary><c>&lt;cache-listener&gt;</c>.</summary>
-    public CacheXmlLibraryOptions? CacheListener { get; set; }
+    public CacheLibraryOptions? CacheListener { get; set; }
 
     /// <summary><c>&lt;cache-writer&gt;</c>.</summary>
-    public CacheXmlLibraryOptions? CacheWriter { get; set; }
+    public CacheLibraryOptions? CacheWriter { get; set; }
 
     /// <summary><c>&lt;persistence-manager&gt;</c>.</summary>
-    public CacheXmlPersistenceManagerOptions? PersistenceManager { get; set; }
+    public CachePersistenceManagerOptions? PersistenceManager { get; set; }
 
     /// <summary>Deep clone via copy constructor.</summary>
-    public CacheXmlRegionAttributesOptions Clone() => new(this);
+    public CacheRegionAttributesOptions Clone() => new(this);
     object ICloneable.Clone() => Clone();
 
     /// <summary>Validate. Delegates to non-null nested options; this class has no own structural rules.</summary>

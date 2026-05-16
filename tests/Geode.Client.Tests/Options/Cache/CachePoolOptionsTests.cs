@@ -1,24 +1,24 @@
 using Geode.Client.Options;
 using Xunit;
 
-namespace Geode.Client.Tests.Options.CacheXml;
+namespace Geode.Client.Tests.Options.Cache;
 
 /// <summary>
-/// Tests for <see cref="CacheXmlPoolOptions"/>:
-/// <see cref="CacheXmlPoolOptions.Clone"/> (round-trip + mutation
+/// Tests for <see cref="CachePoolOptions"/>:
+/// <see cref="CachePoolOptions.Clone"/> (round-trip + mutation
 /// isolation for the nested <c>Locators</c> / <c>Servers</c> lists)
-/// and <see cref="CacheXmlPoolOptions.Validate"/> (Name, locators+servers
+/// and <see cref="CachePoolOptions.Validate"/> (Name, locators+servers
 /// count, Min/Max connection bounds, recursion into HostPort entries).
 /// </summary>
-public class CacheXmlPoolOptionsTests
+public class CachePoolOptionsTests
 {
-    private static CacheXmlPoolOptions MakeValidPool() => new()
+    private static CachePoolOptions MakeValidPool() => new()
     {
         Name = "p1",
         MinConnections = 2,
         MaxConnections = 8,
-        Locators = { new CacheXmlHostPort { Host = "locator", Port = 10334 } },
-        Servers = { new CacheXmlHostPort { Host = "server", Port = 40404 } },
+        Locators = { new CacheHostPortOptions { Host = "locator", Port = 10334 } },
+        Servers = { new CacheHostPortOptions { Host = "server", Port = 40404 } },
     };
 
     // ── Clone ─────────────────────────────────────────────────
@@ -60,7 +60,7 @@ public class CacheXmlPoolOptionsTests
         var original = MakeValidPool();
         var clone = original.Clone();
 
-        clone.Locators.Add(new CacheXmlHostPort { Host = "new-locator", Port = 11111 });
+        clone.Locators.Add(new CacheHostPortOptions { Host = "new-locator", Port = 11111 });
         clone.Servers[0].Host = "mutated-server";
         clone.Name = "mutated-pool";
 
@@ -164,7 +164,7 @@ public class CacheXmlPoolOptionsTests
     public void Validate_bad_locator_propagates_with_indexed_path()
     {
         var pool = MakeValidPool();
-        pool.Locators.Add(new CacheXmlHostPort { Host = "", Port = 99999 });  // both bad
+        pool.Locators.Add(new CacheHostPortOptions { Host = "", Port = 99999 });  // both bad
 
         var failures = pool.Validate("p").ToList();
         Assert.Contains(failures, f => f.Contains("p.Locators[1].Host"));

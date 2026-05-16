@@ -1,14 +1,14 @@
 using Geode.Client.Options;
 using Xunit;
 
-namespace Geode.Client.Tests.Options.CacheXml;
+namespace Geode.Client.Tests.Options.Cache;
 
-public class CacheXmlLibraryOptionsTests
+public class CacheLibraryOptionsTests
 {
     [Fact]
     public void Clone_copies_values()
     {
-        var original = new CacheXmlLibraryOptions
+        var original = new CacheLibraryOptions
         {
             LibraryName = "mylib",
             LibraryFunctionName = "createCacheLoader",
@@ -17,17 +17,17 @@ public class CacheXmlLibraryOptionsTests
 
         Assert.Equal("mylib", clone.LibraryName);
         Assert.Equal("createCacheLoader", clone.LibraryFunctionName);
-        Assert.IsType<CacheXmlLibraryOptions>(clone);
+        Assert.IsType<CacheLibraryOptions>(clone);
     }
 
     [Fact]
     public void Clone_on_subclass_via_base_reference_returns_subtype()
     {
-        // Polymorphic clone — slots typed as CacheXmlLibraryOptions
+        // Polymorphic clone — slots typed as CacheLibraryOptions
         // (e.g. RegionAttributes.CacheLoader) may hold a
-        // CacheXmlPersistenceManagerOptions instance; cloning must
+        // CachePersistenceManagerOptions instance; cloning must
         // preserve the runtime type.
-        CacheXmlLibraryOptions original = new CacheXmlPersistenceManagerOptions
+        CacheLibraryOptions original = new CachePersistenceManagerOptions
         {
             LibraryName = "pm",
             LibraryFunctionName = "createPm",
@@ -36,8 +36,8 @@ public class CacheXmlLibraryOptionsTests
 
         var clone = original.Clone();
 
-        Assert.IsType<CacheXmlPersistenceManagerOptions>(clone);
-        var pmClone = (CacheXmlPersistenceManagerOptions)clone;
+        Assert.IsType<CachePersistenceManagerOptions>(clone);
+        var pmClone = (CachePersistenceManagerOptions)clone;
         Assert.Equal("pm", pmClone.LibraryName);
         Assert.Equal("/var/cache", pmClone.Properties["disk-dir"]);
     }
@@ -45,6 +45,6 @@ public class CacheXmlLibraryOptionsTests
     [Fact]
     public void Validate_no_rules()
     {
-        Assert.Empty(new CacheXmlLibraryOptions().Validate("lib"));
+        Assert.Empty(new CacheLibraryOptions().Validate("lib"));
     }
 }

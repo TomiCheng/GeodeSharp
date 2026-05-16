@@ -26,18 +26,18 @@ public class RegionGetAllIntegrationTests(GeodeFixture fx)
     private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(30);
     private const string RegionName = "test";
 
-    private void ConfigureCacheXml(GeodeClientOptions config)
+    private void ConfigureCache(GeodeClientOptions config)
     {
-        config.CacheXml = new CacheXmlOptions
+        config.Cache = new CacheOptions
         {
             Pools =
             {
-                new CacheXmlPoolOptions
+                new CachePoolOptions
                 {
                     Name = "testPool",
                     Servers =
                     {
-                        new CacheXmlHostPort
+                        new CacheHostPortOptions
                         {
                             Host = fx.LocatorHost,
                             Port = fx.ServerPort,
@@ -47,7 +47,7 @@ public class RegionGetAllIntegrationTests(GeodeFixture fx)
             },
             Regions =
             {
-                new CacheXmlRegionOptions
+                new CacheRegionOptions
                 {
                     Name = RegionName,
                     Attributes = { PoolName = "testPool" },
@@ -69,7 +69,7 @@ public class RegionGetAllIntegrationTests(GeodeFixture fx)
 
         var services = new ServiceCollection()
             .AddLogging()
-            .AddGeodeClient(ConfigureCacheXml)
+            .AddGeodeClient(ConfigureCache)
             .BuildServiceProvider();
 
         var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();

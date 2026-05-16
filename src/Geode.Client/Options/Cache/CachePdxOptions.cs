@@ -4,13 +4,13 @@ namespace Geode.Client.Options;
 /// Mirrors the <c>&lt;pdx&gt;</c> element from <c>cache.xml</c>.
 /// Distinct from <see cref="PdxOptions"/> (which mirrors the
 /// <c>SystemProperties</c> PDX flag) — different cppcache source
-/// (<c>CacheXmlParser</c> vs <c>SystemProperties</c>).
+/// (<c>CacheParser</c> vs <c>SystemProperties</c>).
 /// </summary>
-public class CacheXmlPdxOptions : ICloneable
+public class CachePdxOptions : ICloneable
 {
-    public CacheXmlPdxOptions() { }
+    public CachePdxOptions() { }
 
-    public CacheXmlPdxOptions(CacheXmlPdxOptions other)
+    public CachePdxOptions(CachePdxOptions other)
     {
         IgnoreUnreadFields = other.IgnoreUnreadFields;
         ReadSerialized = other.ReadSerialized;
@@ -30,7 +30,7 @@ public class CacheXmlPdxOptions : ICloneable
     public bool? ReadSerialized { get; set; }
 
     /// <summary>Deep clone via copy constructor.</summary>
-    public CacheXmlPdxOptions Clone() => new(this);
+    public CachePdxOptions Clone() => new(this);
     object ICloneable.Clone() => Clone();
 
     /// <summary>Validate this section. No structural rules currently — parity stub.</summary>

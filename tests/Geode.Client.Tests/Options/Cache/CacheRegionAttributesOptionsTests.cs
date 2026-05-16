@@ -1,23 +1,23 @@
 using Geode.Client.Options;
 using Xunit;
 
-namespace Geode.Client.Tests.Options.CacheXml;
+namespace Geode.Client.Tests.Options.Cache;
 
-public class CacheXmlRegionAttributesOptionsTests
+public class CacheRegionAttributesOptionsTests
 {
     [Fact]
     public void Clone_copies_primitives()
     {
-        var original = new CacheXmlRegionAttributesOptions
+        var original = new CacheRegionAttributesOptions
         {
             CachingEnabled = true,
             CloningEnabled = false,
-            Scope = CacheXmlScope.DistributedAck,
+            Scope = CacheScope.DistributedAck,
             InitialCapacity = 16,
             LoadFactor = 0.75f,
             ConcurrencyLevel = 4,
             LruEntriesLimit = 100,
-            DiskPolicy = CacheXmlDiskPolicy.None,
+            DiskPolicy = CacheDiskPolicy.None,
             Endpoints = "host:port",
             ClientNotification = true,
             PoolName = "p1",
@@ -28,7 +28,7 @@ public class CacheXmlRegionAttributesOptionsTests
 
         Assert.Equal(true, clone.CachingEnabled);
         Assert.Equal(false, clone.CloningEnabled);
-        Assert.Equal(CacheXmlScope.DistributedAck, clone.Scope);
+        Assert.Equal(CacheScope.DistributedAck, clone.Scope);
         Assert.Equal(16, clone.InitialCapacity);
         Assert.Equal(0.75f, clone.LoadFactor);
         Assert.Equal("p1", clone.PoolName);
@@ -38,10 +38,10 @@ public class CacheXmlRegionAttributesOptionsTests
     [Fact]
     public void Clone_recursively_clones_nullable_expiration_options()
     {
-        var original = new CacheXmlRegionAttributesOptions
+        var original = new CacheRegionAttributesOptions
         {
-            RegionTimeToLive = new CacheXmlExpirationOptions { Timeout = TimeSpan.FromMinutes(5) },
-            EntryIdleTime = new CacheXmlExpirationOptions { Timeout = TimeSpan.FromMinutes(1) },
+            RegionTimeToLive = new CacheExpirationOptions { Timeout = TimeSpan.FromMinutes(5) },
+            EntryIdleTime = new CacheExpirationOptions { Timeout = TimeSpan.FromMinutes(1) },
         };
         var clone = original.Clone();
 
@@ -55,11 +55,11 @@ public class CacheXmlRegionAttributesOptionsTests
     [Fact]
     public void Clone_polymorphically_clones_library_options_slots()
     {
-        var original = new CacheXmlRegionAttributesOptions
+        var original = new CacheRegionAttributesOptions
         {
-            CacheLoader = new CacheXmlLibraryOptions { LibraryName = "loader" },
-            // Polymorphic — PersistenceManager IS a CacheXmlLibraryOptions slot via subclass.
-            PersistenceManager = new CacheXmlPersistenceManagerOptions
+            CacheLoader = new CacheLibraryOptions { LibraryName = "loader" },
+            // Polymorphic — PersistenceManager IS a CacheLibraryOptions slot via subclass.
+            PersistenceManager = new CachePersistenceManagerOptions
             {
                 LibraryName = "pm",
                 Properties = { ["dir"] = "/data" },
@@ -71,17 +71,17 @@ public class CacheXmlRegionAttributesOptionsTests
         Assert.Equal("loader", clone.CacheLoader!.LibraryName);
 
         Assert.NotSame(original.PersistenceManager, clone.PersistenceManager);
-        Assert.IsType<CacheXmlPersistenceManagerOptions>(clone.PersistenceManager);
+        Assert.IsType<CachePersistenceManagerOptions>(clone.PersistenceManager);
         Assert.Equal("/data", clone.PersistenceManager!.Properties["dir"]);
     }
 
     [Fact]
     public void Clone_mutating_clone_nested_does_not_affect_original()
     {
-        var original = new CacheXmlRegionAttributesOptions
+        var original = new CacheRegionAttributesOptions
         {
-            RegionTimeToLive = new CacheXmlExpirationOptions { Timeout = TimeSpan.FromMinutes(5) },
-            CacheLoader = new CacheXmlLibraryOptions { LibraryName = "loader" },
+            RegionTimeToLive = new CacheExpirationOptions { Timeout = TimeSpan.FromMinutes(5) },
+            CacheLoader = new CacheLibraryOptions { LibraryName = "loader" },
         };
         var clone = original.Clone();
 
@@ -97,6 +97,6 @@ public class CacheXmlRegionAttributesOptionsTests
     {
         // No structural rules on this class itself. With all-null nested,
         // nothing fails.
-        Assert.Empty(new CacheXmlRegionAttributesOptions().Validate("attrs"));
+        Assert.Empty(new CacheRegionAttributesOptions().Validate("attrs"));
     }
 }

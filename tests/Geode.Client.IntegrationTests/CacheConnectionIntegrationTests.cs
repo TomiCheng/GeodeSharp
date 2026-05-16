@@ -24,18 +24,18 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
     /// pointing at the fixture container. Equivalent to a cache.xml
     /// <c>&lt;pool&gt;&lt;server host="..." port="..."/&gt;&lt;/pool&gt;</c>.
     /// </summary>
-    private void ConfigureCacheXml(GeodeClientOptions config)
+    private void ConfigureCache(GeodeClientOptions config)
     {
-        config.CacheXml = new CacheXmlOptions
+        config.Cache = new CacheOptions
         {
             Pools =
             {
-                new CacheXmlPoolOptions
+                new CachePoolOptions
                 {
                     Name = "testPool",
                     Servers =
                     {
-                        new CacheXmlHostPort
+                        new CacheHostPortOptions
                         {
                             Host = _fx.LocatorHost,
                             Port = _fx.ServerPort,
@@ -53,7 +53,7 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
 
         await using var services = new ServiceCollection()
             .AddLogging()
-            .AddGeodeClient(ConfigureCacheXml)
+            .AddGeodeClient(ConfigureCache)
             .BuildServiceProvider();
 
         var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();
@@ -80,7 +80,7 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
 
         await using var services = new ServiceCollection()
             .AddLogging()
-            .AddGeodeClient(ConfigureCacheXml)
+            .AddGeodeClient(ConfigureCache)
             .BuildServiceProvider();
 
         var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();
@@ -102,16 +102,16 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
         // fast and avoids CI flakiness against the default.
         await using var services = new ServiceCollection()
             .AddLogging()
-            .AddGeodeClient(config => config.CacheXml = new CacheXmlOptions
+            .AddGeodeClient(config => config.Cache = new CacheOptions
             {
                 Pools =
                 {
-                    new CacheXmlPoolOptions
+                    new CachePoolOptions
                     {
                         Name = "testPool",
                         Servers =
                         {
-                            new CacheXmlHostPort
+                            new CacheHostPortOptions
                             {
                                 Host = _fx.LocatorHost,
                                 Port = _fx.ServerPort,
@@ -159,16 +159,16 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
         // (c) two enqueues into _opConnections.
         await using var services = new ServiceCollection()
             .AddLogging()
-            .AddGeodeClient(config => config.CacheXml = new CacheXmlOptions
+            .AddGeodeClient(config => config.Cache = new CacheOptions
             {
                 Pools =
                 {
-                    new CacheXmlPoolOptions
+                    new CachePoolOptions
                     {
                         Name = "testPool",
                         Servers =
                         {
-                            new CacheXmlHostPort
+                            new CacheHostPortOptions
                             {
                                 Host = _fx.LocatorHost,
                                 Port = _fx.ServerPort,
@@ -211,16 +211,16 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
         //     for SendRequestToEndpointAsync's GetFromEPAsync to borrow.
         await using var services = new ServiceCollection()
             .AddLogging()
-            .AddGeodeClient(config => config.CacheXml = new CacheXmlOptions
+            .AddGeodeClient(config => config.Cache = new CacheOptions
             {
                 Pools =
                 {
-                    new CacheXmlPoolOptions
+                    new CachePoolOptions
                     {
                         Name = "testPool",
                         Servers =
                         {
-                            new CacheXmlHostPort
+                            new CacheHostPortOptions
                             {
                                 Host = _fx.LocatorHost,
                                 Port = _fx.ServerPort,
@@ -280,7 +280,7 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
         IGeodeCache cache;
         await using (var services = new ServiceCollection()
                          .AddLogging()
-                         .AddGeodeClient(ConfigureCacheXml)
+                         .AddGeodeClient(ConfigureCache)
                          .BuildServiceProvider())
         {
             cache = services.GetRequiredService<IGeodeCacheFactory>().Create();

@@ -23,14 +23,14 @@ public class GeodeClientOptionsValidatorTests
     {
         return new GeodeClientOptions
         {
-            CacheXml = new CacheXmlOptions
+            Cache = new CacheOptions
             {
                 Pools =
                 {
-                    new CacheXmlPoolOptions
+                    new CachePoolOptions
                     {
                         Name = "p1",
-                        Servers = { new CacheXmlHostPort { Host = "localhost", Port = 40404 } },
+                        Servers = { new CacheHostPortOptions { Host = "localhost", Port = 40404 } },
                     },
                 },
             },

@@ -10,14 +10,14 @@ public class GeodeClientOptionsTests
         return new GeodeClientOptions
         {
             Name = "test-client",
-            CacheXml = new CacheXmlOptions
+            Cache = new CacheOptions
             {
                 Pools =
                 {
-                    new CacheXmlPoolOptions
+                    new CachePoolOptions
                     {
                         Name = "p1",
-                        Servers = { new CacheXmlHostPort { Host = "localhost", Port = 40404 } },
+                        Servers = { new CacheHostPortOptions { Host = "localhost", Port = 40404 } },
                     },
                 },
             },
@@ -31,14 +31,12 @@ public class GeodeClientOptionsTests
     {
         var original = MakeValid();
         original.Name = "n";
-        original.CacheXmlFile = "/file";
         original.ThreadPoolSize = 16;
         original.EnableChunkHandlerThread = true;
 
         var clone = original.Clone();
 
         Assert.Equal("n", clone.Name);
-        Assert.Equal("/file", clone.CacheXmlFile);
         Assert.Equal(16u, clone.ThreadPoolSize);
         Assert.True(clone.EnableChunkHandlerThread);
     }
@@ -60,16 +58,16 @@ public class GeodeClientOptionsTests
         Assert.NotSame(original.Heap, clone.Heap);
         Assert.NotSame(original.Pdx, clone.Pdx);
         Assert.NotSame(original.Serialization, clone.Serialization);
-        Assert.NotSame(original.CacheXml, clone.CacheXml);
+        Assert.NotSame(original.Cache, clone.Cache);
     }
 
     [Fact]
-    public void Clone_with_null_CacheXml_leaves_clone_null()
+    public void Clone_with_null_Cache_leaves_clone_null()
     {
-        var original = new GeodeClientOptions();   // CacheXml defaults to null
+        var original = new GeodeClientOptions();   // Cache defaults to null
         var clone = original.Clone();
 
-        Assert.Null(clone.CacheXml);
+        Assert.Null(clone.Cache);
     }
 
     [Fact]
@@ -83,13 +81,13 @@ public class GeodeClientOptionsTests
         clone.Pool.ConnectionPoolSize = 99;
         clone.Serialization.MaxDepth = 999;
         clone.Security.Properties["user"] = "mutated";
-        clone.CacheXml!.Pools[0].Name = "mutated-pool";
+        clone.Cache!.Pools[0].Name = "mutated-pool";
 
         Assert.Equal("test-client", original.Name);
         Assert.Equal(5, original.Pool.ConnectionPoolSize);
         Assert.Equal(64, original.Serialization.MaxDepth);
         Assert.Equal("alice", original.Security.Properties["user"]);
-        Assert.Equal("p1", original.CacheXml!.Pools[0].Name);
+        Assert.Equal("p1", original.Cache!.Pools[0].Name);
     }
 
     // ── Validate ──────────────────────────────────────────────────
@@ -97,8 +95,8 @@ public class GeodeClientOptionsTests
     [Fact]
     public void Validate_default_options_pass()
     {
-        // Default GeodeClientOptions (CacheXml null, defaults everywhere)
-        // has no failures — CacheXml=null is deliberately allowed.
+        // Default GeodeClientOptions (Cache null, defaults everywhere)
+        // has no failures — Cache=null is deliberately allowed.
         Assert.Empty(new GeodeClientOptions().Validate("root"));
     }
 
@@ -116,16 +114,16 @@ public class GeodeClientOptionsTests
     public void Validate_propagates_cachexml_failures()
     {
         var opts = MakeValid();
-        opts.CacheXml!.Pools.Clear();   // triggers "at least one pool"
+        opts.Cache!.Pools.Clear();   // triggers "at least one pool"
 
         var failures = opts.Validate("root").ToList();
-        Assert.Contains(failures, f => f.Contains("root.CacheXml.Pools"));
+        Assert.Contains(failures, f => f.Contains("root.Cache.Pools"));
     }
 
     [Fact]
     public void Validate_null_cachexml_skips_section()
     {
-        // CacheXml=null is allowed — manual cache-creation path will
+        // Cache=null is allowed — manual cache-creation path will
         // populate it via Create(action). No failures here.
         var opts = new GeodeClientOptions();
         Assert.Empty(opts.Validate("root"));

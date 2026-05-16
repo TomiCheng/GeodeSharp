@@ -5,18 +5,18 @@ namespace Geode.Client.Options;
 /// from <see cref="PoolOptions"/> (which mirrors the global
 /// <c>SystemProperties</c> pool defaults) — this one represents a
 /// <b>named</b> pool that regions reference via
-/// <see cref="CacheXmlRegionAttributesOptions.PoolName"/>.
+/// <see cref="CacheRegionAttributesOptions.PoolName"/>.
 /// </summary>
 /// <remarks>
 /// All attributes are nullable to preserve "not set in XML" vs
 /// "explicitly set" — when the field is null, cppcache falls back to its
 /// <see cref="PoolOptions"/>-equivalent global default.
 /// </remarks>
-public class CacheXmlPoolOptions : ICloneable
+public class CachePoolOptions : ICloneable
 {
-    public CacheXmlPoolOptions() { }
+    public CachePoolOptions() { }
 
-    public CacheXmlPoolOptions(CacheXmlPoolOptions other)
+    public CachePoolOptions(CachePoolOptions other)
     {
         Name = other.Name;
         FreeConnectionTimeout = other.FreeConnectionTimeout;
@@ -111,16 +111,16 @@ public class CacheXmlPoolOptions : ICloneable
     /// <c>&lt;locator&gt;</c> children. Pool must have at least one of
     /// <see cref="Locators"/> or <see cref="Servers"/> per XSD.
     /// </summary>
-    public List<CacheXmlHostPort> Locators { get; set; } = new();
+    public List<CacheHostPortOptions> Locators { get; set; } = new();
 
     /// <summary>
     /// <c>&lt;server&gt;</c> children. Direct server endpoints for
     /// pools that bypass locators.
     /// </summary>
-    public List<CacheXmlHostPort> Servers { get; set; } = new();
+    public List<CacheHostPortOptions> Servers { get; set; } = new();
 
     /// <summary>Deep clone via copy constructor.</summary>
-    public CacheXmlPoolOptions Clone() => new(this);
+    public CachePoolOptions Clone() => new(this);
     object ICloneable.Clone() => Clone();
 
     /// <summary>
@@ -128,7 +128,7 @@ public class CacheXmlPoolOptions : ICloneable
     /// <see cref="Name"/> non-empty; at least one locator or server entry;
     /// <see cref="MinConnections"/> &gt;= 0; <see cref="MaxConnections"/>
     /// (when set) &gt;= <see cref="MinConnections"/>. Recurses into each
-    /// <see cref="CacheXmlHostPort"/>.
+    /// <see cref="CacheHostPortOptions"/>.
     /// </summary>
     public IEnumerable<string> Validate(string prefix)
     {

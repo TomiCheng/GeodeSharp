@@ -4,11 +4,11 @@ namespace Geode.Client.Options;
 /// Mirrors <c>region-type</c>. Regions can nest via
 /// <see cref="ChildRegions"/>.
 /// </summary>
-public class CacheXmlRegionOptions : ICloneable
+public class CacheRegionOptions : ICloneable
 {
-    public CacheXmlRegionOptions() { }
+    public CacheRegionOptions() { }
 
-    public CacheXmlRegionOptions(CacheXmlRegionOptions other)
+    public CacheRegionOptions(CacheRegionOptions other)
     {
         Name = other.Name;
         RefId = other.RefId;
@@ -24,19 +24,19 @@ public class CacheXmlRegionOptions : ICloneable
     public string RefId { get; set; } = string.Empty;
 
     /// <summary><c>&lt;region-attributes&gt;</c> child.</summary>
-    public CacheXmlRegionAttributesOptions Attributes { get; set; } = new();
+    public CacheRegionAttributesOptions Attributes { get; set; } = new();
 
     /// <summary>Nested <c>&lt;region&gt;</c> children.</summary>
-    public List<CacheXmlRegionOptions> ChildRegions { get; set; } = new();
+    public List<CacheRegionOptions> ChildRegions { get; set; } = new();
 
     /// <summary>Deep clone via copy constructor.</summary>
-    public CacheXmlRegionOptions Clone() => new(this);
+    public CacheRegionOptions Clone() => new(this);
     object ICloneable.Clone() => Clone();
 
     /// <summary>
     /// Validate. Rule migrated from <c>GeodeClientOptionsValidator</c>:
     /// <see cref="Name"/> non-empty. RefId cross-reference is checked at
-    /// <see cref="CacheXmlOptions.Validate"/> (needs sibling
+    /// <see cref="CacheOptions.Validate"/> (needs sibling
     /// <c>NamedAttributes</c> context). Recurses into <see cref="Attributes"/>
     /// and each child region.
     /// </summary>

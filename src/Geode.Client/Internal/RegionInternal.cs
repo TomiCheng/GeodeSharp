@@ -25,7 +25,7 @@ namespace Geode.Client.Internal;
 /// 1.5) will add it.
 /// </para>
 /// </remarks>
-internal abstract class RegionInternal(CacheXmlRegionAttributesOptions attributes)
+internal abstract class RegionInternal(CacheRegionAttributesOptions attributes)
     : IRegion
 {
 
@@ -33,7 +33,7 @@ internal abstract class RegionInternal(CacheXmlRegionAttributesOptions attribute
     /// XML-declared region attributes. Mirrors cppcache
     /// <c>RegionInternal::m_regionAttributes</c>.
     /// </summary>
-    protected CacheXmlRegionAttributesOptions Attributes { get; } = attributes;
+    protected CacheRegionAttributesOptions Attributes { get; } = attributes;
 
     // ── IRegion (forward to derived) ───────────────────────────
     public abstract string Name { get; }
@@ -41,7 +41,7 @@ internal abstract class RegionInternal(CacheXmlRegionAttributesOptions attribute
 
     /// <summary>
     /// Mirrors cppcache <c>RegionAttributes::getPoolName()</c>; the
-    /// reference (if any) into <c>CacheXmlOptions.Pools</c>.
+    /// reference (if any) into <c>CacheOptions.Pools</c>.
     /// </summary>
     public string PoolName => Attributes.PoolName;
 

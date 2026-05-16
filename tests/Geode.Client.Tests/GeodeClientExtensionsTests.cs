@@ -28,14 +28,14 @@ public class GeodeClientExtensionsTests
     /// configure delegate.
     /// </summary>
     private static void MinimalPool(GeodeClientOptions opt) =>
-        opt.CacheXml = new CacheXmlOptions
+        opt.Cache = new CacheOptions
         {
             Pools =
             {
-                new CacheXmlPoolOptions
+                new CachePoolOptions
                 {
                     Name = "test",
-                    Servers = { new CacheXmlHostPort { Host = "localhost", Port = 40404 } },
+                    Servers = { new CacheHostPortOptions { Host = "localhost", Port = 40404 } },
                 },
             },
         };
@@ -45,9 +45,9 @@ public class GeodeClientExtensionsTests
     /// </summary>
     private static void AddMinimalPoolKeys(IDictionary<string, string?> kv, string sectionPrefix = "")
     {
-        kv[$"{sectionPrefix}CacheXml:Pools:0:Name"] = "test";
-        kv[$"{sectionPrefix}CacheXml:Pools:0:Servers:0:Host"] = "localhost";
-        kv[$"{sectionPrefix}CacheXml:Pools:0:Servers:0:Port"] = "40404";
+        kv[$"{sectionPrefix}Cache:Pools:0:Name"] = "test";
+        kv[$"{sectionPrefix}Cache:Pools:0:Servers:0:Host"] = "localhost";
+        kv[$"{sectionPrefix}Cache:Pools:0:Servers:0:Port"] = "40404";
     }
 
     private static GeodeClientOptions Bound(IServiceProvider sp, string name) =>

@@ -1,16 +1,16 @@
 using Geode.Client.Options;
 using Xunit;
 
-namespace Geode.Client.Tests.Options.CacheXml;
+namespace Geode.Client.Tests.Options.Cache;
 
-public class CacheXmlHostPortTests
+public class CacheHostPortOptionsTests
 {
     // ── Clone ─────────────────────────────────────────────────
 
     [Fact]
     public void Clone_copies_values()
     {
-        var original = new CacheXmlHostPort { Host = "h", Port = 42 };
+        var original = new CacheHostPortOptions { Host = "h", Port = 42 };
         var clone = original.Clone();
 
         Assert.Equal("h", clone.Host);
@@ -20,7 +20,7 @@ public class CacheXmlHostPortTests
     [Fact]
     public void Clone_mutating_clone_does_not_affect_original()
     {
-        var original = new CacheXmlHostPort { Host = "h", Port = 42 };
+        var original = new CacheHostPortOptions { Host = "h", Port = 42 };
         var clone = original.Clone();
 
         clone.Host = "mutated";
@@ -35,8 +35,8 @@ public class CacheXmlHostPortTests
     [Fact]
     public void Validate_valid_entry_passes()
     {
-        Assert.Empty(new CacheXmlHostPort { Host = "h", Port = 1 }.Validate("hp"));
-        Assert.Empty(new CacheXmlHostPort { Host = "h", Port = 65535 }.Validate("hp"));
+        Assert.Empty(new CacheHostPortOptions { Host = "h", Port = 1 }.Validate("hp"));
+        Assert.Empty(new CacheHostPortOptions { Host = "h", Port = 65535 }.Validate("hp"));
     }
 
     [Theory]
@@ -44,7 +44,7 @@ public class CacheXmlHostPortTests
     [InlineData("   ")]
     public void Validate_empty_or_whitespace_host_fails(string host)
     {
-        var failures = new CacheXmlHostPort { Host = host, Port = 1 }.Validate("hp").ToList();
+        var failures = new CacheHostPortOptions { Host = host, Port = 1 }.Validate("hp").ToList();
         Assert.Contains(failures, f => f.Contains("hp.Host"));
     }
 
@@ -55,7 +55,7 @@ public class CacheXmlHostPortTests
     [InlineData(int.MaxValue)]
     public void Validate_out_of_range_port_fails(int port)
     {
-        var failures = new CacheXmlHostPort { Host = "h", Port = port }.Validate("hp").ToList();
+        var failures = new CacheHostPortOptions { Host = "h", Port = port }.Validate("hp").ToList();
         Assert.Contains(failures, f => f.Contains("hp.Port") && f.Contains(port.ToString()));
     }
 }

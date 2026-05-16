@@ -1,13 +1,13 @@
 using Geode.Client.Options;
 using Xunit;
 
-namespace Geode.Client.Tests.Options.CacheXml;
+namespace Geode.Client.Tests.Options.Cache;
 
-public class CacheXmlRegionOptionsTests
+public class CacheRegionOptionsTests
 {
-    private static CacheXmlRegionOptions MakeRegion(string name = "r")
+    private static CacheRegionOptions MakeRegion(string name = "r")
     {
-        return new CacheXmlRegionOptions
+        return new CacheRegionOptions
         {
             Name = name,
             Attributes = { PoolName = "p1" },
@@ -89,7 +89,7 @@ public class CacheXmlRegionOptionsTests
     public void Validate_recurses_into_child_regions_with_indexed_path()
     {
         var region = MakeRegion();
-        region.ChildRegions.Add(new CacheXmlRegionOptions { Name = "" });  // bad child
+        region.ChildRegions.Add(new CacheRegionOptions { Name = "" });  // bad child
 
         var failures = region.Validate("r").ToList();
         Assert.Contains(failures, f => f.Contains("r.ChildRegions[0].Name"));

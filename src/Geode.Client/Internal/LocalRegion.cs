@@ -31,7 +31,7 @@ internal abstract class LocalRegion : RegionInternal
     protected LocalRegion(
         string name,
         RegionInternal? parent,
-        CacheXmlRegionAttributesOptions attributes)
+        CacheRegionAttributesOptions attributes)
         : base(attributes)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);

@@ -11,11 +11,11 @@ namespace Geode.Client.Options;
 /// translates to a delegate / DI-registered type; the field is kept
 /// here for parity only and is unlikely to ship in the .NET API.
 /// </remarks>
-public class CacheXmlLibraryOptions : ICloneable
+public class CacheLibraryOptions : ICloneable
 {
-    public CacheXmlLibraryOptions() { }
+    public CacheLibraryOptions() { }
 
-    public CacheXmlLibraryOptions(CacheXmlLibraryOptions other)
+    public CacheLibraryOptions(CacheLibraryOptions other)
     {
         LibraryName = other.LibraryName;
         LibraryFunctionName = other.LibraryFunctionName;
@@ -29,12 +29,12 @@ public class CacheXmlLibraryOptions : ICloneable
 
     /// <summary>
     /// Deep clone via copy constructor. Virtual so a slot typed as
-    /// <see cref="CacheXmlLibraryOptions"/> but holding a subclass
-    /// instance (e.g. <see cref="CacheXmlPersistenceManagerOptions"/>)
+    /// <see cref="CacheLibraryOptions"/> but holding a subclass
+    /// instance (e.g. <see cref="CachePersistenceManagerOptions"/>)
     /// dispatches to the subclass's <c>Clone</c> and copies its
     /// extra members.
     /// </summary>
-    public virtual CacheXmlLibraryOptions Clone() => new(this);
+    public virtual CacheLibraryOptions Clone() => new(this);
     object ICloneable.Clone() => Clone();
 
     /// <summary>

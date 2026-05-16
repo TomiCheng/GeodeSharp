@@ -15,13 +15,6 @@ public class GeodeClientOptions: ICloneable
     public string Name { get; set; } = string.Empty;
 
     /// <summary>
-    /// Path to a legacy <c>cache.xml</c> file. Mirrors cppcache
-    /// <c>cache-xml-file</c>; default empty. CLAUDE.md cuts cache.xml
-    /// entirely — included only to make its removal auditable.
-    /// </summary>
-    public string CacheXmlFile { get; set; } = string.Empty;
-
-    /// <summary>
     /// Worker-thread count for cppcache's internal dispatcher. Mirrors
     /// cppcache <c>max-fe-threads</c>; default
     /// <c>Environment.ProcessorCount * 2</c>. .NET uses
@@ -81,14 +74,13 @@ public class GeodeClientOptions: ICloneable
     /// trees, PDX defaults. Null when the caller uses the programmatic
     /// <see cref="PoolOptions"/> path (the normal case).
     /// </summary>
-    public CacheXmlOptions? CacheXml { get; set; }
+    public CacheOptions? Cache { get; set; }
 
     public GeodeClientOptions() { }
 
     public GeodeClientOptions(GeodeClientOptions other)
     {
         Name = other.Name;
-        CacheXmlFile = other.CacheXmlFile;
         ThreadPoolSize = other.ThreadPoolSize;
         EnableChunkHandlerThread = other.EnableChunkHandlerThread;
         Pool = other.Pool.Clone();
@@ -101,7 +93,7 @@ public class GeodeClientOptions: ICloneable
         Heap = other.Heap.Clone();
         Pdx = other.Pdx.Clone();
         Serialization = other.Serialization.Clone();
-        CacheXml = other.CacheXml?.Clone();
+        Cache = other.Cache?.Clone();
     }
 
     /// <summary>Deep clone via copy constructor.</summary>
@@ -121,7 +113,7 @@ public class GeodeClientOptions: ICloneable
         foreach (var f in Heap.Validate($"{prefix}.Heap")) yield return f;
         foreach (var f in Pdx.Validate($"{prefix}.Pdx")) yield return f;
         foreach (var f in Serialization.Validate($"{prefix}.Serialization")) yield return f;
-        if (CacheXml is not null)
-            foreach (var f in CacheXml.Validate($"{prefix}.CacheXml")) yield return f;
+        if (Cache is not null)
+            foreach (var f in Cache.Validate($"{prefix}.Cache")) yield return f;
     }
 }

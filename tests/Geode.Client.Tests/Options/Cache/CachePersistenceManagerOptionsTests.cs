@@ -1,14 +1,14 @@
 using Geode.Client.Options;
 using Xunit;
 
-namespace Geode.Client.Tests.Options.CacheXml;
+namespace Geode.Client.Tests.Options.Cache;
 
-public class CacheXmlPersistenceManagerOptionsTests
+public class CachePersistenceManagerOptionsTests
 {
     [Fact]
     public void Clone_copies_base_and_subclass_state()
     {
-        var original = new CacheXmlPersistenceManagerOptions
+        var original = new CachePersistenceManagerOptions
         {
             LibraryName = "pm",
             LibraryFunctionName = "createPm",
@@ -26,8 +26,8 @@ public class CacheXmlPersistenceManagerOptionsTests
     public void Clone_returns_subclass_type_via_covariant_return()
     {
         // Static type is the subclass — no cast needed.
-        var original = new CacheXmlPersistenceManagerOptions();
-        CacheXmlPersistenceManagerOptions clone = original.Clone();
+        var original = new CachePersistenceManagerOptions();
+        CachePersistenceManagerOptions clone = original.Clone();
 
         Assert.NotNull(clone);
     }
@@ -35,7 +35,7 @@ public class CacheXmlPersistenceManagerOptionsTests
     [Fact]
     public void Clone_mutating_clone_dict_does_not_affect_original()
     {
-        var original = new CacheXmlPersistenceManagerOptions
+        var original = new CachePersistenceManagerOptions
         {
             Properties = { ["k"] = "v" },
         };
@@ -53,6 +53,6 @@ public class CacheXmlPersistenceManagerOptionsTests
     [Fact]
     public void Validate_no_rules()
     {
-        Assert.Empty(new CacheXmlPersistenceManagerOptions().Validate("pm"));
+        Assert.Empty(new CachePersistenceManagerOptions().Validate("pm"));
     }
 }

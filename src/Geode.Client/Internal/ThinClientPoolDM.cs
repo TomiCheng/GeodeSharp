@@ -52,9 +52,8 @@ internal sealed class ThinClientPoolDM(
     // Unbounded for Phase 1.1; Phase 1.5 may bound by MaxConnections.
     // Channel auto-wakes a pending reader on WriteAsync — replaces
     // cppcache's conn_semaphore_.release().
-    private readonly Channel<TcrConnection> _opConnections =
-        Channel.CreateUnbounded<TcrConnection>();    // m_opConnections
-    private int _poolSize;                            // m_poolSize (Interlocked)
+    private readonly Channel<TcrConnection> _opConnections = Channel.CreateUnbounded<TcrConnection>();
+    private int _poolSize;
 
     // ── Static-server round-robin cursor (ThinClientPoolDM.cpp:608) ──
     // Guarded by _endpointSelectionLock; mirrors cppcache m_server +
@@ -66,13 +65,6 @@ internal sealed class ThinClientPoolDM(
 
 
     // ── Background workers (Phase 1.5, pool-mode equivalents of TCCM trio) ──
-    private Task? _pingLoop;                       // m_pingTask
-    private Task? _connManageLoop;                 // m_connManageTask
-
-    private readonly SemaphoreSlim _pingSignal = new(0, int.MaxValue);
-    private readonly SemaphoreSlim _connManageSignal = new(0, int.MaxValue);
-
-    private PeriodicTimer? _pingTimer;
 
     private readonly CancellationTokenSource _backgroundCts = new();
 
@@ -92,7 +84,7 @@ internal sealed class ThinClientPoolDM(
     private bool _keepAlive;                       // m_keepAlive (set in DestroyAsync, read by Step 5a)
 
     // ── Stats (Phase 1.5 thin wrapper around Meter) ──
-    private object? _stats;                        // m_stats (PoolStats)
+    private readonly PoolStatistics _stats = ActivatorUtilities.CreateInstance< PoolStatistics>(serviceProvider, xmlPool.Name);
 
 #pragma warning restore CS0169, CS0414, CS0649
 
@@ -129,26 +121,6 @@ internal sealed class ThinClientPoolDM(
     /// fresh <see cref="TcrConnection"/> handshakes successfully.
     /// </summary>
     internal int PoolSize => Volatile.Read(ref _poolSize);
-
-    private int _pingTickCount;
-    private int _pingSuccessCount;
-
-    /// <summary>
-    /// Test-only: number of ping-loop ticks that have entered
-    /// <see cref="PingServerLocalAsync"/>. Lets integration tests assert
-    /// the loop is alive without scraping logs. Phase 1.5 stats wrapper
-    /// (cppcache <c>PoolStats</c>) will subsume this.
-    /// </summary>
-    internal int PingTickCount => Volatile.Read(ref _pingTickCount);
-
-    /// <summary>
-    /// Test-only: number of <see cref="TcrEndpoint.PingAsync"/> calls that
-    /// returned without throwing AND left the endpoint still
-    /// <see cref="TcrEndpoint.IsConnected"/> true. Subsumed by Phase 1.5
-    /// stats once <c>PoolStats</c> lands.
-    /// </summary>
-    internal int PingSuccessCount => Volatile.Read(ref _pingSuccessCount);
-
 
 
     // ── IPool ────────────────────────────────────────────────────
@@ -353,160 +325,6 @@ internal sealed class ThinClientPoolDM(
 
 
 
-    /// <summary>
-    /// Periodic ping loop. Mirrors cppcache
-    /// <c>ThinClientPoolDM::pingServer</c>
-    /// (<c>ThinClientPoolDM.cpp:2070-2083</c>): each tick walks every
-    /// connected endpoint and probes it with <c>MessageType.Ping</c>.
-    /// </summary>
-    private async Task PingLoopAsync(CancellationToken ct)
-    {
-        // cppcache schedules the ping task with a fixed 1 s initial
-        // delay and then repeats every PingInterval
-        // (ThinClientPoolDM.cpp:285-286, `schedule(task, seconds(1),
-        // interval)`). Without this initial delay, PeriodicTimer's
-        // first tick would only fire `PingInterval` after timer
-        // creation — leaving a long warmup gap before any real ping.
-        var initialDelay = TimeSpan.FromSeconds(1);
-
-        // cppcache LOGFINE("Starting ping thread for pool %s", ...)
-        logger.LogDebug("Starting ping loop for pool {Pool}", Name);
-        try
-        {
-            await Task.Delay(initialDelay, ct).ConfigureAwait(false);
-
-            do
-            {
-                try
-                {
-                    await PingServerLocalAsync(ct).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (!ct.IsCancellationRequested)
-                {
-                    // One bad tick must not kill the loop — next tick retries.
-                    logger.LogWarning(ex, "Ping tick failed for pool {Pool}", Name);
-                }
-            }
-            while (await _pingTimer!.WaitForNextTickAsync(ct).ConfigureAwait(false));
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            // graceful shutdown via _backgroundCts.Cancel().
-        }
-        // cppcache LOGFINE("Ending ping thread for pool %s", ...)
-        logger.LogDebug("Ending ping loop for pool {Pool}", Name);
-    }
-
-    /// <summary>
-    /// One ping sweep: probe every connected endpoint and prune the
-    /// pool's references to any that fall offline. Mirrors cppcache
-    /// <c>ThinClientPoolDM::pingServerLocal</c>
-    /// (<c>ThinClientPoolDM.cpp:2028-2040</c>).
-    /// </summary>
-    /// <remarks>
-    /// cppcache holds <c>m_endpointsLock</c> for the whole sweep because
-    /// <c>std::map</c> isn't safe for concurrent iteration; our
-    /// <see cref="_endpoints"/> is a <see cref="ConcurrentDictionary{TKey,TValue}"/>
-    /// so a snapshot enumeration is safe and the sweep won't block
-    /// <see cref="AddEPAsync"/>.
-    /// </remarks>
-    private async Task PingServerLocalAsync(CancellationToken ct)
-    {
-        Interlocked.Increment(ref _pingTickCount);
-
-        // Snapshot enumeration: ConcurrentDictionary's GetEnumerator is
-        // weakly consistent — safe under concurrent AddEPAsync, but a
-        // brand-new endpoint added mid-sweep may or may not appear this
-        // tick. That's fine: it'll be picked up next interval.
-        // cppcache LOGDEBUG("Pinging %zu endpoints for pool %s", ...) — paraphrased.
-        logger.LogTrace(
-            "Ping sweep for pool {Pool}: {Count} endpoint(s)",
-            Name, _endpoints.Count);
-
-        foreach (var (_, endpoint) in _endpoints)
-        {
-            ct.ThrowIfCancellationRequested();
-
-            if (!endpoint.IsConnected)
-            {
-                // cppcache: pingServerLocal skips disconnected endpoints
-                // (the test is inside the loop body at L2032).
-                continue;
-            }
-
-            await endpoint.PingAsync(this, ct).ConfigureAwait(false);
-
-            if (endpoint.IsConnected)
-            {
-                Interlocked.Increment(ref _pingSuccessCount);
-            }
-
-            if (!endpoint.IsConnected)
-            {
-                // cppcache (ThinClientPoolDM.cpp:2034-2037): the ping just
-                // flipped the endpoint's connected_ bit to false → drop the
-                // pool's references on its conns + subscription.
-                // TODO Phase 1.5: RemoveEPConnections(endpoint);
-                //                 RemoveCallbackConnection(endpoint);
-                logger.LogDebug(
-                    "Ping flipped endpoint {Endpoint} to disconnected; cleanup deferred to Phase 1.5",
-                    endpoint.Name);
-            }
-        }
-    }
-
-
-
-
-
-    /// <summary>
-    /// Periodic conn-management loop. Mirrors cppcache
-    /// <c>ThinClientPoolDM::manageConnectionsInternal()</c>
-    /// (<c>ThinClientPoolDM.cpp:554-575</c>): on each tick run
-    /// cleanStaleConnections + RestoreMinConnectionsAsync +
-    /// cleanStickyConnections. cppcache schedules it with a 10 s
-    /// initial delay; we mirror that by awaiting the interval
-    /// before the first iteration.
-    /// </summary>
-    private async Task ConnManageLoopAsync(CancellationToken ct)
-    {
-        // cppcache schedules the conn-management task with a fixed 1 s
-        // initial delay and then repeats every IdleTimeout
-        // (ThinClientPoolDM.cpp:343-344, `schedule(task, seconds(1),
-        // idle)`). Pre-opens MinConnections within ~1 s of init so the
-        // first user op finds an aged connection in the queue instead
-        // of having to lazy-open a fresh one (which the server hasn't
-        // finished registering, → RegionDestroyedException on the very
-        // first request).
-        var initialDelay = TimeSpan.FromSeconds(1);
-        var interval = xmlPool.IdleTimeout;
-        try
-        {
-            await Task.Delay(initialDelay, ct).ConfigureAwait(false);
-
-            while (!ct.IsCancellationRequested)
-            {
-                try
-                {
-                    // TODO Phase 1.5: await CleanStaleConnectionsAsync(ct);
-                    await RestoreMinConnectionsAsync(ct).ConfigureAwait(false);
-                    // TODO Phase 6:    await CleanStickyConnectionsAsync(ct);
-                }
-                catch (Exception) when (!ct.IsCancellationRequested)
-                {
-                    // Survive transient errors so a single bad tick
-                    // doesn't kill the loop. Phase 1.5: log via
-                    // ILogger.
-                }
-
-                await Task.Delay(interval, ct).ConfigureAwait(false);
-            }
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            // graceful shutdown via _backgroundCts.Cancel().
-        }
-    }
 
     /// <summary>
     /// Open new <see cref="TcrConnection"/>s until the pool holds at
@@ -1147,6 +965,169 @@ internal sealed class ThinClientPoolDM(
     //   Task RestoreMinConnectionsAsync(CancellationToken ct);
     //   Task CleanStaleConnectionsAsync(CancellationToken ct);
 
+    #region Ping
+
+    private Task? _pingLoop;
+    private int _pingTickCount;
+    private int _pingSuccessCount;
+    private PeriodicTimer? _pingTimer;
+    private readonly SemaphoreSlim _pingSignal = new(0, int.MaxValue);
+
+    /// <summary>
+    /// Test-only: number of ping-loop ticks that have entered
+    /// <see cref="PingServerLocalAsync"/>. Lets integration tests assert
+    /// the loop is alive without scraping logs. Phase 1.5 stats wrapper
+    /// (cppcache <c>PoolStats</c>) will subsume this.
+    /// </summary>
+    internal int PingTickCount => Volatile.Read(ref _pingTickCount);
+
+    /// <summary>
+    /// Test-only: number of <see cref="TcrEndpoint.PingAsync"/> calls that
+    /// returned without throwing AND left the endpoint still
+    /// <see cref="TcrEndpoint.IsConnected"/> true. Subsumed by Phase 1.5
+    /// stats once <c>PoolStats</c> lands.
+    /// </summary>
+    internal int PingSuccessCount => Volatile.Read(ref _pingSuccessCount);
+
+    /// <summary>
+    /// Periodic ping loop. Mirrors cppcache
+    /// <c>ThinClientPoolDM::pingServer</c>
+    /// (<c>ThinClientPoolDM.cpp:2070-2083</c>): each tick walks every
+    /// connected endpoint and probes it with <c>MessageType.Ping</c>.
+    /// </summary>
+    private async Task PingLoopAsync(CancellationToken ct)
+    {
+        var initialDelay = TimeSpan.FromSeconds(1);
+        logger.LogDebug("Starting ping loop for pool {Pool}", Name);
+        try
+        {
+            await Task.Delay(initialDelay, ct).ConfigureAwait(false);
+
+            do
+            {
+                try
+                {
+                    await PingServerLocalAsync(ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    // One bad tick must not kill the loop — next tick retries.
+                    logger.LogWarning(ex, "Ping tick failed for pool {Pool}", Name);
+                }
+            }
+            while (await _pingTimer!.WaitForNextTickAsync(ct).ConfigureAwait(false));
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // graceful shutdown via _backgroundCts.Cancel().
+        }
+        logger.LogDebug("Ending ping loop for pool {Pool}", Name);
+    }
+    /// <summary>
+    /// One ping sweep: probe every connected endpoint and prune the
+    /// pool's references to any that fall offline. Mirrors cppcache
+    /// <c>ThinClientPoolDM::pingServerLocal</c>
+    /// (<c>ThinClientPoolDM.cpp:2028-2040</c>).
+    /// </summary>
+    /// <remarks>
+    /// cppcache holds <c>m_endpointsLock</c> for the whole sweep because
+    /// <c>std::map</c> isn't safe for concurrent iteration; our
+    /// <see cref="_endpoints"/> is a <see cref="ConcurrentDictionary{TKey,TValue}"/>
+    /// so a snapshot enumeration is safe and the sweep won't block
+    /// <see cref="AddEPAsync"/>.
+    /// </remarks>
+    private async Task PingServerLocalAsync(CancellationToken ct)
+    {
+        Interlocked.Increment(ref _pingTickCount);
+        logger.LogTrace("Ping sweep for pool {Pool}: {Count} endpoint(s)", Name, _endpoints.Count);
+
+        foreach (var (_, endpoint) in _endpoints)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (!endpoint.IsConnected)
+            {
+                // cppcache: pingServerLocal skips disconnected endpoints
+                // (the test is inside the loop body at L2032).
+                continue;
+            }
+
+            await endpoint.PingAsync(this, ct).ConfigureAwait(false);
+
+            if (endpoint.IsConnected)
+            {
+                Interlocked.Increment(ref _pingSuccessCount);
+            }
+
+            if (!endpoint.IsConnected)
+            {
+                // cppcache (ThinClientPoolDM.cpp:2034-2037): the ping just
+                // flipped the endpoint's connected_ bit to false → drop the
+                // pool's references on its conns + subscription.
+                // TODO Phase 1.5: RemoveEPConnections(endpoint);
+                //                 RemoveCallbackConnection(endpoint);
+                logger.LogDebug("Ping flipped endpoint {Endpoint} to disconnected; cleanup deferred to Phase 1.5", endpoint.Name);
+            }
+        }
+    }
+
+    #endregion
+
+    #region Connection Manager
+
+    private Task? _connManageLoop;
+    private readonly SemaphoreSlim _connManageSignal = new(0, int.MaxValue);
+
+    /// <summary>
+    /// Periodic conn-management loop. Mirrors cppcache
+    /// <c>ThinClientPoolDM::manageConnectionsInternal()</c>
+    /// (<c>ThinClientPoolDM.cpp:554-575</c>): on each tick run
+    /// cleanStaleConnections + RestoreMinConnectionsAsync +
+    /// cleanStickyConnections. cppcache schedules it with a 10 s
+    /// initial delay; we mirror that by awaiting the interval
+    /// before the first iteration.
+    /// </summary>
+    private async Task ConnManageLoopAsync(CancellationToken ct)
+    {
+        // cppcache schedules the conn-management task with a fixed 1 s
+        // initial delay and then repeats every IdleTimeout
+        // (ThinClientPoolDM.cpp:343-344, `schedule(task, seconds(1),
+        // idle)`). Pre-opens MinConnections within ~1 s of init so the
+        // first user op finds an aged connection in the queue instead
+        // of having to lazy-open a fresh one (which the server hasn't
+        // finished registering, → RegionDestroyedException on the very
+        // first request).
+        var initialDelay = TimeSpan.FromSeconds(1);
+        var interval = xmlPool.IdleTimeout;
+        try
+        {
+            await Task.Delay(initialDelay, ct).ConfigureAwait(false);
+
+            while (!ct.IsCancellationRequested)
+            {
+                try
+                {
+                    // TODO Phase 1.5: await CleanStaleConnectionsAsync(ct);
+                    await RestoreMinConnectionsAsync(ct).ConfigureAwait(false);
+                    // TODO Phase 6:    await CleanStickyConnectionsAsync(ct);
+                }
+                catch (Exception) when (!ct.IsCancellationRequested)
+                {
+                    // Survive transient errors so a single bad tick
+                    // doesn't kill the loop. Phase 1.5: log via
+                    // ILogger.
+                }
+
+                await Task.Delay(interval, ct).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // graceful shutdown via _backgroundCts.Cancel().
+        }
+    }
+
+    #endregion
 
     #region Locator
 
@@ -1291,6 +1272,9 @@ internal sealed class ThinClientPoolDM(
     private async Task<DnsEndPoint> SelectEndpointFromLocatorAsync(CancellationToken ct)
     {
         logger.LogDebug("ThinClientPoolDM: Asking locator for server from group [{Group}]", xmlPool.ServerGroup);
+
+        // cppcache ThinClientPoolDM.cpp:587 — incLoctorRequests() before helper call.
+        _stats.LocatorRequest();
 
         var server = await _locatorHelper!.GetEndpointForNewFwdConnAsync(xmlPool.ServerGroup, [], ct)
             .ConfigureAwait(false);

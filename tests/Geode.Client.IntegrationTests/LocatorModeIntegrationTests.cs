@@ -59,6 +59,11 @@ public class LocatorModeIntegrationTests(GeodeFixture fx)
     {
         using var cts = new CancellationTokenSource(TestTimeout);
 
+        // Listen before cache init so MeterListener.Start() runs while
+        // the static Counter instruments may or may not yet be published —
+        // either way Start() retroactively picks them up.
+        using var locatorRequests = new MeterCapture("Geode.Client.Pool", "LocatorRequests");
+
         await using var services = new ServiceCollection()
             .AddLogging()
             .AddGeodeClient(ConfigureCache)
@@ -70,6 +75,20 @@ public class LocatorModeIntegrationTests(GeodeFixture fx)
         var poolManager = ((Cache)cache).PoolManager;
         Assert.NotNull(poolManager.DefaultPool);
         Assert.Same(poolManager.DefaultPool, poolManager.Find("default"));
+
+        // ConnManageLoopAsync fires RestoreMinConnectionsAsync ~1s after
+        // init (cppcache mirror); RestoreMinConnectionsAsync →
+        // CreatePoolConnectionAsync → SelectEndpointFromLocatorAsync →
+        // PoolStatistics.LocatorRequest(). Poll up to 5s — same pattern
+        // as UpdateLocatorList_loop_ticks_against_real_locator.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < deadline && locatorRequests.Value < 1)
+        {
+            await Task.Delay(50, cts.Token);
+        }
+        Assert.True(
+            locatorRequests.Value >= 1,
+            $"Expected LocatorRequests counter >= 1 within deadline, got {locatorRequests.Value}.");
 
         await cache.CloseAsync(cts.Token);
         Assert.True(cache.IsClosed);

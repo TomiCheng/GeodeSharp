@@ -221,6 +221,23 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
   (same spirit as `CreatePoolConnectionAsync` retry, outer scope).
   Currently any op failure throws; multi-server failover completion
   needs this.
+- **`PutInQueueAsync` tests (deferred)** — `_isDestroyed` guard
+  (cppcache `ConnectionQueue::put` `closed_` branch,
+  `ConnectionQueue.hpp:62-67`) is implemented but untested. Happy path
+  is implicitly covered by every back-to-back op in
+  `CacheConnectionIntegrationTests` / `RegionCrudIntegrationTests`
+  (conn enqueued by op #1, picked up by op #2). The destroyed-guard
+  itself is structurally unreachable from public API
+  (`SendRequestToEndpointAsync` rejects on `_isDestroyed != 0` at the
+  top) — only fires in a race window mid-`SendRequestToEndpointAsync`.
+  Deterministic test needs either (a) wire-response orchestration in
+  integration test to pause `SendAsync` while `DestroyAsync` races, or
+  (b) visibility relaxation + DI-tree scaffolding + spy on a `sealed`
+  `TcrConnection`. Both cost-ineffective relative to the 5-line guard.
+  Revisit when `PoolDisconnects` Meter or socket-leak tooling lands
+  (then the guard would have an observable counterpart). Source: inline
+  comment in `ThinClientPoolDM.PutInQueueAsync` flags this deferral.
+
 - **Auth-trio real throw sites** —
   `AuthenticationFailedException` / `AuthenticationRequiredException` /
   `NotAuthorizedException` classes exist but nothing throws them

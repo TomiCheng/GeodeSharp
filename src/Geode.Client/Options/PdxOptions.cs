@@ -7,6 +7,7 @@ namespace Geode.Client.Options;
 /// </summary>
 public class PdxOptions : ICloneable
 {
+
     public PdxOptions() { }
 
     public PdxOptions(PdxOptions other)
@@ -14,21 +15,20 @@ public class PdxOptions : ICloneable
         ClearTypeIdsOnDisconnect = other.ClearTypeIdsOnDisconnect;
     }
 
-    /// <summary>
-    /// Whether to flush the cached PDX type-id table when the client
-    /// disconnects from the server. Mirrors cppcache
-    /// <c>on-client-disconnect-clear-pdxType-Ids</c>; default
-    /// <c>false</c>.
-    /// </summary>
-    public bool ClearTypeIdsOnDisconnect { get; set; }
+    object ICloneable.Clone() => Clone();
 
     /// <summary>Deep clone via copy constructor.</summary>
     public PdxOptions Clone() => new(this);
-    object ICloneable.Clone() => Clone();
 
     /// <summary>Validate this section. No structural rules currently — parity stub.</summary>
     public IEnumerable<string> Validate(string prefix)
     {
         yield break;
     }
+
+    /// <summary>
+    /// Whether to flush the cached PDX type-id table when the client disconnects from the server.
+    /// </summary>
+    public bool ClearTypeIdsOnDisconnect { get; set; }
+
 }

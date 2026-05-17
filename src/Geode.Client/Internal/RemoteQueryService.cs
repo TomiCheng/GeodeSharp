@@ -158,12 +158,8 @@ internal sealed class RemoteQueryService : IQueryService
     /// </summary>
     internal void Close()
     {
-        // cppcache RemoteQueryService.cpp:84 — LOGFINEST("...close: starting close").
         _logger.LogTrace("RemoteQueryService::close: starting close");
-
         Interlocked.Exchange(ref _invalid, 1);
-
-        // cppcache RemoteQueryService.cpp:107 — LOGFINEST("...close: completed").
         _logger.LogTrace("RemoteQueryService::close: completed");
     }
 }

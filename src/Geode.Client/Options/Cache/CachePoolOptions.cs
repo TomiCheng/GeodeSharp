@@ -14,6 +14,7 @@ namespace Geode.Client.Options;
 /// </remarks>
 public class CachePoolOptions : ICloneable
 {
+
     public CachePoolOptions() { }
 
     public CachePoolOptions(CachePoolOptions other)
@@ -42,144 +43,10 @@ public class CachePoolOptions : ICloneable
         Servers = [.. other.Servers.Select(h => h.Clone())];
     }
 
-    /// <summary>
-    /// <c>name</c> attribute (required). Region's
-    /// <c>pool-name</c> references this.
-    /// </summary>
-    public string Name { get; set; } = string.Empty;
-
-    /// <summary>
-    /// <c>free-connection-timeout</c>.
-    /// </summary>
-    public TimeSpan? FreeConnectionTimeout { get; set; }
-
-    /// <summary>
-    /// How long before a connection is forcibly rotated to spread
-    /// load across the server cluster, independent of idle status.
-    /// </summary>
-    /// <remarks>
-    /// default 5min; <see cref="TimeSpan.Zero"/> disables load conditioning.
-    /// </remarks>
-    public TimeSpan LoadConditioningInterval { get; set; } = TimeSpan.FromMinutes(5);
-
-    /// <summary>
-    /// Minimum number of connections the pool keeps open; warmed up at init
-    /// and treated as a floor when cleaning up idle connections.
-    /// </summary>
-    /// <remarks>
-    /// default 1; <c>0</c> = pure lazy (open on demand only).
-    /// </remarks>
-    public int MinConnections { get; set; } = 1;
-
-    /// <summary>
-    /// Upper cap on pool size; new connection opens are rejected with
-    /// <see cref="AllConnectionsInUseException"/> once the pool reaches
-    /// this size.
-    /// </summary>
-    /// <remarks>
-    /// default <see langword="null"/> = unbounded.
-    /// </remarks>
-    public int? MaxConnections { get; set; }
-
-    /// <summary>
-    /// <c>retry-attempts</c>.
-    /// </summary>
-    public int? RetryAttempts { get; set; }
-
-    /// <summary>
-    /// How long a connection can sit unused before the pool may close it
-    /// to shrink back toward <see cref="MinConnections"/>.
-    /// </summary>
-    /// <remarks>
-    /// default 10s.
-    /// </remarks>
-    public TimeSpan IdleTimeout { get; set; } = TimeSpan.FromSeconds(10);
-
-    /// <summary>
-    /// <c>ping-interval</c>. Same concept as
-    /// <see cref="PoolOptions.PingInterval"/>.
-    /// </summary>
-    public TimeSpan? PingInterval { get; set; }
-
-    /// <summary>
-    /// <c>read-timeout</c>.
-    /// </summary>
-    public TimeSpan? ReadTimeout { get; set; }
-
-    /// <summary>
-    /// Logical group of servers this pool targets.
-    /// </summary>
-    public string ServerGroup { get; set; } = string.Empty;
-
-    /// <summary>
-    /// <c>socket-buffer-size</c>. Same concept as
-    /// <see cref="PoolOptions.MaxSocketBufferSize"/>.
-    /// </summary>
-    public int? SocketBufferSize { get; set; }
-
-    /// <summary>
-    /// <c>subscription-enabled</c>.
-    /// </summary>
-    public bool? SubscriptionEnabled { get; set; }
-
-    /// <summary>
-    /// <c>subscription-message-tracking-timeout</c>.
-    /// </summary>
-    public int? SubscriptionMessageTrackingTimeout { get; set; }
-
-    /// <summary>
-    /// <c>subscription-ack-interval</c>. XSD types this as
-    /// string but cppcache parses as ms.
-    /// </summary>
-    public int? SubscriptionAckInterval { get; set; }
-
-    /// <summary>
-    /// <c>subscription-redundancy</c>.
-    /// </summary>
-    public int? SubscriptionRedundancy { get; set; }
-
-    /// <summary>
-    /// <c>statistic-interval</c>.
-    /// </summary>
-    public TimeSpan? StatisticInterval { get; set; }
-
-    /// <summary>
-    /// <c>pr-single-hop-enabled</c>.
-    /// </summary>
-    public bool? PrSingleHopEnabled { get; set; }
-
-    /// <summary>
-    /// <c>thread-local-connections</c>.
-    /// </summary>
-    public bool? ThreadLocalConnections { get; set; }
-
-    /// <summary>
-    /// <c>multiuser-authentication</c>.
-    /// </summary>
-    public bool? MultiuserAuthentication { get; set; }
-
-    /// <summary>
-    /// How often the pool asks an active locator for the current locator set,
-    /// so it can pick up newly-added locators and drop dead ones without a client restart;
-    /// </summary>
-    /// <remarks>
-    /// default 5s; <see cref="TimeSpan.Zero"/>disables the refresh loop.
-    /// </remarks>
-    public TimeSpan UpdateLocatorListInterval { get; set; } = TimeSpan.FromSeconds(5);
-
-    /// <summary>
-    /// Pool must have at least one of <see cref="Locators"/> or <see cref="Servers"/> per.
-    /// </summary>
-    public List<CacheHostPortOptions> Locators { get; set; } = [];
-
-    /// <summary>
-    /// Direct server endpoints for pools that bypass locators.
-    /// </summary>
-    public List<CacheHostPortOptions> Servers { get; set; } = [];
+    object ICloneable.Clone() => Clone();
 
     /// <summary>Deep clone via copy constructor.</summary>
     public CachePoolOptions Clone() => new(this);
-    object ICloneable.Clone() => Clone();
 
     /// <summary>
     /// Validate. Rules migrated from <c>GeodeClientOptionsValidator</c>:
@@ -234,4 +101,144 @@ public class CachePoolOptions : ICloneable
                 yield return f;
         }
     }
+
+    /// <summary>
+    /// How long an op may wait for an idle connection when the pool has
+    /// reached <see cref="MaxConnections"/>; throws <see cref="AllConnectionsInUseException"/> on timeout.
+    /// </summary>
+    /// <remarks>
+    /// default 10s; must be &gt; <see cref="TimeSpan.Zero"/>.
+    /// </remarks>
+    public TimeSpan FreeConnectionTimeout { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// How long a connection can sit unused before the pool may close it
+    /// to shrink back toward <see cref="MinConnections"/>.
+    /// </summary>
+    /// <remarks>
+    /// default 10s.
+    /// </remarks>
+    public TimeSpan IdleTimeout { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// How long before a connection is forcibly rotated to spread
+    /// load across the server cluster, independent of idle status.
+    /// </summary>
+    /// <remarks>
+    /// default 5min; <see cref="TimeSpan.Zero"/> disables load conditioning.
+    /// </remarks>
+    public TimeSpan LoadConditioningInterval { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Pool must have at least one of <see cref="Locators"/> or <see cref="Servers"/> per.
+    /// </summary>
+    public List<CacheHostPortOptions> Locators { get; set; } = [];
+
+    /// <summary>
+    /// Upper cap on pool size; new connection opens are rejected with
+    /// <see cref="AllConnectionsInUseException"/> once the pool reaches
+    /// this size.
+    /// </summary>
+    /// <remarks>
+    /// default <see langword="null"/> = unbounded.
+    /// </remarks>
+    public int? MaxConnections { get; set; }
+
+    /// <summary>
+    /// Minimum number of connections the pool keeps open; warmed up at init
+    /// and treated as a floor when cleaning up idle connections.
+    /// </summary>
+    /// <remarks>
+    /// default 1; <c>0</c> = pure lazy (open on demand only).
+    /// </remarks>
+    public int MinConnections { get; set; } = 1;
+
+    /// <summary>
+    /// <c>multiuser-authentication</c>.
+    /// </summary>
+    public bool? MultiuserAuthentication { get; set; }
+
+    /// <summary>
+    /// Pool identifier; required. Regions reference it via
+    /// <see cref="CacheRegionAttributesOptions.PoolName"/>.
+    /// </summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>
+    /// <c>ping-interval</c>. Same concept as
+    /// <see cref="PoolOptions.PingInterval"/>.
+    /// </summary>
+    public TimeSpan? PingInterval { get; set; }
+
+    /// <summary>
+    /// <c>pr-single-hop-enabled</c>.
+    /// </summary>
+    public bool? PrSingleHopEnabled { get; set; }
+
+    /// <summary>
+    /// <c>read-timeout</c>.
+    /// </summary>
+    public TimeSpan? ReadTimeout { get; set; }
+
+    /// <summary>
+    /// <c>retry-attempts</c>.
+    /// </summary>
+    public int? RetryAttempts { get; set; }
+
+    /// <summary>
+    /// Logical group of servers this pool targets.
+    /// </summary>
+    public string ServerGroup { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Direct server endpoints for pools that bypass locators.
+    /// </summary>
+    public List<CacheHostPortOptions> Servers { get; set; } = [];
+
+    /// <summary>
+    /// <c>socket-buffer-size</c>. Same concept as
+    /// <see cref="PoolOptions.MaxSocketBufferSize"/>.
+    /// </summary>
+    public int? SocketBufferSize { get; set; }
+
+    /// <summary>
+    /// <c>statistic-interval</c>.
+    /// </summary>
+    public TimeSpan? StatisticInterval { get; set; }
+
+    /// <summary>
+    /// <c>subscription-ack-interval</c>. XSD types this as
+    /// string but cppcache parses as ms.
+    /// </summary>
+    public int? SubscriptionAckInterval { get; set; }
+
+    /// <summary>
+    /// <c>subscription-enabled</c>.
+    /// </summary>
+    public bool? SubscriptionEnabled { get; set; }
+
+    /// <summary>
+    /// <c>subscription-message-tracking-timeout</c>.
+    /// </summary>
+    public int? SubscriptionMessageTrackingTimeout { get; set; }
+
+    /// <summary>
+    /// <c>subscription-redundancy</c>.
+    /// </summary>
+    public int? SubscriptionRedundancy { get; set; }
+
+    /// <summary>
+    /// <c>thread-local-connections</c>.
+    /// </summary>
+    public bool? ThreadLocalConnections { get; set; }
+
+    /// <summary>
+    /// How often the pool asks an active locator for the current locator set,
+    /// so it can pick up newly-added locators and drop dead ones without a client restart;
+    /// </summary>
+    /// <remarks>
+    /// default 5s; <see cref="TimeSpan.Zero"/>disables the refresh loop.
+    /// </remarks>
+    public TimeSpan UpdateLocatorListInterval { get; set; } = TimeSpan.FromSeconds(5);
+
 }

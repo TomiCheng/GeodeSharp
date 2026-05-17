@@ -72,8 +72,13 @@ public class CachePoolOptions : ICloneable
     public int MinConnections { get; set; } = 1;
 
     /// <summary>
-    /// <c>max-connections</c>.
+    /// Upper cap on pool size; new connection opens are rejected with
+    /// <see cref="AllConnectionsInUseException"/> once the pool reaches
+    /// this size.
     /// </summary>
+    /// <remarks>
+    /// default <see langword="null"/> = unbounded.
+    /// </remarks>
     public int? MaxConnections { get; set; }
 
     /// <summary>

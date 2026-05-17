@@ -281,19 +281,24 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
     }
 
     [Fact]
-    public async Task CleanStaleConnections_loadCond_path_replaces_conn_and_bumps_LoadConditioning_counters()
+    public async Task CleanStaleConnections_loadCond_path_bumps_LoadConditioningDisconnects()
     {
         using var cts = new CancellationTokenSource(TestTimeout);
 
-        using var lcConnects = new MeterCapture("Geode.Client.Pool", "LoadConditioningConnects");
         using var lcDisconnects = new MeterCapture("Geode.Client.Pool", "LoadConditioningDisconnects");
-        using var poolConnections = new MeterCapture("Geode.Client.Pool", "PoolConnections");
 
-        // MinConnections = 1 keeps a floor of 1 conn so isIdle never fires
-        // (would need _poolSize > Min); only HasExpired can flag conns.
-        // LoadConditioningInterval = 500ms is short enough to fire within
-        // a few sweeps after RestoreMin opens the first conn (~1s after init).
-        // IdleTimeout doubles as the sweep interval (200ms).
+        // MinConnections = 0 — load conditioning takes the pure-shrink path
+        // (replaceCount <= 0) instead of replace. Replace path with a single
+        // configured server would hit the currentServer recycle hint
+        // (cppcache L1760-1765): SelectEndpoint picks the same endpoint, the
+        // dying conn gets UpdateCreationTime'd and returned — no new conn,
+        // no LoadConditioningConnect/Disconnect bumps. That parity is
+        // correct; testing it would require a multi-server fixture.
+        //
+        // LoadConditioningInterval = 50ms — well under sweep cadence (IdleTimeout
+        // = 200ms) so HasExpired fires before IsIdle's first eligible window
+        // (IsIdle requires unused > effectiveIdle = min(IdleTimeout, LoadCond)).
+        // PingInterval = 0 keeps the ping loop from opening conns mid-test.
         await using var services = new ServiceCollection()
             .AddLogging()
             .AddGeodeClient(config => config.Cache = new CacheOptions
@@ -311,36 +316,38 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
                                 Port = _fx.ServerPort,
                             },
                         },
-                        MinConnections = 1,
+                        MinConnections = 0,
                         IdleTimeout = TimeSpan.FromMilliseconds(200),
-                        LoadConditioningInterval = TimeSpan.FromMilliseconds(500),
+                        LoadConditioningInterval = TimeSpan.FromMilliseconds(50),
+                        PingInterval = TimeSpan.Zero,
                     },
                 },
+                Regions = { new CacheRegionOptions { Name = "test" } },
             })
             .BuildServiceProvider();
 
         var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();
         await cache.EnsureInitializedAsync(cts.Token);
 
-        // Conn open at ~1s, hits LoadCond ~500ms later, next sweep replaces.
-        // Generous 8s deadline tolerates fresh-conn race + jitter.
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(8);
-        while (DateTime.UtcNow < deadline && (lcConnects.Count < 1 || lcDisconnects.Count < 1))
+        // Fresh-conn settle (memory geode-fresh-conn-race.md) + force a
+        // lazy conn open via Put. After the conn is returned to the queue
+        // and ages past LoadCond (~50ms), the next sweep flags it as
+        // LoadConditioning and pure-shrinks it.
+        await Task.Delay(TimeSpan.FromSeconds(3), cts.Token);
+
+        var region = cache.GetRegion<int, int>("test");
+        Assert.NotNull(region);
+        await region.PutAsync(0x6000_0002, 1234, cts.Token);
+
+        var pool = (ThinClientPoolDM)((Cache)cache).PoolManager.DefaultPool!;
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < deadline && (lcDisconnects.Count < 1 || pool.PoolSize != 0))
         {
-            await Task.Delay(100, cts.Token);
+            await Task.Delay(50, cts.Token);
         }
-        Assert.True(
-            lcConnects.Count >= 1,
-            $"Expected LoadConditioningConnects >= 1 within deadline, got {lcConnects.Count}.");
         Assert.True(
             lcDisconnects.Count >= 1,
             $"Expected LoadConditioningDisconnects >= 1 within deadline, got {lcDisconnects.Count}.");
-
-        // Replace path preserves pool size — Min is held across rotation.
-        poolConnections.Observe();
-        Assert.True(
-            poolConnections.LastValue == 1,
-            $"Expected PoolConnections == 1 after load-cond replacement, got {poolConnections.LastValue}.");
 
         await cache.CloseAsync(cts.Token);
     }

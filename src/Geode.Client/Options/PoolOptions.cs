@@ -20,8 +20,13 @@ public class PoolOptions : ICloneable
     /// <remarks>Per-endpoint. cppcache: <c>SystemProperties.cpp:318</c>, <c>TcrEndpoint.cpp:49</c> (one slot reserved for subscription channel).</remarks>
     public int ConnectionPoolSize { get; set; } = 5;
 
-    /// <summary>TCP connect + handshake budget; <c>connect-timeout</c>; default 59s.</summary>
-    /// <remarks>Per-connection. cppcache: <c>SystemProperties.cpp:291</c>, <c>TcrConnection.cpp:131</c>. Subscription channel uses <c>×3</c> internally.</remarks>
+    /// <summary>
+    /// Budget for opening a new server connection (TCP connect + Geode
+    /// handshake combined).
+    /// </summary>
+    /// <remarks>
+    /// default 59s.
+    /// </remarks>
     public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(59);
 
     /// <summary>Extra wait between failed connects; <c>connect-wait-timeout</c>; default zero (disabled).</summary>
@@ -48,9 +53,12 @@ public class PoolOptions : ICloneable
     public PoolOptions Clone() => new(this);
     object ICloneable.Clone() => Clone();
 
-    /// <summary>Validate this section; no rules yet (parity stub).</summary>
+    /// <summary>Validate this section.</summary>
     public IEnumerable<string> Validate(string prefix)
     {
-        yield break;
+        // Defensive — negative TimeSpan for a connect budget makes no sense
+        // (cppcache parseDurationProperty silently accepts it; we don't).
+        if (ConnectTimeout < TimeSpan.Zero)
+            yield return $"{prefix}.ConnectTimeout must be >= 0 (got {ConnectTimeout}).";
     }
 }

@@ -68,6 +68,28 @@ internal class PoolStatistics(string poolName)
     }
 
 
+    // Lifetime totals — every successful conn open / close ticks these,
+    // regardless of cause. cppcache connects / disconnects
+    // (PoolStatistics.cpp:53-58, IntCounter pair). Combined with the
+    // PoolConnections gauge: connects - disconnects ≈ PoolConnections
+    // at steady state; rates give churn / shrink velocity.
+    readonly static Counter<int> _poolConnects = _meter.CreateCounter<int>(
+        "PoolConnects",
+        unit: "connections",
+        description: "Total connections opened by the pool over its lifetime, all causes combined.");
+
+    readonly static Counter<int> _poolDisconnects = _meter.CreateCounter<int>(
+        "PoolDisconnects",
+        unit: "connections",
+        description: "Total connections closed by the pool over its lifetime, all causes combined.");
+
+    public void PoolConnect() =>
+        _poolConnects.Add(1, new KeyValuePair<string, object?>("poolName", poolName));
+
+    public void PoolDisconnect() =>
+        _poolDisconnects.Add(1, new KeyValuePair<string, object?>("poolName", poolName));
+
+
     // Load conditioning — periodic forced rotation of long-lived conns
     // (CleanStaleConnectionsAsync replace path).
     // cppcache loadConditioningConnects / loadConditioningDisconnects

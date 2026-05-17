@@ -34,7 +34,7 @@ public class GetDiagnosticTests(GeodeFixture fx, ITestOutputHelper output)
         var connection = services.GetRequiredService<TcrConnection>();
         var builder = services.GetRequiredService<TcrMessageBuilder>();
 
-        await connection.ConnectAsync(fx.LocatorHost, fx.ServerPort, cts.Token);
+        await connection.ConnectAsync(fx.LocatorHost, fx.ServerPort, cancellationToken: cts.Token);
         output.WriteLine("Connected; handshake OK.");
 
         // ---- 1. Get on a region that we KNOW does not exist on the server. ----
@@ -102,7 +102,7 @@ public class GetDiagnosticTests(GeodeFixture fx, ITestOutputHelper output)
         var connection = services.GetRequiredService<TcrConnection>();
         var builder = services.GetRequiredService<TcrMessageBuilder>();
 
-        await connection.ConnectAsync(fx.LocatorHost, fx.ServerPort, cts.Token);
+        await connection.ConnectAsync(fx.LocatorHost, fx.ServerPort, cancellationToken: cts.Token);
 
         // Theory: Get fails on a brand-new connection because region cache
         // isn't initialised yet; warm up with a Ping first.

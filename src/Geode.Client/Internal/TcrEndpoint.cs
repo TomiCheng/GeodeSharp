@@ -250,8 +250,6 @@ internal sealed class TcrEndpoint(
                 "TODO Phase 2+: notification-channel handshake.");
         }
         _ = isSecondary;     // only meaningful with isClientNotification.
-        _ = connectTimeout;  // TODO Phase 1.5: thread into TcrConnection.ConnectAsync
-                             // once it grows a timeout parameter.
 
         ct.ThrowIfCancellationRequested();
 
@@ -277,7 +275,8 @@ internal sealed class TcrEndpoint(
             //     not received) or pointed at a locator port.
             //   • SocketException / IOException — TCP failure.
             //   • OperationCanceledException — ct cancelled.
-            await conn.ConnectAsync(endpoint.Host, endpoint.Port, ct).ConfigureAwait(false);
+            await conn.ConnectAsync(endpoint.Host, endpoint.Port, connectTimeout, ct).ConfigureAwait(false);
+            conn.Endpoint = this;
 
             // Endpoint state flags are caller-driven (mirror cppcache):
             //   • SetConnected — ThinClientPoolDM::createPoolConnection

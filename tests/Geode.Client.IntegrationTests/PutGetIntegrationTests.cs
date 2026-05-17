@@ -151,7 +151,7 @@ public class PutGetIntegrationTests(GeodeFixture fx)
             .BuildServiceProvider();
 
         var connection = services.GetRequiredService<TcrConnection>();
-        await connection.ConnectAsync(fx.LocatorHost, fx.ServerPort, cancellationToken);
+        await connection.ConnectAsync(fx.LocatorHost, fx.ServerPort, cancellationToken: cancellationToken);
 
         var builder = services.GetRequiredService<TcrMessageBuilder>();
         return (connection, builder);

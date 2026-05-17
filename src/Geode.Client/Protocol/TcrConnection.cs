@@ -83,10 +83,18 @@ internal sealed class TcrConnection(
     // Phase 1.5 mirror-then-prune. Most fields are zero / null until
     // the wire path that fills them lands; back-refs are nullable typed
     // so we can swap in real DI plumbing without changing the shape.
+    /// <summary>
+    /// The <see cref="TcrEndpoint"/> this conn was opened on. Mirrors
+    /// cppcache <c>TcrConnection::getEndpointObject()</c> /
+    /// <c>endpointObj_</c>. Set by <see cref="TcrEndpoint.CreateNewConnectionAsync"/>
+    /// right after the handshake succeeds; consumed by pool failover
+    /// (currentServer recycle hint) and per-endpoint conn filtering.
+    /// </summary>
+    internal TcrEndpoint? Endpoint { get; set; }
+
 #pragma warning disable CS0169, CS0414, CS0649 // placeholder mirror fields wired up phase by phase
     private long _connectionId;                                 // connectionId
     private TcrConnectionManager? _connectionManager;           // connectionManager_
-    private TcrEndpoint? _endpointObj;                          // endpointObj_
     // _tcpClient + _stream above cover cppcache `conn_` (Connector).
     private ushort _port;                                       // port_
     private object? _chunksProcessSemaphore;                    // binary_semaphore chunks_process_semaphore_ (≈ SemaphoreSlim)
@@ -171,20 +179,30 @@ internal sealed class TcrConnection(
     /// <c>isSecondary</c> parameters get plumbed through.
     /// </para>
     /// </remarks>
-    public async Task ConnectAsync(string host, int port, CancellationToken cancellationToken = default)
+    public async Task ConnectAsync(string host, int port, TimeSpan? connectTimeout = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(host);
+
+        // Bound TCP connect + handshake under a single budget. cppcache
+        // initTcrConnection passes connectTimeout to BOTH legs; we mirror
+        // by linking the caller's ct to a CancelAfter timer that fires
+        // when the budget expires. Null or <= 0 means "no extra bound".
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        if (connectTimeout is { } budget && budget > TimeSpan.Zero)
+        {
+            cts.CancelAfter(budget);
+        }
 
         // Disable Nagle so a 17-byte Ping flushes immediately instead of
         // waiting for buffer fill — cppcache does the same.
         _tcpClient.NoDelay = true;
-        await _tcpClient.ConnectAsync(host, port, cancellationToken).ConfigureAwait(false);
+        await _tcpClient.ConnectAsync(host, port, cts.Token).ConfigureAwait(false);
         logger.LogDebug("TcrConnection connected to {host}:{port}", host, port);
         _stream = _tcpClient.GetStream();
 
         // Geode handshake — fail fast here if the server rejects us, so the
         // caller never sees a half-initialised connection.
-        await HandshakeAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        await HandshakeAsync(cancellationToken: cts.Token).ConfigureAwait(false);
     }
 
     /// <summary>

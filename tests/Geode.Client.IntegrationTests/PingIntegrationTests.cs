@@ -50,7 +50,7 @@ public class PingIntegrationTests(GeodeFixture fx)
         // ConnectAsync bundles TCP connect + Geode handshake. Failure
         // here surfaces as GeodeException (server refused) or IOException
         // (transport / framing bug).
-        await connection.ConnectAsync(fx.LocatorHost, fx.ServerPort, cts.Token);
+        await connection.ConnectAsync(fx.LocatorHost, fx.ServerPort, cancellationToken: cts.Token);
 
         // Ping a real server-cache; successful return = the server
         // accepted the handshake AND replied with MessageType.Reply (6).

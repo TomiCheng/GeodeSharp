@@ -230,6 +230,34 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
 
 #### Done
 
+- **`_opConnections` data structure swap (`Channel<T>` → `LinkedList<T>` +
+  `Lock`)** — Phase 1.5 multi-endpoint prep. Direct mirror of cppcache
+  `queue_` + `mutex_` (`ThinClientPoolDM.cpp:2156`). Picked over Channel
+  because per-endpoint ops (`getFromEP`, `removeEPConnections`,
+  `getNoGetLock`) need iterate-and-erase-by-predicate, which Channel
+  can't express without drain/repush gymnastics; consumers always
+  `TryRead` (caller opens a new conn on empty), so Channel's
+  wake-on-write signal was never load-bearing. 11 sites translated
+  1:1, semantics preserved — Phase 1.1 single-endpoint shortcut still
+  takes head (`First` + `RemoveFirst`):
+  - `GetFromEPAsync` / `PutInQueueAsync` — simple `TryRead` / `WriteAsync`
+    swap. `PutInQueueAsync` collapses to sync (returns
+    `ValueTask.CompletedTask`).
+  - `RestoreMinConnectionsAsync` — single `WriteAsync` → `AddLast`.
+  - `DestroyAsync` Step 5a — `TryComplete` + drain becomes
+    snapshot-and-clear under lock, `CloseAsync` awaits outside the lock
+    so close I/O isn't held under it.
+  - `CleanStaleConnectionsAsync` — `Reader.Count` → `lock + Count`;
+    destructive `TryRead` → `lock + First/RemoveFirst`; 3 push-back
+    sites → `lock + AddLast`. Drain/repush gymnastics preserved this
+    round; can collapse to in-place node walk in a later refactor.
+  - `GetFromEPAsync`'s Step A-D roadmap rewritten to match (in-place
+    `node.Next` walk + `Remove(node)`, FIFO preserved exactly — Step B
+    "re-enqueue" becomes n/a). Body still the Phase 1.1 shortcut; real
+    per-endpoint scan is the next round.
+  - Tests: 715/715 unit + 99/99 integration (6 expected skips) green —
+    behaviour-preserving refactor verified.
+
 - **Options family rename** — `CacheXml*` → `Cache*`, folder
   `Options/CacheXml/` → `Options/Cache/`. `GeodeClientOptions.CacheXml`
   property → `Cache`, JSON path moves with it. `CacheXmlHostPort` →

@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
-using System.Threading.Channels;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
 using Microsoft.Extensions.DependencyInjection;
@@ -62,10 +61,15 @@ internal sealed class ThinClientPoolDM(
     private int _isDestroyed;                      // m_isDestroyed (Interlocked 0/1)
     private bool _keepAlive;                       // m_keepAlive (set in DestroyAsync, read by Step 5a)
     // ── Idle connection queue (cppcache inherits ConnectionQueue<TcrConnection>) ──
-    // Unbounded for Phase 1.1; Phase 1.5 may bound by MaxConnections.
-    // Channel auto-wakes a pending reader on WriteAsync — replaces
-    // cppcache's conn_semaphore_.release().
-    private readonly Channel<TcrConnection> _opConnections = Channel.CreateUnbounded<TcrConnection>();
+    // Direct mirror of cppcache queue_ (std::list<TcrConnection*>) + mutex_
+    // (ThinClientPoolDM.cpp:2156). Picked over Channel<T> because Phase 1.5
+    // multi-endpoint ops (getFromEP, removeEPConnections, getNoGetLock)
+    // need iterate-and-erase-by-predicate, which Channel can't express
+    // without drain/repush gymnastics. Consumers always TryRead (caller
+    // opens a new conn on empty), so Channel's wake-on-write signal was
+    // never load-bearing.
+    private readonly LinkedList<TcrConnection> _opConnections = new();
+    private readonly Lock _opConnLock = new();
     private int _poolSize;
 
     // MaxConnections cap enforcement. SemaphoreSlim acts as a "slot
@@ -343,17 +347,41 @@ internal sealed class ThinClientPoolDM(
     /// <returns>An idle conn for this endpoint, or <c>null</c> if none available.</returns>
     private Task<TcrConnection?> GetFromEPAsync(TcrEndpoint endpoint, CancellationToken ct)
     {
-        // TODO Phase 1.5 (multi-endpoint): scan _opConnections for a conn
-        //   whose endpoint == endpoint; cppcache walks its queue and
-        //   filters by getEndpointObject(). Requires TcrConnection to
-        //   carry a back-ref to its TcrEndpoint (cppcache m_endpointObj).
         // Phase 1.1 single-endpoint shortcut: any conn in _opConnections
         //   belongs to the only endpoint, so TryRead is sufficient.
+        //
+        // Phase 1.5 multi-endpoint roadmap (cppcache getFromEP, L2156-2168 —
+        // lock + iterate queue + return-and-erase first match by
+        // getEndpointObject()). TcrConnection.Endpoint back-ref already
+        // exists (set in TcrEndpoint.CreateNewConnectionAsync after
+        // handshake), so no field plumbing — just port the scan:
+        //
+        // Step A — in-place scan under _opConnLock. cppcache holds
+        //   mutex_ for the whole iterate-erase; LinkedList<T>'s First /
+        //   node.Next walk is O(n) under the lock, ReferenceEquals
+        //   against conn.Endpoint, Remove(node) on match. No drain /
+        //   re-enqueue dance needed (that was the Channel-era plan).
+        // Step B — n/a once Step A uses in-place Remove(node); non-match
+        //   nodes stay where they are, FIFO preserved exactly.
+        // Step C — log. Mirror cppcache LOGDEBUG
+        //   "ThinClientPoolDM::getFromEP got connection" (L2160) via
+        //   ILogger<ThinClientPoolDM>. No counter in cppcache — none here.
+        // Step D — test. Unit test: enqueue conns on EP-A and EP-B, assert
+        //   GetFromEPAsync(EP-A) returns the A-conn, leaves the B-conn in
+        //   queue; second call with EP-B returns the B-conn. Multi-server
+        //   integration test waits on the multi-server fixture (see
+        //   PROGRESS.md item 6 — same blocker as the rest of failover).
         _ = endpoint;
         _ = ct;
-        return _opConnections.Reader.TryRead(out var conn)
-            ? Task.FromResult<TcrConnection?>(conn)
-            : Task.FromResult<TcrConnection?>(null);
+        lock (_opConnLock)
+        {
+            if (_opConnections.First is { } node)
+            {
+                _opConnections.RemoveFirst();
+                return Task.FromResult<TcrConnection?>(node.Value);
+            }
+            return Task.FromResult<TcrConnection?>(null);
+        }
     }
 
     /// <summary>
@@ -367,7 +395,9 @@ internal sealed class ThinClientPoolDM(
         // can age out idle conns. Phase 6: route to sticky-tx queue when
         // forTransaction=true.
         conn.Touch();
-        return _opConnections.Writer.WriteAsync(conn, ct);
+        _ = ct;
+        lock (_opConnLock) _opConnections.AddLast(conn);
+        return ValueTask.CompletedTask;
     }
 
     /// <summary>
@@ -405,7 +435,7 @@ internal sealed class ThinClientPoolDM(
             // Warm-up path enqueues; sendSyncRequest's starvation path
             // (Phase 1.2) will consume the conn directly. Mirrors
             // cppcache restoreMinConnections → putInQueue(conn).
-            await _opConnections.Writer.WriteAsync(conn, ct).ConfigureAwait(false);
+            lock (_opConnLock) _opConnections.AddLast(conn);
         }
     }
 
@@ -606,8 +636,15 @@ internal sealed class ThinClientPoolDM(
         //     CloseConnection(18) before its socket goes away. Mirrors
         //     cppcache ConnectionQueue::close (ConnectionQueue.hpp:87)
         //     invoked from ThinClientPoolDM::destroy (L829).
-        _opConnections.Writer.TryComplete();
-        while (_opConnections.Reader.TryRead(out var conn))
+        //     Snapshot-and-clear under lock so CloseAsync's await isn't
+        //     held under the lock (close I/O may be slow).
+        List<TcrConnection> drained;
+        lock (_opConnLock)
+        {
+            drained = [.. _opConnections];
+            _opConnections.Clear();
+        }
+        foreach (var conn in drained)
         {
             // CloseAsync sends MessageType.CloseConnection(18) then
             // disposes the socket. Currently NIE — until the leaf lands,
@@ -1227,7 +1264,8 @@ internal sealed class ThinClientPoolDM(
 
         // Bound the sweep by initial queue depth (cppcache `availableConns = size()`):
         // own re-pushes don't re-inspect; other-thread returns wait for next tick.
-        var snapshot = _opConnections.Reader.Count;
+        int snapshot;
+        lock (_opConnLock) snapshot = _opConnections.Count;
         var removelist = new List<(TcrConnection Conn, RemovalReason Reason)>();
         var savedConns = 0;
 
@@ -1235,10 +1273,17 @@ internal sealed class ThinClientPoolDM(
         {
             ct.ThrowIfCancellationRequested();
 
-            if (!_opConnections.Reader.TryRead(out var conn))
+            TcrConnection conn;
+            lock (_opConnLock)
             {
-                // Drained early (cppcache `getNoWait → nullptr`).
-                break;
+                var node = _opConnections.First;
+                if (node is null)
+                {
+                    // Drained early (cppcache `getNoWait → nullptr`).
+                    break;
+                }
+                conn = node.Value;
+                _opConnections.RemoveFirst();
             }
 
             // cppcache canItBeDeleted (L2107-2121): idle threshold falls back
@@ -1259,7 +1304,7 @@ internal sealed class ThinClientPoolDM(
             }
             else
             {
-                await _opConnections.Writer.WriteAsync(conn, ct).ConfigureAwait(false);
+                lock (_opConnLock) _opConnections.AddLast(conn);
                 savedConns++;
             }
         }
@@ -1292,7 +1337,7 @@ internal sealed class ThinClientPoolDM(
                     [], currentServer: conn, ct).ConfigureAwait(false);
                 if (newConn is not null)
                 {
-                    await _opConnections.Writer.WriteAsync(newConn, ct).ConfigureAwait(false);
+                    lock (_opConnLock) _opConnections.AddLast(newConn);
                     // newConn == conn means cppcache recycle; only close on real swap.
                     if (!ReferenceEquals(newConn, conn))
                     {
@@ -1314,7 +1359,7 @@ internal sealed class ThinClientPoolDM(
                     // Replacement failed, not expired → reset age + push back
                     // (cppcache :488); else re-elected every sweep.
                     conn.UpdateCreationTime();
-                    await _opConnections.Writer.WriteAsync(conn, ct).ConfigureAwait(false);
+                    lock (_opConnLock) _opConnections.AddLast(conn);
                 }
                 replaceCount--;
             }

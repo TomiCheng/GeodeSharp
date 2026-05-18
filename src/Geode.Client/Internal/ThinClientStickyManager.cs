@@ -43,4 +43,20 @@ internal sealed class ThinClientStickyManager(
         // (walking-skeleton).
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// Per-tick sticky-conn aging sweep. Mirrors cppcache
+    /// <c>ThinClientStickyManager::cleanStaleStickyConnection</c> —
+    /// called from <see cref="ThinClientPoolDM.CleanStickyConnectionsAsync"/>
+    /// each conn-management tick.
+    /// </summary>
+    public Task CleanStaleStickyConnectionAsync(CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        // TODO Phase 6: walk m_stickyConnList, close conns whose pinning
+        // thread is gone / TX is finished. Currently a no-op so
+        // ThinClientPoolDM.CleanStickyConnectionsAsync can wire the call
+        // site (walking-skeleton).
+        return Task.CompletedTask;
+    }
 }

@@ -34,13 +34,13 @@ internal sealed class ThinClientLocatorHelper(
     /// <summary>cppcache <c>TcrConnection.hpp:44</c>: first byte the locator sends when it requires SSL but the client did not enable TLS.</summary>
     private const byte ReplySslEnabled = 21;
 
-    /// <summary>cppcache <c>ThinClientLocatorHelper.cpp:49</c>: default when <c>RetryAttempts</c> is unset / non-positive.</summary>
-    private const int DefaultConnectionRetries = 3;
-
     private readonly List<ServerLocation> _locators = [.. initialLocators];
     private readonly Lock _swapLock = new();
-    private readonly int _connectionRetries =
-        connectionRetries <= 0 ? DefaultConnectionRetries : connectionRetries;
+    // Caller (ThinClientPoolDM) guarantees >= 0 via CachePoolOptions
+    // validator + default 3. cppcache's getConnRetries() sentinel-resolves
+    // <=0 to 3; we surface the resolved default at the Options layer so 0
+    // can mean "no retries" end-to-end.
+    private readonly int _connectionRetries = connectionRetries;
 
     // ─────────────────────────────────────────────────────────────
     //  Public surface

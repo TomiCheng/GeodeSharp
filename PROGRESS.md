@@ -247,6 +247,62 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
 
 #### Done
 
+- **Pool subclass split + lifecycle leaf wiring** —
+  `ThinClientPoolDM` opened for inheritance (`sealed` removed,
+  `_stickyManager` promoted to `protected`,
+  `CleanStickyConnectionsAsync` + `RemoveCallbackConnectionAsync` become
+  `protected virtual`, both bodies revert to no-op to mirror cppcache
+  base `{}`). New `ThinClientPoolStickyDM` overrides
+  `CleanStickyConnectionsAsync` to dispatch
+  `_stickyManager.CleanStaleStickyConnectionAsync(ct)` (cppcache
+  `ThinClientPoolStickyDM.cpp:134-140`); new `ThinClientPoolHADM`
+  overrides `RemoveCallbackConnectionAsync` with the Phase 2+ HA
+  redundancy-manager TODO. Pool factory still always picks the base
+  `ThinClientPoolDM`; subclass selection by
+  `ThreadLocalConnections` / `SubscriptionEnabled` is a downstream
+  factory wiring task. New leaf
+  `ThinClientStickyManager.CleanStaleStickyConnectionAsync` no-op stub
+  + Phase 6 TODO.
+
+- **`ConnManageLoopAsync` + sub-loop hardening** —
+  `CleanStickyConnectionsAsync` slot wired between clean-stale and
+  restore-min (cppcache order). Tick LogTrace
+  (`queue size = {Q}, _poolSize = {P}`) replaces missing cppcache LOGFINE.
+  Catch-all `LogWarning` replaces silent swallow (cppcache L568-574
+  parity). Stale "10s initial delay" / step-order claim in XML doc
+  fixed. **`CleanStaleConnectionsAsync` split** into
+  `ClassifyStaleConns` (snapshot scan, sync) +
+  `ReplaceOrDeleteStaleConnsAsync` (close/rotate, async) with shared
+  `SafeCloseAsync` local helper (cppcache `try { GF_SAFE_DELETE } catch {}`
+  parity — one bad CloseAsync no longer aborts the sweep). Phase 2+ HA
+  subscription-queue guard surfaced as inline TODO at the classification
+  site. **`RestoreMinConnectionsAsync`** gains entry/exit LogDebug
+  (cppcache L528/L550-551), the `limit = 2 * min` retry cap (cppcache
+  L531/L538 — guards against the race where `_poolSize` never catches up),
+  and a new `_stats.MinPoolSizeConnect()` tick per restored conn.
+
+- **PoolStatistics catalogue progression** — three new instruments wired
+  to their cppcache counterparts: `MinPoolSizeConnects` Counter
+  (cppcache `minPoolSizeConnects` `PoolStatistics.cpp:59-62`,
+  fired by `RestoreMinConnectionsAsync`), `PingTicks` /
+  `PingSuccesses` Counters (no cppcache parity — our own ping-loop
+  liveness signals, replacing the test-only `pool.PingTickCount` /
+  `pool.PingSuccessCount` properties via `MeterCapture` in
+  `CacheConnectionIntegrationTests.PingLoop_pings_endpoint_against_real_server`).
+  Whole file converted from `//` comments to XML doc per
+  `xmldoc-concise-style` (class summary + per-instrument summary +
+  per-method one-liner; `<see cref>` cross-refs).
+
+- **`CachePoolOptions` sentinel-nullable conversions** —
+  `RetryAttempts` `int?` → `int = 3` (cppcache `DEFAULT_RETRY_ATTEMPTS
+  = -1` sentinel → 3, surfaced directly), validator rejects negative,
+  `ThinClientLocatorHelper` drops its `<= 0 → 3` fallback so `0` now
+  means "no retries" end-to-end (footgun fixed). `PrSingleHopEnabled`
+  `bool?` → `bool = true` (cppcache `DEFAULT_PR_SINGLE_HOP_ENABLED =
+  true`), consumer drops `?? true`. Both XML docs expanded with cppcache
+  ref + default/min/max. **Deleted** `StatisticInterval` (dead mirror —
+  cppcache `PoolStatsSampler` not ported, option had zero consumers).
+
 - **`_opConnections` data structure swap (`Channel<T>` → `LinkedList<T>` +
   `Lock`)** — Phase 1.5 multi-endpoint prep. Direct mirror of cppcache
   `queue_` + `mutex_` (`ThinClientPoolDM.cpp:2156`). Picked over Channel

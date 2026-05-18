@@ -34,7 +34,7 @@ namespace Geode.Client.Internal;
 /// </para>
 /// </remarks>
 
-internal sealed class ThinClientPoolDM(
+internal class ThinClientPoolDM(
     IServiceProvider serviceProvider,
     ILogger<ThinClientPoolDM> logger,
     CachePoolOptions xmlPool,
@@ -166,9 +166,10 @@ internal sealed class ThinClientPoolDM(
     /// <summary>
     /// Sticky-transaction connection manager. Built unconditionally in
     /// <see cref="InitAsync"/> (cppcache ctor L209); cleanup paired with
-    /// <see cref="DestroyAsync"/> step 6b.
+    /// <see cref="DestroyAsync"/> step 6b. <c>protected</c> so the
+    /// sticky-pool subclass can dispatch sticky-conn ops to it.
     /// </summary>
-    private ThinClientStickyManager? _stickyManager;
+    protected ThinClientStickyManager? _stickyManager;
 
     /// <summary>
     /// Get-or-create the pool's view of <paramref name="endpointName"/>'s
@@ -488,7 +489,15 @@ internal sealed class ThinClientPoolDM(
     private async Task RestoreMinConnectionsAsync(CancellationToken ct)
     {
         var min = xmlPool.MinConnections;
-        while (Volatile.Read(ref _poolSize) < min)
+        logger.LogDebug("Restoring minimum connection level for pool {Pool} (min={Min})", Name, min);
+
+        // cppcache `limit = 2 * min` (L531) caps the retry budget per tick:
+        // protects against a race where CreatePoolConnection succeeds but
+        // another thread closes the conn before _poolSize catches up,
+        // which would otherwise spin the while-loop indefinitely.
+        var limit = 2 * min;
+        var restored = 0;
+        while (Volatile.Read(ref _poolSize) < min && limit-- > 0)
         {
             ct.ThrowIfCancellationRequested();
             // Fresh blacklist per warm-up attempt: the failover retry
@@ -507,7 +516,15 @@ internal sealed class ThinClientPoolDM(
             // (Phase 1.2) will consume the conn directly. Mirrors
             // cppcache restoreMinConnections → putInQueue(conn).
             lock (_opConnLock) _opConnections.AddLast(conn);
+            restored++;
+            _stats.MinPoolSizeConnect();
         }
+
+        int queueSize;
+        lock (_opConnLock) queueSize = _opConnections.Count;
+        logger.LogDebug(
+            "Restored {Restored} connection(s) for pool {Pool}; queue size = {QueueSize}, _poolSize = {PoolSize}",
+            restored, Name, queueSize, Volatile.Read(ref _poolSize));
     }
 
     /// <summary>
@@ -617,20 +634,12 @@ internal sealed class ThinClientPoolDM(
 
         await base.InitAsync(ct).ConfigureAwait(false);
 
-        if (xmlPool.PrSingleHopEnabled ?? true)
+        if (xmlPool.PrSingleHopEnabled)
         {
-            _clientMetadataService = ActivatorUtilities.CreateInstance<ClientMetadataService>(
-                serviceProvider, this);
+            _clientMetadataService = ActivatorUtilities.CreateInstance<ClientMetadataService>(serviceProvider, this);
             await _clientMetadataService.StartAsync(ct).ConfigureAwait(false);
         }
     }
-
-    /// <summary>
-    /// Test-only: current pool connection count (cppcache <c>m_poolSize</c>).
-    /// Bumped in <see cref="CreatePoolConnectionAsync"/> step 4 after a
-    /// fresh <see cref="TcrConnection"/> handshakes successfully.
-    /// </summary>
-    internal int PoolSize => Volatile.Read(ref _poolSize);
 
     public override async Task DestroyAsync(bool keepAlive = false, CancellationToken ct = default)
     {
@@ -1107,6 +1116,13 @@ internal sealed class ThinClientPoolDM(
             ref _queryService,
             () => ActivatorUtilities.CreateInstance<RemoteQueryService>(serviceProvider, this));
 
+    /// <summary>
+    /// Test-only: current pool connection count (cppcache <c>m_poolSize</c>).
+    /// Bumped in <see cref="CreatePoolConnectionAsync"/> step 4 after a
+    /// fresh <see cref="TcrConnection"/> handshakes successfully.
+    /// </summary>
+    internal int PoolSize => Volatile.Read(ref _poolSize);
+
 
     #region Ping
 
@@ -1239,22 +1255,15 @@ internal sealed class ThinClientPoolDM(
     /// <summary>
     /// Periodic conn-management loop. Mirrors cppcache
     /// <c>ThinClientPoolDM::manageConnectionsInternal()</c>
-    /// (<c>ThinClientPoolDM.cpp:554-575</c>): on each tick run
-    /// cleanStaleConnections + RestoreMinConnectionsAsync +
-    /// cleanStickyConnections. cppcache schedules it with a 10 s
-    /// initial delay; we mirror that by awaiting the interval
-    /// before the first iteration.
+    /// (<c>ThinClientPoolDM.cpp:554-575</c>): each tick runs clean-stale,
+    /// clean-sticky, restore-min in that order.
     /// </summary>
     private async Task ConnManageLoopAsync(CancellationToken ct)
     {
-        // cppcache schedules the conn-management task with a fixed 1 s
-        // initial delay and then repeats every IdleTimeout
-        // (ThinClientPoolDM.cpp:343-344, `schedule(task, seconds(1),
-        // idle)`). Pre-opens MinConnections within ~1 s of init so the
-        // first user op finds an aged connection in the queue instead
-        // of having to lazy-open a fresh one (which the server hasn't
-        // finished registering, → RegionDestroyedException on the very
-        // first request).
+        // 1s initial delay (cppcache L343-344) pre-opens MinConnections
+        // within ~1s so the first user op finds an aged conn in the queue
+        // instead of lazy-opening a fresh one (server hasn't finished
+        // registering it → RegionDestroyedException on first request).
         var initialDelay = TimeSpan.FromSeconds(1);
         var interval = xmlPool.IdleTimeout;
         try
@@ -1263,26 +1272,28 @@ internal sealed class ThinClientPoolDM(
 
             while (!ct.IsCancellationRequested)
             {
+                int queueSize;
+                lock (_opConnLock) queueSize = _opConnections.Count;
+                logger.LogTrace(
+                    "ConnManage tick for pool {Pool}: queue size = {QueueSize}, _poolSize = {PoolSize}",
+                    Name, queueSize, Volatile.Read(ref _poolSize));
+
                 try
                 {
                     await CleanStaleConnectionsAsync(ct).ConfigureAwait(false);
+                    await CleanStickyConnectionsAsync(ct).ConfigureAwait(false);
                     await RestoreMinConnectionsAsync(ct).ConfigureAwait(false);
-                    // TODO Phase 6:    await CleanStickyConnectionsAsync(ct);
                 }
-                catch (Exception) when (!ct.IsCancellationRequested)
+                catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
-                    // Survive transient errors so a single bad tick
-                    // doesn't kill the loop. Phase 1.5: log via
-                    // ILogger.
+                    // cppcache L568-574 catch-all + LOGERROR: survive one bad tick.
+                    logger.LogWarning(ex, "ConnManage tick failed for pool {Pool}", Name);
                 }
 
                 await Task.Delay(interval, ct).ConfigureAwait(false);
             }
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            // graceful shutdown via _backgroundCts.Cancel().
-        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { /* graceful shutdown */ }
     }
 
     /// <summary>
@@ -1292,21 +1303,28 @@ internal sealed class ThinClientPoolDM(
     /// <see cref="ConnManageLoopAsync"/> tick before
     /// <see cref="RestoreMinConnectionsAsync"/>.
     /// </summary>
-    private enum RemovalReason { LoadConditioning, Idle }
-
     private async Task CleanStaleConnectionsAsync(CancellationToken ct)
     {
-        // Two staleness reasons:
-        //   load conditioning — age > LoadConditioningInterval (forced rotation).
-        //   idle              — unused > IdleTimeout AND _poolSize > Min (shrink).
-
-        // ── Step B — Classify (cppcache L412-436) ────────────────────
         var idle = xmlPool.IdleTimeout;
         var loadCond = xmlPool.LoadConditioningInterval;
         var min = xmlPool.MinConnections;
 
-        // Bound the sweep by initial queue depth (cppcache `availableConns = size()`):
-        // own re-pushes don't re-inspect; other-thread returns wait for next tick.
+        var (removelist, savedConns) = ClassifyStaleConns(idle, loadCond, min, ct);
+        await ReplaceOrDeleteStaleConnsAsync(removelist, min - savedConns, loadCond, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Walk the queue once and classify each conn as save (re-queue at tail),
+    /// load-conditioning (age &gt; <see cref="CachePoolOptions.LoadConditioningInterval"/>),
+    /// or idle-shrink (unused &gt; <see cref="CachePoolOptions.IdleTimeout"/> AND
+    /// pool above <see cref="CachePoolOptions.MinConnections"/>). Mirrors cppcache
+    /// <c>cleanStaleConnections</c> L412-436.
+    /// </summary>
+    private (List<(TcrConnection Conn, RemovalReason Reason)> Removelist, int SavedConns)
+        ClassifyStaleConns(TimeSpan idle, TimeSpan loadCond, int min, CancellationToken ct)
+    {
+        // Snapshot-bound the sweep (cppcache `availableConns = size()`):
+        // own re-pushes don't re-inspect; other-thread returns wait next tick.
         int snapshot;
         lock (_opConnLock) snapshot = _opConnections.Count;
         var removelist = new List<(TcrConnection Conn, RemovalReason Reason)>();
@@ -1320,22 +1338,21 @@ internal sealed class ThinClientPoolDM(
             lock (_opConnLock)
             {
                 var node = _opConnections.First;
-                if (node is null)
-                {
-                    // Drained early (cppcache `getNoWait → nullptr`).
-                    break;
-                }
+                if (node is null) break;   // drained early (cppcache `getNoWait → nullptr`)
                 conn = node.Value;
                 _opConnections.RemoveFirst();
             }
 
-            // cppcache canItBeDeleted (L2107-2121): idle threshold falls back
-            // to loadCond when shorter / disabled. Subscription-queue guard
-            // (L2124-2140) is Phase 2+ HA. Split per reason so Step C can
-            // pick the right counter (cppcache lumps both into incLoadCondDisconnects).
+            // cppcache canItBeDeleted (L2107-2121): idle threshold falls back to
+            // loadCond when shorter / disabled. Reason split so the close site
+            // picks the right counter (cppcache lumps both into incLoadCondDisconnects).
             var effectiveIdle = (loadCond > TimeSpan.Zero && (loadCond < idle || idle <= TimeSpan.Zero))
                 ? loadCond
                 : idle;
+
+            // TODO Phase 2+ HA: skip conns carrying a subscription queue
+            //   (cppcache canItBeDeleted L2124-2140). Pool-only mode has no
+            //   subscription channel so every conn is eligible.
 
             if (conn.HasExpired(loadCond))
             {
@@ -1352,8 +1369,21 @@ internal sealed class ThinClientPoolDM(
             }
         }
 
-        // ── Step C — Replace vs delete (cppcache L444-499) ───────────
-        var replaceCount = min - savedConns;
+        return (removelist, savedConns);
+    }
+
+    /// <summary>
+    /// For each classified-stale conn, either rotate it (open a fresh conn while
+    /// the pool still needs to hit <see cref="CachePoolOptions.MinConnections"/>) or
+    /// close it outright (pure shrink). Mirrors cppcache
+    /// <c>cleanStaleConnections</c> L444-499.
+    /// </summary>
+    private async Task ReplaceOrDeleteStaleConnsAsync(
+        List<(TcrConnection Conn, RemovalReason Reason)> removelist,
+        int replaceCount,
+        TimeSpan loadCond,
+        CancellationToken ct)
+    {
         foreach (var (conn, reason) in removelist)
         {
             ct.ThrowIfCancellationRequested();
@@ -1361,7 +1391,7 @@ internal sealed class ThinClientPoolDM(
             if (replaceCount <= 0)
             {
                 // Pure shrink — savedConns covers Min, close without replacement.
-                await conn.CloseAsync(_keepAlive, ct).ConfigureAwait(false);
+                await SafeCloseAsync(conn, "pure-shrink").ConfigureAwait(false);
                 Interlocked.Decrement(ref _poolSize); _capSlots?.Release();
                 switch (reason)
                 {
@@ -1371,20 +1401,18 @@ internal sealed class ThinClientPoolDM(
             }
             else
             {
-                // cppcache parity: pass empty excludeServers + conn as
-                // currentServer hint. When SelectEndpoint picks the same
-                // endpoint, the recycle path inside CreatePoolConnectionAsync
-                // returns the same conn (no handshake waste); when it picks
-                // a different one, we get a real rotation.
+                // Pass `conn` as currentServer hint so SelectEndpoint can return
+                // the same endpoint and CreatePoolConnectionAsync recycles the conn
+                // without re-handshaking (cppcache L455-459).
                 var newConn = await CreatePoolConnectionAsync(
                     [], currentServer: conn, ct).ConfigureAwait(false);
                 if (newConn is not null)
                 {
                     lock (_opConnLock) _opConnections.AddLast(newConn);
-                    // newConn == conn means cppcache recycle; only close on real swap.
+                    // newConn == conn means recycle; only close on real swap.
                     if (!ReferenceEquals(newConn, conn))
                     {
-                        await conn.CloseAsync(_keepAlive, ct).ConfigureAwait(false);
+                        await SafeCloseAsync(conn, "swap").ConfigureAwait(false);
                         Interlocked.Decrement(ref _poolSize); _capSlots?.Release();
                         _stats.LoadConditioningDisconnect();
                         _stats.LoadConditioningConnect();
@@ -1393,14 +1421,14 @@ internal sealed class ThinClientPoolDM(
                 else if (conn.HasExpired(loadCond))
                 {
                     // Replacement failed AND past loadCond → close anyway (doomed).
-                    await conn.CloseAsync(_keepAlive, ct).ConfigureAwait(false);
+                    await SafeCloseAsync(conn, "doomed-expired").ConfigureAwait(false);
                     Interlocked.Decrement(ref _poolSize); _capSlots?.Release();
                     _stats.LoadConditioningDisconnect();
                 }
                 else
                 {
                     // Replacement failed, not expired → reset age + push back
-                    // (cppcache :488); else re-elected every sweep.
+                    // (cppcache L488); else re-elected every sweep.
                     conn.UpdateCreationTime();
                     lock (_opConnLock) _opConnections.AddLast(conn);
                 }
@@ -1408,6 +1436,31 @@ internal sealed class ThinClientPoolDM(
             }
         }
 
+        // One bad CloseAsync must not abort the sweep (cppcache uses destructor-safe
+        // `try { GF_SAFE_DELETE } catch (...) {}`). keepAlive:false — transient cleanup.
+        async ValueTask SafeCloseAsync(TcrConnection c, string context)
+        {
+            try { await c.CloseAsync(keepAlive: false, ct).ConfigureAwait(false); }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "CloseAsync threw during CleanStale ({Context}); continuing.", context);
+            }
+        }
+    }
+
+    private enum RemovalReason { LoadConditioning, Idle }
+
+    /// <summary>
+    /// Per-tick sticky-conn cleanup hook. Mirrors cppcache
+    /// <c>ThinClientPoolDM::cleanStickyConnections</c>
+    /// (<c>ThinClientPoolDM.cpp:521</c>) — base body is empty <c>{}</c>;
+    /// <see cref="ThinClientPoolStickyDM"/> overrides to dispatch into
+    /// <see cref="ThinClientStickyManager.CleanStaleStickyConnectionAsync"/>.
+    /// </summary>
+    protected virtual Task CleanStickyConnectionsAsync(CancellationToken ct)
+    {
+        _ = ct;
+        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -1465,17 +1518,14 @@ internal sealed class ThinClientPoolDM(
     /// <summary>
     /// HA subscription channel cleanup for <paramref name="endpoint"/>.
     /// Mirrors cppcache <c>ThinClientPoolDM::removeCallbackConnection</c>
-    /// (<c>ThinClientPoolDM.hpp:281</c>) — base class no-op; the HA-pool
-    /// subclass (<c>ThinClientPoolHADM</c>, Phase 2+) delegates to
-    /// <c>redundancyManager_</c>. Pool-only mode has nothing to do here.
+    /// (<c>ThinClientPoolDM.hpp:281</c>) — base body is empty <c>{}</c>;
+    /// <see cref="ThinClientPoolHADM"/> overrides to dispatch into the
+    /// HA-pool's <c>redundancyManager_</c>.
     /// </summary>
-    private Task RemoveCallbackConnectionAsync(TcrEndpoint endpoint, CancellationToken ct)
+    protected virtual Task RemoveCallbackConnectionAsync(TcrEndpoint endpoint, CancellationToken ct)
     {
         _ = endpoint;
         _ = ct;
-        // TODO Phase 2+ HA: redirect to ThinClientRedundancyManager.RemoveCallbackConnection(endpoint)
-        //   when ThinClientPoolHADM + ThinClientRedundancyManager land. Pool-only
-        //   mode stays no-op (cppcache ThinClientPoolDM.hpp:281 is `{}`).
         return Task.CompletedTask;
     }
 
@@ -1512,25 +1562,19 @@ internal sealed class ThinClientPoolDM(
         var initialLocators = xmlPool.Locators
             .Select(l => new ServerLocation(l.Host, l.Port))
             .ToList();
-        // cppcache: getConnRetries() reads m_poolDM->getRetryAttempts(),
-        // falling back to 3 when ≤0 (ThinClientLocatorHelper.cpp:66-68).
-        // We pass it once at construction — Phase 1.5 MVP doesn't reload.
-        var connectionRetries = xmlPool.RetryAttempts ?? 0;
+        // Options layer surfaces the resolved default (3) directly, so no
+        // cppcache-style sentinel translation needed here.
         _locatorHelper = ActivatorUtilities.CreateInstance<ThinClientLocatorHelper>(
-            serviceProvider, initialLocators, connectionRetries);
+            serviceProvider, initialLocators, xmlPool.RetryAttempts);
 
         var updateInterval = xmlPool.UpdateLocatorListInterval;
         if (updateInterval <= TimeSpan.Zero)
         {
-            logger.LogDebug(
-                "ThinClientPoolDM::startBackgroundThreads: Not scheduling updateLocatorList as interval {Interval}",
-                updateInterval);
+            logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Not scheduling updateLocatorList as interval {Interval}", updateInterval);
             return;
         }
 
-        logger.LogDebug(
-            "ThinClientPoolDM::startBackgroundThreads: Scheduling updateLocatorList task at {Interval}",
-            updateInterval);
+        logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Scheduling updateLocatorList task at {Interval}", updateInterval);
         _updateLocatorTimer = new PeriodicTimer(updateInterval);
         _updateLocatorLoop = UpdateLocatorLoopAsync(_backgroundCts.Token);
     }
@@ -1553,7 +1597,6 @@ internal sealed class ThinClientPoolDM(
         // after a full interval.
         var initialDelay = TimeSpan.FromSeconds(1);
 
-        // cppcache LOGFINE("Starting updateLocatorList thread for pool %s", ...)
         logger.LogDebug("Starting updateLocatorList loop for pool {Pool}", Name);
         try
         {
@@ -1619,9 +1662,7 @@ internal sealed class ThinClientPoolDM(
     /// <c>currentServer</c> — neither failover-driven retry exclusion
     /// nor server replacement is wired in yet.
     /// </remarks>
-    private async Task<DnsEndPoint> SelectEndpointFromLocatorAsync(
-        HashSet<DnsEndPoint> excludeServers,
-        CancellationToken ct)
+    private async Task<DnsEndPoint> SelectEndpointFromLocatorAsync(HashSet<DnsEndPoint> excludeServers, CancellationToken ct)
     {
         logger.LogDebug("ThinClientPoolDM: Asking locator for server from group [{Group}]", xmlPool.ServerGroup);
 

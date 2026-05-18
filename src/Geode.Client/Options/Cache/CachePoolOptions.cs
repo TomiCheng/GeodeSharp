@@ -34,7 +34,6 @@ public class CachePoolOptions : ICloneable
         SubscriptionMessageTrackingTimeout = other.SubscriptionMessageTrackingTimeout;
         SubscriptionAckInterval = other.SubscriptionAckInterval;
         SubscriptionRedundancy = other.SubscriptionRedundancy;
-        StatisticInterval = other.StatisticInterval;
         PrSingleHopEnabled = other.PrSingleHopEnabled;
         ThreadLocalConnections = other.ThreadLocalConnections;
         MultiuserAuthentication = other.MultiuserAuthentication;
@@ -88,6 +87,9 @@ public class CachePoolOptions : ICloneable
         // 0 = disable idle-driven shrink (load conditioning takes over).
         if (IdleTimeout < TimeSpan.Zero)
             yield return $"{prefix}.IdleTimeout must be >= 0 (got {IdleTimeout}).";
+
+        if (RetryAttempts < 0)
+            yield return $"{prefix}.RetryAttempts must be >= 0 (got {RetryAttempts}).";
 
         for (var i = 0; i < Locators.Count; i++)
         {
@@ -170,9 +172,13 @@ public class CachePoolOptions : ICloneable
     public TimeSpan? PingInterval { get; set; }
 
     /// <summary>
-    /// <c>pr-single-hop-enabled</c>.
+    /// Enable PR single-hop routing: partitioned-region ops go directly
+    /// to the bucket primary instead of via a forwarder.
     /// </summary>
-    public bool? PrSingleHopEnabled { get; set; }
+    /// <remarks>
+    /// default <see langword="true"/>
+    /// </remarks>
+    public bool PrSingleHopEnabled { get; set; } = true;
 
     /// <summary>
     /// <c>read-timeout</c>.
@@ -180,9 +186,12 @@ public class CachePoolOptions : ICloneable
     public TimeSpan? ReadTimeout { get; set; }
 
     /// <summary>
-    /// <c>retry-attempts</c>.
+    /// Failover retry budget per op before the pool throws.
     /// </summary>
-    public int? RetryAttempts { get; set; }
+    /// <remarks>
+    /// default 3; <c>0</c> = no retries; must be <c>&gt;= 0</c>.
+    /// </remarks>
+    public int RetryAttempts { get; set; } = 3;
 
     /// <summary>
     /// Logical group of servers this pool targets.
@@ -199,11 +208,6 @@ public class CachePoolOptions : ICloneable
     /// <see cref="PoolOptions.MaxSocketBufferSize"/>.
     /// </summary>
     public int? SocketBufferSize { get; set; }
-
-    /// <summary>
-    /// <c>statistic-interval</c>.
-    /// </summary>
-    public TimeSpan? StatisticInterval { get; set; }
 
     /// <summary>
     /// <c>subscription-ack-interval</c>. XSD types this as

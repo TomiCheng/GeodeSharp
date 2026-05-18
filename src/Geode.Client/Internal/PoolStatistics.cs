@@ -18,11 +18,12 @@ namespace Geode.Client.Internal;
 /// time/bytes × 6. Ported so far: <c>PoolConnects</c> / <c>PoolDisconnects</c>
 /// / <c>MinPoolSizeConnects</c> / <c>LoadConditioningConnects</c> /
 /// <c>LoadConditioningDisconnects</c> / <c>IdleDisconnects</c> /
-/// <c>PoolConnections</c> gauge / <c>LocatorListRequestTime</c> /
-/// <c>ClientConnectionRequestTime</c> (the last two merge cppcache's
-/// request+response halves into one Histogram each). Non-cppcache
-/// additions: <c>PingSweepTime</c> / <c>EndpointPingTime</c> (our own
-/// ping-loop liveness signals — cppcache PoolStats has no ping counters).
+/// <c>PoolConnections</c> / <c>Locators</c> / <c>Servers</c> gauges /
+/// <c>LocatorListRequestTime</c> / <c>ClientConnectionRequestTime</c>
+/// (the last two merge cppcache's request+response halves into one
+/// Histogram each). Non-cppcache additions: <c>PingSweepTime</c> /
+/// <c>EndpointPingTime</c> (our own ping-loop liveness signals —
+/// cppcache PoolStats has no ping counters).
 /// </remarks>
 internal class PoolStatistics(string poolName)
 {
@@ -215,6 +216,77 @@ internal class PoolStatistics(string poolName)
     /// <summary>Drop this pool's reader from the gauge registry.</summary>
     public void ClearPoolConnectionsReader() =>
         _poolConnectionsReaders.TryRemove(poolName, out _);
+
+    /// <summary>
+    /// Per-pool reader registry for the <see cref="_locators"/> pull-mode
+    /// gauge. cppcache <c>setLocators</c> push site is single (after
+    /// successful <c>getEndpointForNewFwdConn</c>, <c>ThinClientPoolDM.cpp:596</c>);
+    /// pull-mode covers both the on-demand path and the background
+    /// <c>UpdateLocatorsLocalAsync</c> swap without instrumenting either.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, Func<int>> _locatorsReaders = new();
+
+    /// <summary>
+    /// Current number of locators known to the pool's
+    /// <see cref="ThinClientLocatorHelper"/>. Mirrors cppcache
+    /// <c>locators</c> IntGauge (<c>PoolStatistics.cpp:36-37</c>).
+    /// </summary>
+    readonly static ObservableGauge<int> _locators = _meter.CreateObservableGauge(
+        "Locators",
+        observeValues: ObserveLocators,
+        unit: "locators",
+        description: "Current number of locators known to the pool. Mirrors cppcache `locators` IntGauge.");
+
+    private static IEnumerable<Measurement<int>> ObserveLocators()
+    {
+        foreach (var (name, reader) in _locatorsReaders)
+        {
+            yield return new Measurement<int>(reader(), new KeyValuePair<string, object?>("poolName", name));
+        }
+    }
+
+    /// <summary>Register this pool's reader for the <c>Locators</c> gauge.</summary>
+    public void SetLocatorsReader(Func<int> reader) =>
+        _locatorsReaders[poolName] = reader;
+
+    /// <summary>Drop this pool's reader from the gauge registry.</summary>
+    public void ClearLocatorsReader() =>
+        _locatorsReaders.TryRemove(poolName, out _);
+
+    /// <summary>
+    /// Per-pool reader registry for the <see cref="_servers"/> pull-mode
+    /// gauge. cppcache <c>setServers</c> only fires on <c>addEP</c>
+    /// (<c>ThinClientPoolDM.cpp:2019</c>) — never decrements — making it a
+    /// monotonic high-water mark in cppcache; pull-mode lets our reader
+    /// reflect endpoint removal whenever that lands.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, Func<int>> _serversReaders = new();
+
+    /// <summary>
+    /// Current number of endpoints the pool is aware of. Mirrors cppcache
+    /// <c>servers</c> IntGauge (<c>PoolStatistics.cpp:38-39</c>).
+    /// </summary>
+    readonly static ObservableGauge<int> _servers = _meter.CreateObservableGauge(
+        "Servers",
+        observeValues: ObserveServers,
+        unit: "servers",
+        description: "Current number of endpoints the pool is aware of. Mirrors cppcache `servers` IntGauge.");
+
+    private static IEnumerable<Measurement<int>> ObserveServers()
+    {
+        foreach (var (name, reader) in _serversReaders)
+        {
+            yield return new Measurement<int>(reader(), new KeyValuePair<string, object?>("poolName", name));
+        }
+    }
+
+    /// <summary>Register this pool's reader for the <c>Servers</c> gauge.</summary>
+    public void SetServersReader(Func<int> reader) =>
+        _serversReaders[poolName] = reader;
+
+    /// <summary>Drop this pool's reader from the gauge registry.</summary>
+    public void ClearServersReader() =>
+        _serversReaders.TryRemove(poolName, out _);
 
     /// <summary>ActivitySource for traceable RPC spans.</summary>
     readonly static ActivitySource _activitySource = new("Geode.Client.Pool", AssemblyVersion);

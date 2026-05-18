@@ -36,6 +36,17 @@ internal sealed class ThinClientLocatorHelper(
 
     private readonly List<ServerLocation> _locators = [.. initialLocators];
     private readonly Lock _swapLock = new();
+
+    /// <summary>
+    /// Current size of the locator list. Mirrors cppcache
+    /// <c>getCurLocatorsNum()</c> (<c>ThinClientLocatorHelper.hpp:68</c>),
+    /// but read under <c>_swapLock</c> so <see cref="UpdateLocatorsAsync"/>'s
+    /// clear+append swap can't be observed mid-mutation.
+    /// </summary>
+    public int LocatorCount
+    {
+        get { lock (_swapLock) return _locators.Count; }
+    }
     // Caller (ThinClientPoolDM) guarantees >= 0 via CachePoolOptions
     // validator + default 3. cppcache's getConnRetries() sentinel-resolves
     // <=0 to 3; we surface the resolved default at the Options layer so 0

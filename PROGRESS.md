@@ -181,14 +181,18 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
 #### To do
 
 - **Server endpoint health monitoring.**
-- **`PoolStatistics` catalogue progression** — 7 of 27 fields wired
+- **`PoolStatistics` catalogue progression** — 11 of 27 fields wired
   (`locatorRequests` / `locatorResponses` collapsed into
-  `ClientConnectionRequestTime`, `PoolConnections` gauge,
-  `LoadConditioningConnects` / `LoadConditioningDisconnects` /
-  `IdleDisconnects` / `PoolConnects` / `PoolDisconnects` counters).
+  `ClientConnectionRequestTime`; `PoolConnections` / `Locators` /
+  `Servers` ObservableGauges; `LoadConditioningConnects` /
+  `LoadConditioningDisconnects` / `IdleDisconnects` /
+  `MinPoolSizeConnects` / `PoolConnects` / `PoolDisconnects` Counters).
   `PoolDisconnects` exists but isn't wired into every close site. The
-  remaining 20 land per catalogue order (`clientOps*` on the
-  send-sync-request path, `connectionWait*` in the conn queue, ...).
+  remaining 16 land per catalogue order (`subscriptionServers` Phase 2+
+  HA; `connectionWait*` in the conn queue; `clientOps*` on the
+  send-sync-request path; `receivedBytes` / `messagesBeingReceived`
+  wire I/O; `processedDelta*` Phase 2+ delta; `queryExecution*` already
+  has a path but the stat isn't wired).
 - **Auth-trio real throw sites** —
   `AuthenticationFailedException` / `AuthenticationRequiredException` /
   `NotAuthorizedException` classes exist but nothing throws them
@@ -197,6 +201,25 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
   `AUTH_FAILED`.
 
 #### Done
+
+- **`Locators` + `Servers` ObservableGauges (catalogue gauges #0 + #1)** —
+  Pull-mode, mirroring the existing `PoolConnections` pattern:
+  per-pool `ConcurrentDictionary<string, Func<int>>` reader registry,
+  shared static `ObservableGauge<int>` callback iterates the dict, one
+  `Measurement<int>` per pool with `poolName` tag. `Set*Reader` /
+  `Clear*Reader` lifecycle hooks called from `ThinClientPoolDM.InitAsync` /
+  `DestroyAsync` next to the existing `PoolConnections` registration.
+  Readers: `() => _endpoints.Count` for `Servers`, `() =>
+  _locatorHelper?.LocatorCount ?? 0` for `Locators` (helper is built
+  lazily in `ScheduleUpdateLocatorLoop`; gauge starts at 0 and flips to
+  the live count once the helper appears). `ThinClientLocatorHelper`
+  exposes `LocatorCount` via the existing `_swapLock` so the
+  clear+append swap in `UpdateLocatorsAsync` isn't observable
+  mid-mutation. Deviation from cppcache: cppcache's `setLocators` only
+  fires after a successful `getEndpointForNewFwdConn`
+  (`ThinClientPoolDM.cpp:596`) and `setServers` only fires on `addEP`
+  with never an erase (`ThinClientPoolDM.cpp:2019`, monotonic
+  high-water mark in cppcache) — pull-mode dodges both quirks.
 
 - **Ping instruments folded to Histograms** — `PingTicks` Counter →
   `PingSweepTime` Histogram<double> (`unit: "s"`), `PingSuccesses`

@@ -808,13 +808,15 @@ internal class ThinClientPoolDM(
         //   1.1: rely on cache-scope dispose to cascade.
         _endpoints.Clear();
 
-        // 5c. Unregister the PoolConnections gauge reader so the static
-        // registry in PoolStatistics doesn't leak this pool's entry.
+        // 5c. Unregister gauge readers so the static registries in
+        // PoolStatistics don't leak this pool's entries.
         // TODO: full _stats.Close() to match cppcache getStats().close()
         //   (L835) — drop static-registry entries for every instrument,
-        //   not just PoolConnections. forceSample (L836) is not needed
-        //   for Meter (listeners pull on their own cadence).
+        //   not just these gauges. forceSample (L836) is not needed for
+        //   Meter (listeners pull on their own cadence).
         _stats.ClearPoolConnectionsReader();
+        _stats.ClearLocatorsReader();
+        _stats.ClearServersReader();
 
         // 5d. TODO: PoolManager.RemovePool(name) — cppcache L838
         //     `cacheImpl->getPoolManager().removePool(m_poolName)`
@@ -845,6 +847,11 @@ internal class ThinClientPoolDM(
         if (Interlocked.Exchange(ref _initGuard, 1) != 0) return;
 
         _stats.SetPoolConnectionsReader(() => Volatile.Read(ref _poolSize));
+        _stats.SetServersReader(() => _endpoints.Count);
+        // _locatorHelper is built lazily in ScheduleUpdateLocatorLoop when
+        // locators are configured; the reader closes over the field so the
+        // gauge starts at 0 and flips to the helper's count once it appears.
+        _stats.SetLocatorsReader(() => _locatorHelper?.LocatorCount ?? 0);
 
         _isMultiUserMode = xmlPool.MultiuserAuthentication ?? false;
         if (_isMultiUserMode)

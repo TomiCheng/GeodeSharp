@@ -92,6 +92,14 @@ internal sealed class TcrConnection(
     /// </summary>
     internal TcrEndpoint? Endpoint { get; set; }
 
+    /// <summary>
+    /// True when this conn was created via a path that reserved one of
+    /// <see cref="Endpoint"/>'s per-endpoint slots (cppcache
+    /// <c>connection-pool-size</c> cap). <see cref="DisposeAsync"/>
+    /// returns the slot via <see cref="TcrEndpoint.ReleaseSlot"/>.
+    /// </summary>
+    internal bool OwnsEndpointSlot { get; set; }
+
 #pragma warning disable CS0169, CS0414, CS0649 // placeholder mirror fields wired up phase by phase
     private long _connectionId;                                 // connectionId
     private TcrConnectionManager? _connectionManager;           // connectionManager_
@@ -890,5 +898,15 @@ internal sealed class TcrConnection(
             await _stream.DisposeAsync().ConfigureAwait(false);
         }
         _tcpClient.Dispose();
+
+        // Return the per-endpoint slot the pool reserved for this conn
+        // (set by CreatePoolConnection* paths). Pool-wide _capSlots is
+        // still released manually by ThinClientPoolDM at each close site —
+        // intentional asymmetry while pool-wide accounting stays in the DM.
+        if (OwnsEndpointSlot)
+        {
+            Endpoint?.ReleaseSlot();
+            OwnsEndpointSlot = false;
+        }
     }
 }

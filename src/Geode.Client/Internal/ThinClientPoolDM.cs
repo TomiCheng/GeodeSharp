@@ -274,52 +274,75 @@ internal class ThinClientPoolDM(
                     return currentServer;
                 }
 
-                TcrConnection conn;
-                try
+                // Per-endpoint cap (cppcache TcrEndpoint::m_maxConnections).
+                // Acquired AFTER the recycle check (recycle reuses an existing
+                // conn → its slot stays). On endpoint-capped, blacklist & loop
+                // to the next server rather than throwing — pool-wide may
+                // still have headroom elsewhere.
+                if (!await endpoint.AcquireSlotAsync(xmlPool.FreeConnectionTimeout, ct).ConfigureAwait(false))
                 {
-                    conn = await endpoint.CreateNewConnectionAsync(false, false, options.Pool.ConnectTimeout, ct).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex) when (ex is AuthenticationFailedException
-                                              or AuthenticationRequiredException
-                                              or NotAuthorizedException
-                                              or NoAvailableLocatorsException)
-                {
-                    // cppcache isFatalClientError (L1787-1791): the same failure
-                    // will hit every server in the cluster (auth realm shared,
-                    // locator dead). Propagate; slot released by outer finally.
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    // cppcache isFatalError ∪ transient (L1772-1786): blacklist
-                    // this server and try the next. Covers SocketException,
-                    // IOException, TimeoutException, NotConnectedException, plus
-                    // CacheServerException ("fatal-but-keep-trying-next" — the
-                    // next server might be healthy). Slot stays reserved — same
-                    // reservation carries to the next iteration.
-                    logger.LogDebug(ex, "Failed to open conn to {Endpoint}, retrying with next", endpoint.Name);
+                    logger.LogDebug("Endpoint {Endpoint} ConnectionPoolSize cap reached, trying next", endpoint.Name);
                     excludeServers.Add(location);
                     continue;
                 }
-
-                endpoint.SetConnected(true);
-                var newSize = Interlocked.Increment(ref _poolSize);
-                _stats.PoolConnect();
-                // cppcache :1707-1711 — pool growing past Min means this conn is
-                // "extra" load-conditioning capacity rather than warm-up.
-                if (newSize > xmlPool.MinConnections)
+                var releaseEndpointSlot = true;
+                try
                 {
-                    _stats.LoadConditioningConnect();
-                }
+                    TcrConnection conn;
+                    try
+                    {
+                        conn = await endpoint.CreateNewConnectionAsync(false, false, options.Pool.ConnectTimeout, ct).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex) when (ex is AuthenticationFailedException
+                                                  or AuthenticationRequiredException
+                                                  or NotAuthorizedException
+                                                  or NoAvailableLocatorsException)
+                    {
+                        // cppcache isFatalClientError (L1787-1791): the same failure
+                        // will hit every server in the cluster (auth realm shared,
+                        // locator dead). Propagate; slots released by both finallys.
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        // cppcache isFatalError ∪ transient (L1772-1786): blacklist
+                        // this server and try the next. Covers SocketException,
+                        // IOException, TimeoutException, NotConnectedException, plus
+                        // CacheServerException ("fatal-but-keep-trying-next" — the
+                        // next server might be healthy). Pool-wide slot stays
+                        // reserved (carries to next iteration); per-EP slot is
+                        // released via the surrounding finally before `continue`.
+                        logger.LogDebug(ex, "Failed to open conn to {Endpoint}, retrying with next", endpoint.Name);
+                        excludeServers.Add(location);
+                        continue;
+                    }
 
-                // Slot ownership transfers to the freshly-opened conn; the
-                // matching Release will fire on its close.
-                releaseSlot = false;
-                return conn;
+                    endpoint.SetConnected(true);
+                    var newSize = Interlocked.Increment(ref _poolSize);
+                    _stats.PoolConnect();
+                    // cppcache :1707-1711 — pool growing past Min means this conn is
+                    // "extra" load-conditioning capacity rather than warm-up.
+                    if (newSize > xmlPool.MinConnections)
+                    {
+                        _stats.LoadConditioningConnect();
+                    }
+
+                    // Slot ownership transfers to the freshly-opened conn; the
+                    // pool-wide release fires at close sites, the per-EP release
+                    // rides on conn.DisposeAsync via OwnsEndpointSlot.
+                    conn.OwnsEndpointSlot = true;
+                    releaseEndpointSlot = false;
+                    releaseSlot = false;
+                    return conn;
+                }
+                finally
+                {
+                    if (releaseEndpointSlot) endpoint.ReleaseSlot();
+                }
             }
         }
         finally
@@ -355,7 +378,7 @@ internal class ThinClientPoolDM(
     private async Task<TcrConnection?> CreatePoolConnectionToAEndPointAsync(
         TcrEndpoint endpoint, CancellationToken ct)
     {
-        // MaxConnections cap (cppcache ThinClientPoolDM.cpp:1672-1687) —
+        // Pool-wide MaxConnections cap (cppcache ThinClientPoolDM.cpp:1672-1687) —
         // same SemaphoreSlim pattern as CreatePoolConnectionAsync. cppcache
         // signals "cap reached" via a maxConnLimit out-flag so the caller
         // can fall back to a temporary non-pool conn; we throw
@@ -367,9 +390,21 @@ internal class ThinClientPoolDM(
                 $"Pool '{xmlPool.Name}': MaxConnections={xmlPool.MaxConnections} reached.");
         }
 
-        var releaseSlot = true;
+        var releasePoolSlot = true;
+        var releaseEndpointSlot = false;
         try
         {
+            // Per-endpoint cap (cppcache TcrEndpoint::m_maxConnections from
+            // connection-pool-size, TcrEndpoint.cpp:49-51). Sits beneath the
+            // pool-wide cap above. Released by TcrConnection.DisposeAsync via
+            // OwnsEndpointSlot once ownership transfers below.
+            if (!await endpoint.AcquireSlotAsync(xmlPool.FreeConnectionTimeout, ct).ConfigureAwait(false))
+            {
+                throw new AllConnectionsInUseException(
+                    $"Pool '{xmlPool.Name}' endpoint '{endpoint.Name}': ConnectionPoolSize cap reached.");
+            }
+            releaseEndpointSlot = true;
+
             logger.LogDebug("ThinClientPoolDM::createPoolConnectionToAEndPoint: opening new connection to {Endpoint}",
                 endpoint.Name);
 
@@ -404,13 +439,18 @@ internal class ThinClientPoolDM(
                 _stats.LoadConditioningConnect();
             }
 
-            // Slot ownership transfers to the freshly-opened conn.
-            releaseSlot = false;
+            // Slot ownership transfers to the freshly-opened conn: pool-wide
+            // is still released manually by the DM at close sites; per-EP
+            // rides along on conn.DisposeAsync via OwnsEndpointSlot.
+            conn.OwnsEndpointSlot = true;
+            releasePoolSlot = false;
+            releaseEndpointSlot = false;
             return conn;
         }
         finally
         {
-            if (releaseSlot) _capSlots?.Release();
+            if (releasePoolSlot) _capSlots?.Release();
+            if (releaseEndpointSlot) endpoint.ReleaseSlot();
         }
     }
 

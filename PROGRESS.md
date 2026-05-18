@@ -67,6 +67,11 @@ focus is `PoolOptions` mirror-then-prune review, dead-code removal in
 - Delta propagation (ship only changed fields)
 - Partition resolver (custom colocation)
 
+### Phase 5 (code hygiene / pruning)
+
+Dead-code removal, options-tree pruning, deferred test work — items
+that are non-functional cleanup, scoped after the feature phases.
+
 ### Not implementing
 
 - **cache.xml** — replaced by `appsettings.json` + `IOptions<T>`.
@@ -175,48 +180,6 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
 
 #### To do
 
-- **`PoolOptions` mirror-then-prune execution** — audit complete, three
-  prune commits queued. Each entry below is a zero-functional-consumer
-  field (touched only by ctor/Clone/Validate scaffolding).
-  - **Commit A — whole-class deletes:** `HeapOptions` still pending
-    (server-side concept, no client analogue; referenced only by
-    `GeodeClientOptions.Heap` + clone/validate). `LogOptions` and
-    `StatisticsOptions` already dropped — see Done.
-  - **Commit B — system-properties layer:** `PoolOptions.ConnectionPoolSize`
-    (per-EP cap not implemented), `PoolOptions.ConnectWaitTimeout`
-    (Linux EPIPE workaround irrelevant under .NET async sockets),
-    `PoolOptions.MaxSocketBufferSize` (never applied to socket),
-    `PoolOptions.ShuffleEndpoints` (our DM uses `Random.Shared.Next` on
-    the server list at construction, not a config knob),
-    `PoolOptions.BucketWaitTimeout` (Phase 4+ PR routing);
-    `GeodeClientOptions.ThreadPoolSize` + `EnableChunkHandlerThread`
-    (xmldoc admits both are "very likely no-ops" under .NET; the latter
-    has one stale TODO marker in `ThinClientBaseDM.cs:66`).
-  - **Commit C — per-pool + cache layer:** `CachePoolOptions.SocketBufferSize`
-    (duplicate of `PoolOptions.MaxSocketBufferSize`),
-    `CachePoolOptions.Subscription{AckInterval,MessageTrackingTimeout,Redundancy}`
-    (Phase 2+ subscription — re-add when CQ work starts),
-    `CacheOptions.RedundancyLevel` (Phase 2+ subscription redundancy),
-    `CacheOptions.Version` (pinned `"1.0"`, never validated).
-  - **Keep (consumer scheduled for a known phase):**
-    `CachePoolOptions.MultiuserAuthentication` (Phase 3,
-    `_isMultiUserMode` already reads it), `SubscriptionEnabled`
-    (Phase 2+ `ThinClientPoolHADM` factory selector),
-    `ThreadLocalConnections` (Phase 1.5 sticky factory selector),
-    `PingInterval` (deliberately nullable for the two-layer
-    `xmlPool.PingInterval ?? options.Pool.PingInterval` fallback).
-- **TCCM dead-code removal** — the inventory is done but nothing has
-  moved. Drop the 6 NIE methods + their dead fields, simplify
-  `InitAsync` (drop the `isPool` parameter), rewrite the class XML doc
-  to reflect the real role ("endpoint registry + durable flag holder").
-  ~80 lines deleted, ~10 changed.
-- **Fixture NAT fix** so locator-mode Put/Get can run:
-  `--hostname-for-clients=<host>` + `WithPortBinding(40404, 40404)` to
-  pin the server port mapping.
-- **Locator-helper follow-on methods** —
-  `getEndpointForNewCallBackConn` (subscription channel, Phase 2+ CQ),
-  `getAllServers` (Phase 4 single-hop), `ClientReplacementRequest`
-  (failover swap).
 - **Connection pool design decision** — `MaxConnections` pool-wide or
   per-endpoint? (cppcache `ThinClientPoolDM` is pool-wide.)
 - **Multi-server failover validation fixture** — the outer retry wrap
@@ -229,9 +192,6 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
 - **Fresh-conn race proper fix** (pool warmup / readiness probe) —
   tests currently use `FreshConnectionSettleDelay = 3s` to dodge it
   (memory `geode-fresh-conn-race.md`).
-- **Release TCCM endpoint refs**
-  (`ConnManager.RemoveRefToTcrEndpointAsync`) — currently piggybacks on
-  cache-scope dispose cascade.
 - **`PoolStatistics` catalogue progression** — 7 of 27 fields wired
   (`locatorRequests` / `locatorResponses` collapsed into
   `ClientConnectionRequestTime`, `PoolConnections` gauge,
@@ -242,23 +202,6 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
   send-sync-request path, `connectionWait*` in the conn queue, ...).
   `_pingTickCount` / `_pingSuccessCount` to be folded the same way
   `_updateLocatorTickCount` was (Histogram + `MeterCapture`).
-- **`PutInQueueAsync` tests (deferred)** — `_isDestroyed` guard
-  (cppcache `ConnectionQueue::put` `closed_` branch,
-  `ConnectionQueue.hpp:62-67`) is implemented but untested. Happy path
-  is implicitly covered by every back-to-back op in
-  `CacheConnectionIntegrationTests` / `RegionCrudIntegrationTests`
-  (conn enqueued by op #1, picked up by op #2). The destroyed-guard
-  itself is structurally unreachable from public API
-  (`SendRequestToEndpointAsync` rejects on `_isDestroyed != 0` at the
-  top) — only fires in a race window mid-`SendRequestToEndpointAsync`.
-  Deterministic test needs either (a) wire-response orchestration in
-  integration test to pause `SendAsync` while `DestroyAsync` races, or
-  (b) visibility relaxation + DI-tree scaffolding + spy on a `sealed`
-  `TcrConnection`. Both cost-ineffective relative to the 5-line guard.
-  Revisit when `PoolDisconnects` Meter or socket-leak tooling lands
-  (then the guard would have an observable counterpart). Source: inline
-  comment in `ThinClientPoolDM.PutInQueueAsync` flags this deferral.
-
 - **Auth-trio real throw sites** —
   `AuthenticationFailedException` / `AuthenticationRequiredException` /
   `NotAuthorizedException` classes exist but nothing throws them
@@ -1796,3 +1739,81 @@ CLAUDE.md "Document semantics on the property"; no `AuthOptions` yet
 ## Phase 2+ — Custom objects, security, performance, partitioning
 
 See [CLAUDE.md](.claude/CLAUDE.md) Phase 2 / 3 / 4.
+
+### Locator follow-ons (deferred from Phase 1.5)
+
+- **Fixture NAT fix** so locator-mode Put/Get can run:
+  `--hostname-for-clients=<host>` + `WithPortBinding(40404, 40404)` to
+  pin the server port mapping. Needed for locator-mode integration
+  tests in Phase 2+ once subscription / CQ work needs them.
+- **`getEndpointForNewCallBackConn`** — subscription channel
+  (Phase 2 Continuous Query).
+- **`getAllServers`** — Phase 4 single-hop bucket-to-server resolution.
+- **`ClientReplacementRequest`** — Phase 4 failover swap (locator
+  picks a replacement server when an EP falls out).
+
+## Phase 5 — Code hygiene / pruning
+
+Non-functional cleanup queued behind the feature phases. None block
+shipping; they reduce surface area / dead code once the feature work
+is mature enough to know what survives.
+
+### Options-tree prune (audit complete; details in commit history)
+
+- **`HeapOptions`** — server-side concept (`heap-lru-limit` /
+  `heap-lru-delta` / `tombstone-timeout`), no client analogue;
+  referenced only by `GeodeClientOptions.Heap` + clone/validate.
+- **`PoolOptions` system-properties layer (5 fields)** —
+  `ConnectionPoolSize` (per-EP cap not implemented),
+  `ConnectWaitTimeout` (Linux EPIPE workaround irrelevant under .NET
+  async sockets), `MaxSocketBufferSize` (never applied to socket),
+  `ShuffleEndpoints` (our DM uses `Random.Shared.Next` at
+  construction), `BucketWaitTimeout` (Phase 4+ PR routing).
+- **`GeodeClientOptions` root (2 fields)** — `ThreadPoolSize` and
+  `EnableChunkHandlerThread` (xmldoc admits both are "very likely
+  no-ops" under .NET; the latter has one stale TODO marker in
+  `ThinClientBaseDM.cs:66`).
+- **`CachePoolOptions` per-pool layer (4 fields)** —
+  `SocketBufferSize` (duplicate of `PoolOptions.MaxSocketBufferSize`),
+  `Subscription{AckInterval,MessageTrackingTimeout,Redundancy}`
+  (Phase 2+ subscription — re-add when CQ work starts).
+- **`CacheOptions` cache layer (2 fields)** — `RedundancyLevel`
+  (Phase 2+ subscription redundancy), `Version` (pinned `"1.0"`,
+  never validated).
+- **Kept (consumer scheduled for a known phase, do NOT prune):**
+  `CachePoolOptions.MultiuserAuthentication` (Phase 3,
+  `_isMultiUserMode` already reads it), `SubscriptionEnabled`
+  (Phase 2+ `ThinClientPoolHADM` factory selector),
+  `ThreadLocalConnections` (Phase 1.5 sticky factory selector),
+  `PingInterval` (deliberately nullable for the two-layer
+  `xmlPool.PingInterval ?? options.Pool.PingInterval` fallback).
+
+### Lifecycle dead-code
+
+- **TCCM dead-code removal** — the inventory is done but nothing has
+  moved. Drop the 6 NIE methods + their dead fields, simplify
+  `InitAsync` (drop the `isPool` parameter), rewrite the class XML doc
+  to reflect the real role ("endpoint registry + durable flag holder").
+  ~80 lines deleted, ~10 changed.
+- **Release TCCM endpoint refs**
+  (`ConnManager.RemoveRefToTcrEndpointAsync`) — currently piggybacks on
+  cache-scope dispose cascade.
+
+### Deferred tests
+
+- **`PutInQueueAsync` tests** — `_isDestroyed` guard
+  (cppcache `ConnectionQueue::put` `closed_` branch,
+  `ConnectionQueue.hpp:62-67`) is implemented but untested. Happy path
+  is implicitly covered by every back-to-back op in
+  `CacheConnectionIntegrationTests` / `RegionCrudIntegrationTests`
+  (conn enqueued by op #1, picked up by op #2). The destroyed-guard
+  itself is structurally unreachable from public API
+  (`SendRequestToEndpointAsync` rejects on `_isDestroyed != 0` at the
+  top) — only fires in a race window mid-`SendRequestToEndpointAsync`.
+  Deterministic test needs either (a) wire-response orchestration in
+  integration test to pause `SendAsync` while `DestroyAsync` races, or
+  (b) visibility relaxation + DI-tree scaffolding + spy on a `sealed`
+  `TcrConnection`. Both cost-ineffective relative to the 5-line guard.
+  Revisit when `PoolDisconnects` Meter or socket-leak tooling lands
+  (then the guard would have an observable counterpart). Source: inline
+  comment in `ThinClientPoolDM.PutInQueueAsync` flags this deferral.

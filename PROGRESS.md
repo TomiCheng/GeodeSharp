@@ -194,11 +194,12 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
   (failover swap).
 - **Connection pool design decision** — `MaxConnections` pool-wide or
   per-endpoint? (cppcache `ThinClientPoolDM` is pool-wide.)
-- **Multi-server failover + automatic reconnect** (incl. `excludeServers`
-  blacklist thread-through). Retry / recycle / cap are in place
-  (`CreatePoolConnectionAsync`); remaining work is the outer retry wrap
-  around `SendRequestToEndpointAsync` (cppcache `sendSyncRequest` scope)
-  + a real multi-server fixture to drive verification.
+- **Multi-server failover validation fixture** — the outer retry wrap
+  (`SendSyncRequestCoreAsync` Steps A-G) and `excludeServers`
+  thread-through landed; remaining work is a real multi-server
+  Testcontainers fixture to drive end-to-end failover verification
+  (currently the single-server fixture exercises only the success
+  path).
 - **Server endpoint health monitoring.**
 - **Fresh-conn race proper fix** (pool warmup / readiness probe) —
   tests currently use `FreshConnectionSettleDelay = 3s` to dodge it
@@ -216,11 +217,6 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
   send-sync-request path, `connectionWait*` in the conn queue, ...).
   `_pingTickCount` / `_pingSuccessCount` to be folded the same way
   `_updateLocatorTickCount` was (Histogram + `MeterCapture`).
-- **`SendRequestToEndpointAsync` outer retry wrap** — cppcache
-  `sendSyncRequest` retries on a different server when an op fails
-  (same spirit as `CreatePoolConnectionAsync` retry, outer scope).
-  Currently any op failure throws; multi-server failover completion
-  needs this.
 - **`PutInQueueAsync` tests (deferred)** — `_isDestroyed` guard
   (cppcache `ConnectionQueue::put` `closed_` branch,
   `ConnectionQueue.hpp:62-67`) is implemented but untested. Happy path
@@ -246,6 +242,70 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
   `AUTH_FAILED`.
 
 #### Done
+
+- **DM-level retry frame in `SendSyncRequestCoreAsync`** — cppcache
+  `ThinClientPoolDM.cpp:1294-1322` ported as Steps A-G. **A**: loop
+  state (`retriesLeft` / `retryAllEpsOnce` / `excludeServers` /
+  `firstTry` / `lastError`); `attemptFailover=false` overrides pool
+  retry config and pins to a single attempt. **B**: `while
+  (retryAllEpsOnce || retriesLeft-- > 0)` wrapping Steps 1-3.
+  **C**: `TcrMessage.UpdateHeaderForRetry()` on resend (new method
+  sets EarlyAck retry bit `0x4` via `with`-clone; cppcache
+  `TcrMessage.cpp:805-809`). **D**: query-family timeout
+  short-circuit (cppcache:1312-1322 skip-list shared with
+  `IsQueryFamilyType`, renamed from `ShouldApplyReadTimeout`).
+  **E**: `IsRetryableTransportError` first-cut taxonomy (`IOException`
+  / `SocketException` / `TimeoutException` / non-caller-cancelled
+  `OperationCanceledException`); full `GfErrType` port still
+  deferred. **F**: `excludeServers.Add(failed location)` quarantines
+  the endpoint (cppcache:1453); `attemptedLocation` hoisted out of
+  the try so catch can see it. **G**: post-loop
+  `throw lastError ?? GeodeException("retries exhausted")`. Pool
+  `CachePoolOptions.ReadTimeout` linked onto caller ct via
+  `CreateLinkedTokenSource` + `CancelAfter` for non-query/PutAll/CQ
+  types (cppcache:1281-1292; query-family carry their own wire-level
+  timeout via TcrMessageBuilder). `ReadTimeout` itself tightened from
+  `TimeSpan?` to `TimeSpan = 10s` (cppcache `DEFAULT_READ_TIMEOUT`).
+
+- **`SendRequestToEndpointAsync` / `SendSyncRequestAsync` overload
+  merges** — both public overload pairs (chunked / non-chunked)
+  collapsed to private cores (`SendRequestToEndpointCoreAsync` /
+  `SendSyncRequestCoreAsync`) taking `TcrChunkedResult?`; public
+  methods become thin delegating shells. cppcache itself is one
+  function per layer (chunked vs. non-chunked configured on the reply
+  object, not by overload); our two bodies were ~95% duplicated.
+  Phase 3 auth-retry, Phase 1.5 retry frame, Phase 4 PR metadata
+  refresh TODOs only need writing once now.
+
+- **Phase 3 auth-path call sites stubbed + wired in
+  `SendRequestToEndpointCoreAsync`** — three NIE stubs added against
+  their cppcache counterparts: `TcrMessage.IsUserInitiativeOps`
+  (`TcrMessage.cpp:98`), `TcrMessage.GetException`
+  (`TcrMessage.cpp:213`), `ThinClientBaseDM.IsAuthRequireException`
+  (`ThinClientBaseDM.cpp:374`). Two call sites threaded through the
+  endpoint-pinned send: `(IsSecurityOn || IsMultiUserMode) &&
+  IsUserInitiativeOps(request)` before send (cppcache:1912);
+  `IsSecurityOn && reply.MessageType == Exception &&
+  IsAuthRequireException(reply.GetException())` after (cppcache:1975).
+  Guards short-circuit in Phase 1.x defaults (security off → never
+  enters NIE); when a user opts into auth config the NIE clearly
+  signals the missing Phase 3 work. Phase 3 step list for the
+  unauth + outer-retry loop lives inline at the throw site.
+  **`ThinClientPoolDM` exposes `IsMultiUserMode` / `IsSecurityOn`**
+  as `override` properties off the existing `_isMultiUserMode` /
+  `_isSecurityOn` backing fields (previously private and disconnected
+  from the base virtuals — so the guards above always saw `false`).
+
+- **`RemoveEPFromMetadataIfError` wired into the
+  `SendRequestToEndpointCoreAsync` catch** — closes the
+  cppcache:1555 / 1968 parity gap noted in the catch block. Filters
+  on `Exception is IOException or TimeoutException` (cppcache
+  `GF_IOERR || GF_TIMEOUT`) before dispatching to
+  `_clientMetadataService?.RemoveBucketServerLocation(endpoint.Name)`.
+  New `ClientMetadataService.RemoveBucketServerLocation` as a Phase 4
+  walking-skeleton no-op (matches `StartAsync` / `StopAsync`
+  pattern — not NIE because it fires on every IO failure path; real
+  body lands with Phase 4 PR single-hop).
 
 - **Pool subclass split + lifecycle leaf wiring** —
   `ThinClientPoolDM` opened for inheritance (`sealed` removed,

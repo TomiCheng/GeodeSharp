@@ -200,6 +200,23 @@ internal abstract class ThinClientBaseDM : IAsyncDisposable
     public virtual bool IsSecurityOn => false;        // TODO: ConnManager.HasAuthInitialize when wired
     public virtual bool IsMultiUserMode => false;
 
+    /// <summary>
+    /// True when <paramref name="exceptionMsg"/> is an
+    /// <c>AuthenticationRequiredException</c> reply text from the server,
+    /// signalling the outer dispatcher to unauth + retry.
+    /// </summary>
+    /// <remarks>
+    /// Mirrors <c>ThinClientBaseDM::isAuthRequireException</c>
+    /// (<c>cppcache/src/ThinClientBaseDM.cpp:374</c>): substring-match for
+    /// <c>"org.apache.geode.security.AuthenticationRequiredException"</c>.
+    /// Phase 3 — only the security / multi-user dispatch path needs it, so
+    /// it stays a NIE stub until <c>TcrMessage.GetException()</c> + the
+    /// auth-retry loop land.
+    /// </remarks>
+    protected virtual bool IsAuthRequireException(string exceptionMsg) =>
+        throw new NotImplementedException(
+            "Phase 3 — ThinClientBaseDM.IsAuthRequireException (auth-retry detection)");
+
     public virtual void BeforeSendingRequest(object request, object connection) { }
     public virtual void AfterSendingRequest(object request, object reply, object connection) { }
 

@@ -181,9 +181,13 @@ public class CachePoolOptions : ICloneable
     public bool PrSingleHopEnabled { get; set; } = true;
 
     /// <summary>
-    /// <c>read-timeout</c>.
+    /// Duration to wait for a response from a server before timing out
+    /// the operation and trying another server (if any are available).
     /// </summary>
-    public TimeSpan? ReadTimeout { get; set; }
+    /// <remarks>
+    /// default 10 s; must be <c>&gt; 0</c>.
+    /// </remarks>
+    public TimeSpan ReadTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
     /// <summary>
     /// Failover retry budget per op before the pool throws.

@@ -55,4 +55,20 @@ internal sealed class ClientMetadataService(
         // (walking-skeleton).
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// Drop any cached bucket → server mapping that points at the
+    /// endpoint named <paramref name="endpointName"/>, called by
+    /// <see cref="ThinClientPoolDM"/> after an IO / timeout failure
+    /// against that endpoint. Mirrors cppcache
+    /// <c>ClientMetadataService::removeBucketServerLocation</c>.
+    /// </summary>
+    public void RemoveBucketServerLocation(string endpointName)
+    {
+        // TODO Phase 4: locate every BucketServerLocation whose name
+        // matches and evict it from the bucket → primary/secondary maps;
+        // the next op against the same bucket will trigger a metadata
+        // refresh. No-op until Phase 4 builds the maps (walking-skeleton).
+        _ = endpointName;
+    }
 }

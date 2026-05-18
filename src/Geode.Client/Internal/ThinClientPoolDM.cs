@@ -109,6 +109,12 @@ internal class ThinClientPoolDM(
     /// </summary>
     private bool _isSecurityOn;
 
+    /// <inheritdoc/>
+    public override bool IsMultiUserMode => _isMultiUserMode;
+
+    /// <inheritdoc/>
+    public override bool IsSecurityOn => _isSecurityOn;
+
     /// <summary>
     /// <c>keepAlive</c> intent stashed in <see cref="DestroyAsync"/> for
     /// each conn's <see cref="TcrConnection.CloseAsync"/>.
@@ -835,86 +841,11 @@ internal class ThinClientPoolDM(
     /// failover branching is Phase 1.5; multi-user is Phase 3.
     /// </para>
     /// </remarks>
-    public override async Task<TcrMessage> SendRequestToEndpointAsync(
+    public override Task<TcrMessage> SendRequestToEndpointAsync(
         TcrMessage request,
         TcrEndpoint endpoint,
         CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(endpoint);
-        ct.ThrowIfCancellationRequested();
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _isDestroyed) != 0, this);
-
-
-        logger.LogDebug(
-            "ThinClientPoolDM::sendRequestToEP type={MessageType} endpoint={Endpoint}",
-            request.MessageType, endpoint.Name);
-
-        // Step 1 — try borrow an idle pool conn for this endpoint.
-        //   cppcache: TcrConnection* conn = getFromEP(currentEndpoint);
-        var conn = await GetFromEPAsync(endpoint, ct).ConfigureAwait(false);
-
-        // Step 2 — none idle? open a fresh one ON this endpoint.
-        //   cppcache: createPoolConnectionToAEndPoint(...) → fallback to
-        //   currentEndpoint->createNewConnection (temporary, putConnInPool=false)
-        //   if pool-cap reached. Phase 1.1 collapses both branches into one
-        //   pool-tracked conn (no maxConn limiter yet).
-        var putConnInPool = true;
-        conn ??= await CreatePoolConnectionToAEndPointAsync(endpoint, ct).ConfigureAwait(false);
-
-        if (conn is null)
-        {
-            // cppcache: setConnectionStatus(false) + LOGFINE("3Failed to connect").
-            endpoint.SetConnected(false);
-            throw new GeodeException(
-                $"ThinClientPoolDM: could not obtain a connection to {endpoint.Name}.");
-        }
-
-        // TODO Phase 3 — auth / multi-user creds:
-        //   if (TcrMessage.IsUserInitiativeOps(request) && (IsSecurityOn || IsMultiUserMode))
-        //     await SendUserCredentialsAsync(...);
-
-        try
-        {
-            // Step 3 — actual wire I/O. cppcache:
-            //   currentEndpoint->sendRequestConnWithRetry(request, reply, conn, true)
-            // We currently send straight on the conn; the per-conn retry
-            // wrap (cppcache's "WithRetry") is Phase 1.5 once timeouts /
-            // partial-write recovery surface.
-            var reply = await conn.SendRequestAsync(request, ct).ConfigureAwait(false);
-
-            // TODO Phase 3: if reply.MessageType == Exception &&
-            //   IsAuthRequireException(reply) → unauth + outer retry loop.
-
-            // Step 4 — happy path: return conn to its endpoint queue.
-            //   cppcache: putConnInPool ? put(conn, false) : close+delete(conn).
-            if (putConnInPool)
-            {
-                await PutInQueueAsync(conn, ct).ConfigureAwait(false);
-            }
-            else
-            {
-                await conn.DisposeAsync().ConfigureAwait(false);
-            }
-
-            return reply;
-        }
-        catch
-        {
-            // cppcache: setConnectionStatus(false) + removeEPConnections(1)
-            // + removeEPFromMetadataIfError. Phase 1.5 will classify the
-            // GfErrType and decide whether to truly mark the endpoint
-            // down vs. retry on another conn; Phase 1.1 is conservative
-            // — any failure on a conn drops it and marks endpoint down.
-            endpoint.SetConnected(false);
-            if (putConnInPool)
-            {
-                Interlocked.Decrement(ref _poolSize); _capSlots?.Release();
-            }
-            await conn.DisposeAsync().ConfigureAwait(false);
-            throw;
-        }
-    }
+        => SendRequestToEndpointCoreAsync(request, chunkedResult: null, endpoint, ct);
 
     /// <summary>
     /// Chunked-reply variant of
@@ -922,54 +853,103 @@ internal class ThinClientPoolDM(
     /// Same conn borrow / put-back shape, only the wire I/O leg differs
     /// (<see cref="TcrConnection.SendRequestAsync(TcrMessage, TcrChunkedResult, CancellationToken)"/>).
     /// </summary>
-    public override async Task<TcrMessage> SendRequestToEndpointAsync(
+    public override Task<TcrMessage> SendRequestToEndpointAsync(
         TcrMessage request,
         TcrChunkedResult chunkedResult,
         TcrEndpoint endpoint,
         CancellationToken ct = default)
     {
-        ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(chunkedResult);
+        return SendRequestToEndpointCoreAsync(request, chunkedResult, endpoint, ct);
+    }
+
+    /// <summary>
+    /// Shared body for both <see cref="SendRequestToEndpointAsync(TcrMessage, TcrEndpoint, CancellationToken)"/>
+    /// overloads — borrow / open conn → auth-check → wire I/O → put-back.
+    /// </summary>
+    /// <remarks>
+    /// cppcache <c>ThinClientPoolDM::sendRequestToEP</c> is itself one
+    /// function (chunked vs. non-chunked is configured on the reply
+    /// object, not by a separate overload). <paramref name="chunkedResult"/>
+    /// is the only branch point — non-null routes to the chunked
+    /// <c>TcrConnection.SendRequestAsync</c> overload.
+    /// </remarks>
+    private async Task<TcrMessage> SendRequestToEndpointCoreAsync(
+        TcrMessage request,
+        TcrChunkedResult? chunkedResult,
+        TcrEndpoint endpoint,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(endpoint);
         ct.ThrowIfCancellationRequested();
-
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _isDestroyed) != 0, this);
 
         logger.LogDebug(
-            "ThinClientPoolDM::sendRequestToEP (chunked) type={MessageType} endpoint={Endpoint}",
-            request.MessageType, endpoint.Name);
+            "ThinClientPoolDM::sendRequestToEP{Variant} type={MessageType} endpoint={Endpoint}",
+            chunkedResult is null ? "" : " (chunked)",
+            request.MessageType,
+            endpoint.Name);
 
-        // ─── Step 1: try borrow an idle pool conn for this endpoint ──
-        //   cppcache: TcrConnection* conn = getFromEP(currentEndpoint);
+        // Step 1 — borrow idle. cppcache: getFromEP(currentEndpoint).
         var conn = await GetFromEPAsync(endpoint, ct).ConfigureAwait(false);
 
-        // ─── Step 2: open a fresh conn if none idle ───────────────
-        //   cppcache: createPoolConnectionToAEndPoint(...) → fallback to
-        //   currentEndpoint->createNewConnection (temporary, putConnInPool=false)
-        //   if pool-cap reached. Phase 1.1 collapses both branches into one
-        //   pool-tracked conn (no maxConn limiter yet).
+        // Step 2 — open fresh if none idle. cppcache splits pool-cap fallback
+        // into a temporary conn with putConnInPool=false; Phase 1.1 collapses
+        // both branches (no maxConn limiter yet).
         var putConnInPool = true;
         conn ??= await CreatePoolConnectionToAEndPointAsync(endpoint, ct).ConfigureAwait(false);
 
         if (conn is null)
         {
-            // cppcache: setConnectionStatus(false) + LOGFINE("3Failed to connect").
             endpoint.SetConnected(false);
             throw new GeodeException(
                 $"ThinClientPoolDM: could not obtain a connection to {endpoint.Name}.");
         }
 
+        // Phase 3 — auth / multi-user creds. cppcache ThinClientPoolDM.cpp:1912.
+        if ((IsSecurityOn || IsMultiUserMode) && TcrMessage.IsUserInitiativeOps(request))
+        {
+            throw new NotImplementedException(
+                "Phase 3 — SendUserCredentialsAsync (multi-user auth path)");
+        }
+
         try
         {
-            // ─── Step 3: actual chunked wire I/O ──────────────────
-            // cppcache: currentEndpoint->sendRequestConnWithRetry(request, reply, conn, true).
-            // chunked overload feeds each arriving chunk to chunkedResult;
-            // returns a synthetic TcrMessage carrying just the reply
-            // header (MessageType / TransactionId).
-            var reply = await conn.SendRequestAsync(request, chunkedResult, ct).ConfigureAwait(false);
+            // Step 3 — wire I/O. cppcache: sendRequestConnWithRetry; the
+            // per-conn retry wrap is Phase 1.5.
+            var reply = chunkedResult is null
+                ? await conn.SendRequestAsync(request, ct).ConfigureAwait(false)
+                : await conn.SendRequestAsync(request, chunkedResult, ct).ConfigureAwait(false);
 
-            // ─── Step 4: happy path — return conn to endpoint queue ──
-            //   cppcache: putConnInPool ? put(conn, false) : close+delete(conn).
+            // Phase 3 — AuthenticationRequiredException retry. cppcache ThinClientPoolDM.cpp:1975.
+            if (IsSecurityOn
+                && reply.MessageType == MessageType.Exception
+                && IsAuthRequireException(reply.GetException()))
+            {
+                // Phase 3 step list — mirror ThinClientPoolDM.cpp:1971-1992.
+                //   Step A — wrap Steps 1-3 in a retry frame:
+                //            `var retriesLeft = 2;` declared once before the
+                //            frame, body re-runnable while `retriesLeft >= 0`.
+                //   Step B — clear cached auth state on the failing endpoint:
+                //              single-user → endpoint.SetAuthenticated(false)
+                //              multi-user  → userAttrs.UnauthenticateEP(ep)
+                //            (cppcache 1976-1980).
+                //   Step C — `retriesLeft--`; on `< 0` rethrow as
+                //            GeodeAuthenticationException (we don't mirror
+                //            cppcache's reset-to-NOERR + continue — C#
+                //            exceptions replace the GfErrType loop).
+                //   Step D — return conn to the pool (or dispose), same as
+                //            the Step 4 happy path; next iteration re-borrows.
+                //   Step E — loop to top of the retry frame; the
+                //            IsUserInitiativeOps + IsSecurityOn guard above
+                //            will then invoke SendUserCredentialsAsync before
+                //            re-sending.
+                throw new NotImplementedException(
+                    "Phase 3 — auth-required reply: unauth + outer retry loop");
+            }
+
+            // Step 4 — happy path. cppcache: putConnInPool ? put(conn, false) : close+delete(conn).
             if (putConnInPool)
             {
                 await PutInQueueAsync(conn, ct).ConfigureAwait(false);
@@ -981,19 +961,18 @@ internal class ThinClientPoolDM(
 
             return reply;
         }
-        catch
+        catch (Exception ex)
         {
             // cppcache: setConnectionStatus(false) + removeEPConnections(1)
-            // + removeEPFromMetadataIfError. Phase 1.5 will classify the
-            // GfErrType and decide whether to truly mark the endpoint
-            // down vs. retry on another conn; Phase 1.1 is conservative
-            // — any failure on a conn drops it and marks endpoint down.
+            // + removeEPFromMetadataIfError. Phase 1.5 will refine via
+            // GfErrType classification (retry vs. mark-down).
             endpoint.SetConnected(false);
             if (putConnInPool)
             {
                 Interlocked.Decrement(ref _poolSize); _capSlots?.Release();
             }
             await conn.DisposeAsync().ConfigureAwait(false);
+            RemoveEPFromMetadataIfError(endpoint, ex);
             throw;
         }
     }
@@ -1023,89 +1002,172 @@ internal class ThinClientPoolDM(
     /// background-thread stats hooks are Phase 1.5 stats work.
     /// </para>
     /// </remarks>
-    public override async Task<TcrMessage> SendSyncRequestAsync(
+    public override Task<TcrMessage> SendSyncRequestAsync(
         TcrMessage request,
         bool attemptFailover = true,
         bool isBackgroundThread = false,
         CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        ct.ThrowIfCancellationRequested();
-
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _isDestroyed) != 0, this);
-
-        _ = attemptFailover;        // Phase 1.5: failover loop.
-        _ = isBackgroundThread;     // Phase 1.5: stats hook.
-
-        logger.LogDebug(
-            "ThinClientPoolDM::sendSyncRequest type={MessageType} txId={TxId}",
-            request.MessageType, request.TransactionId);
-
-        // Step 1 — pick an endpoint. cppcache's selectEndpoint takes
-        //   excludeServers + currentServer; MVP needs neither (single
-        //   endpoint, no retry).
-        // Op-layer caller: no retry context, pass empty excludeServers.
-        // The op's own outer retry (Phase 1.5 sendSyncRequest wrap) will
-        // own the set when wired.
-        var location = await SelectEndpointAsync([], ct).ConfigureAwait(false);
-
-        // Step 2 — get-or-create the pool's TcrEndpoint reference.
-        //   cppcache does this implicitly inside selectEndpoint; we
-        //   keep the addEP step explicit.
-        var endpoint = await AddEPAsync(location, ct).ConfigureAwait(false);
-
-        // Step 3 — delegate to the endpoint-pinned send path. That
-        //   helper handles conn borrow / fallback-create / send /
-        //   put-back / disconnect-on-error already; nothing more for
-        //   this layer to do in MVP.
-        return await SendRequestToEndpointAsync(request, endpoint, ct).ConfigureAwait(false);
-    }
+        => SendSyncRequestCoreAsync(request, chunkedResult: null, attemptFailover, isBackgroundThread, ct);
 
     /// <summary>
-    /// Chunked-reply overload. Phase 1.3.b skeleton &#x2014; throws
-    /// <see cref="NotImplementedException"/> until the
-    /// <see cref="TcrConnection"/> reader-loop refactor lands so
-    /// <c>_pendingReplies</c> can route arriving chunks to
-    /// <paramref name="chunkedResult"/>.
+    /// Chunked-reply variant of
+    /// <see cref="SendSyncRequestAsync(TcrMessage, bool, bool, CancellationToken)"/>.
     /// </summary>
-    public override async Task<TcrMessage> SendSyncRequestAsync(
+    public override Task<TcrMessage> SendSyncRequestAsync(
         TcrMessage request,
         TcrChunkedResult chunkedResult,
         bool attemptFailover = true,
         bool isBackgroundThread = false,
         CancellationToken ct = default)
     {
-        // ─── Step 1: guards ──────────────────────────────────
-        ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(chunkedResult);
+        return SendSyncRequestCoreAsync(request, chunkedResult, attemptFailover, isBackgroundThread, ct);
+    }
+
+    /// <summary>
+    /// Shared body for both <see cref="SendSyncRequestAsync(TcrMessage, bool, bool, CancellationToken)"/>
+    /// overloads — selectEndpoint → addEP → endpoint-pinned send.
+    /// </summary>
+    private async Task<TcrMessage> SendSyncRequestCoreAsync(
+        TcrMessage request,
+        TcrChunkedResult? chunkedResult,
+        bool attemptFailover,
+        bool isBackgroundThread,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
         ct.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _isDestroyed) != 0, this);
 
-        _ = attemptFailover;        // Phase 1.5: failover loop.
-        _ = isBackgroundThread;     // Phase 1.5: stats hook.
+        _ = isBackgroundThread;     // Phase 1.5: sticky flag + stats hook.
 
         logger.LogDebug(
-            "ThinClientPoolDM::sendSyncRequest (chunked) type={MessageType} txId={TxId}",
+            "ThinClientPoolDM::sendSyncRequest{Variant} type={MessageType} txId={TxId}",
+            chunkedResult is null ? "" : " (chunked)",
             request.MessageType, request.TransactionId);
 
-        // ─── Step 2: SelectEndpoint ──────────────────────────
-        // cppcache's selectEndpoint takes excludeServers + currentServer
-        // for failover; MVP needs neither (single endpoint, no retry).
-        // Op-layer caller: no retry context, pass empty excludeServers.
-        // The op's own outer retry (Phase 1.5 sendSyncRequest wrap) will
-        // own the set when wired.
-        var location = await SelectEndpointAsync([], ct).ConfigureAwait(false);
+        // Pool ReadTimeout linked onto caller ct for non-query types.
+        // cppcache:1281-1292 (query-family carries its own wire-level timeout).
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        if (!IsQueryFamilyType(request.MessageType))
+        {
+            linkedCts.CancelAfter(xmlPool.ReadTimeout);
+        }
+        var effectiveCt = linkedCts.Token;
 
-        // ─── Step 3: AddEP (get-or-create TcrEndpoint) ───────
-        // cppcache does this implicitly inside selectEndpoint; we
-        // keep the addEP step explicit.
-        var endpoint = await AddEPAsync(location, ct).ConfigureAwait(false);
+        // Step A — retry frame state. cppcache:1294-1304.
+        // attemptFailover=false pins to a single attempt regardless of
+        // pool config (subscription / one-shot callers).
+        var retriesLeft = attemptFailover ? xmlPool.RetryAttempts + 1 : 1;
+        var retryAllEpsOnce = attemptFailover && xmlPool.RetryAttempts == -1;
+        var excludeServers = new HashSet<DnsEndPoint>();
+        var firstTry = true;
+        Exception? lastError = null;
 
-        // ─── Step 4: forward to endpoint-pinned chunked send ─
-        // The overload still NIE inside (borrow conn → chunked wire I/O
-        // → put-back); next todo fills it in.
-        return await SendRequestToEndpointAsync(request, chunkedResult, endpoint, ct).ConfigureAwait(false);
+        // Step B — retry frame. cppcache:1294-1322.
+        while (retryAllEpsOnce || retriesLeft-- > 0)
+        {
+            // Step C — retry bit on resend. cppcache:1309.
+            if (!firstTry) request = request.UpdateHeaderForRetry();
+
+            // Step D — query-family timeout doesn't retry. cppcache:1312-1322.
+            if (lastError is OperationCanceledException && IsQueryFamilyType(request.MessageType))
+            {
+                throw lastError;
+            }
+
+            // Hoisted for Step F (catch quarantines the failed location).
+            DnsEndPoint? attemptedLocation = null;
+            try
+            {
+                // Step 1 — pick endpoint. cppcache: selectEndpoint(excludeServers).
+                attemptedLocation = await SelectEndpointAsync(excludeServers, effectiveCt).ConfigureAwait(false);
+
+                // Step 2 — get-or-create TcrEndpoint (cppcache inlines this in selectEndpoint).
+                var endpoint = await AddEPAsync(attemptedLocation, effectiveCt).ConfigureAwait(false);
+
+                // Step 3 — endpoint-pinned send.
+                // TODO Phase 1.5 — sticky / isBGThread put-back flag
+                // (cppcache:1427-1436: isBGThread || GET_ALL_70 ||
+                // GET_ALL_WITH_CALLBACK || EXECUTE_REGION_FUNCTION_SINGLE_HOP).
+                // Blocked on StickyManager landing.
+                var reply = chunkedResult is null
+                    ? await SendRequestToEndpointAsync(request, endpoint, effectiveCt).ConfigureAwait(false)
+                    : await SendRequestToEndpointAsync(request, chunkedResult, endpoint, effectiveCt).ConfigureAwait(false);
+
+                // TODO Phase 4 — PR single-hop metadata refresh
+                // (cppcache:1484-1508: reply.getMetaDataVersion() +
+                // request.forSingleHop() → EnqueueForMetadataRefresh).
+
+                return reply;
+            }
+            catch (Exception ex) when (IsRetryableTransportError(ex, ct))
+            {
+                // Step E — transport-error catch (first-cut taxonomy in
+                // IsRetryableTransportError; full GfErrType port deferred).
+                lastError = ex;
+                logger.LogDebug(
+                    ex,
+                    "ThinClientPoolDM::sendSyncRequest retry-eligible failure (type={MessageType} txId={TxId} endpoint={Endpoint}); attempts left {RetriesLeft}.",
+                    request.MessageType, request.TransactionId, attemptedLocation, retriesLeft);
+
+                // Step F — quarantine the failed endpoint. cppcache:1453.
+                if (attemptedLocation is not null)
+                {
+                    excludeServers.Add(attemptedLocation);
+                }
+                firstTry = false;
+            }
+        }
+
+        // Step G — retries exhausted (cppcache: GfErrType return).
+        throw lastError ?? new GeodeException(
+            $"Pool '{xmlPool.Name}': all retry attempts exhausted.");
     }
+
+    /// <summary>
+    /// First-cut error taxonomy for the DM retry frame
+    /// (<see cref="SendSyncRequestCoreAsync"/>): true when
+    /// <paramref name="ex"/> is a transport-level failure that warrants
+    /// a retry on (eventually) another endpoint.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// cppcache's full taxonomy is a <c>GfErrType</c> enum classified per
+    /// call site (<c>handleEPError</c>, <c>isFatalError</c>, ...); the
+    /// fully-faithful port is a separate Phase 1.5 prereq. This first cut
+    /// covers IO / socket / timeout exceptions and the
+    /// <see cref="OperationCanceledException"/> raised by our
+    /// ReadTimeout-linked CTS (distinguished from caller cancellation by
+    /// the caller's <see cref="CancellationToken"/> not being cancelled).
+    /// </para>
+    /// </remarks>
+    private static bool IsRetryableTransportError(Exception ex, CancellationToken callerCt) => ex switch
+    {
+        OperationCanceledException => !callerCt.IsCancellationRequested,
+        System.Net.Sockets.SocketException => true,
+        IOException => true,
+        TimeoutException => true,
+        _ => false,
+    };
+
+    /// <summary>
+    /// True for the query / bulk / function message types that cppcache
+    /// <c>sendSyncRequest</c> treats specially at
+    /// <c>ThinClientPoolDM.cpp:1281-1292, 1312-1322</c>: they carry their
+    /// own wire-level <c>messageResponseTimeout</c> part, so the pool
+    /// skips its own <c>ReadTimeout</c> stamp and never retries them
+    /// after a timeout (the server already gave up).
+    /// </summary>
+    private static bool IsQueryFamilyType(MessageType type) => type is
+        MessageType.Query or
+        MessageType.QueryWithParameters or
+        MessageType.PutAll or
+        MessageType.PutAllWithCallback or
+        MessageType.ExecuteFunction or
+        MessageType.ExecuteRegionFunction or
+        MessageType.ExecuteRegionFunctionSingleHop or
+        MessageType.ExecuteCqWithIr;
 
     public bool IsDestroyed => Volatile.Read(ref _isDestroyed) != 0;
 
@@ -1513,6 +1575,24 @@ internal class ThinClientPoolDM(
                 "Removed {Count} conn(s) for endpoint {Endpoint} from pool {Pool}.",
                 removed.Count, endpoint.Name, Name);
         }
+    }
+
+    /// <summary>
+    /// Evict any cached bucket → server mapping pointing at
+    /// <paramref name="endpoint"/> when the failure that just dropped a
+    /// conn was a transport-level IO / timeout. Mirrors cppcache
+    /// <c>ThinClientPoolDM::removeEPFromMetadataIfError</c>
+    /// (<c>ThinClientPoolDM.cpp:1555</c>), which gates on
+    /// <c>GF_IOERR || GF_TIMEOUT</c> plus a non-null metadata service.
+    /// </summary>
+    private void RemoveEPFromMetadataIfError(TcrEndpoint endpoint, Exception error)
+    {
+        // cppcache filters on GfErrType — translate via .NET exception type.
+        // Phase 1.5 GfErrType taxonomy will refine this once timeout +
+        // partial-write paths surface a richer set of exceptions.
+        if (error is not (IOException or TimeoutException)) return;
+
+        _clientMetadataService?.RemoveBucketServerLocation(endpoint.Name);
     }
 
     /// <summary>

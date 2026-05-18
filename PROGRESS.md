@@ -180,14 +180,14 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
 
 #### To do
 
-- **Connection pool design decision** — `MaxConnections` pool-wide or
-  per-endpoint? (cppcache `ThinClientPoolDM` is pool-wide.)
-- **Multi-server failover validation fixture** — the outer retry wrap
-  (`SendSyncRequestCoreAsync` Steps A-G) and `excludeServers`
-  thread-through landed; remaining work is a real multi-server
-  Testcontainers fixture to drive end-to-end failover verification
-  (currently the single-server fixture exercises only the success
-  path).
+- **Server failover verification test** — fixture topology
+  (2 locators + 3 servers) landed in d7f1b3d, and outer retry wrap
+  (`SendSyncRequestCoreAsync` Steps A-G) + `excludeServers` thread-
+  through is in place. Remaining: an integration test that kills a
+  server mid-session (e.g. `gfsh stop server --name=srv1` via the
+  fixture's `GfshAsync` helper) and asserts the next op succeeds via
+  a different endpoint, proving the retry/exclude path actually fires
+  under server loss (currently only the success path is exercised).
 - **Server endpoint health monitoring.**
 - **Fresh-conn race proper fix** (pool warmup / readiness probe) —
   tests currently use `FreshConnectionSettleDelay = 3s` to dodge it
@@ -210,6 +210,22 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
   `AUTH_FAILED`.
 
 #### Done
+
+- **Connection pool cap — design decided as two-layer** —
+  pool-wide (`CachePoolOptions.MaxConnections`) AND per-endpoint
+  (`PoolOptions.ConnectionPoolSize`, default 5), mirroring cppcache.
+  Per-endpoint cap landed via `TcrEndpoint._slots`
+  (`SemaphoreSlim?`, null = unlimited — our re-interpretation of
+  cppcache's `0` to drop the "lazy single conn" mode at
+  `TcrEndpoint.cpp:869-883`) with `AcquireSlotAsync` / `ReleaseSlot`
+  helpers. `TcrConnection.OwnsEndpointSlot` flag carries the slot
+  reservation across the conn lifetime; `DisposeAsync` auto-releases.
+  `ThinClientPoolDM.CreatePoolConnectionAsync` and
+  `CreatePoolConnectionToAEndPointAsync` both dual-acquire; per-EP
+  cap behaviour differs by call site — endpoint-pinned throws
+  `AllConnectionsInUseException`, failover-loop blacklists and tries
+  the next server. `ConnectionPoolSize` resurrected from the Phase 5
+  prune list with full xmldoc + `Validate >= 0`.
 
 - **`LogOptions` + `StatisticsOptions` deleted** — first slice of the
   `PoolOptions` mirror-then-prune execution. Both classes had been

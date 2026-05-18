@@ -439,15 +439,18 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
             })
             .BuildServiceProvider();
 
+        using var pingTicks = new MeterCapture("Geode.Client.Pool", "PingTicks");
+        using var pingSuccesses = new MeterCapture("Geode.Client.Pool", "PingSuccesses");
+
         var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();
         await cache.EnsureInitializedAsync(cts.Token);
 
         var pool = (ThinClientPoolDM)((Cache)cache).PoolManager.DefaultPool!;
 
         // Two independent assertions, both must hold:
-        //   (1) PingTickCount >= 3 → ping loop is alive (PeriodicTimer
+        //   (1) PingTicks.Count >= 3 → ping loop is alive (PeriodicTimer
         //       firing, foreach completing without deadlock).
-        //   (2) PingSuccessCount >= 2 → at least one PingAsync returned
+        //   (2) PingSuccesses.Count >= 2 → at least one PingAsync returned
         //       without throwing AND endpoint stayed connected. Cppcache's
         //       _msgSent / _pingSent short-circuit lets a tick count as
         //       success without sending bytes, so >= 2 (rather than == 3)
@@ -456,17 +459,17 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
         //       and zeroed the success counter.
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
         while (DateTime.UtcNow < deadline
-               && (pool.PingTickCount < 3 || pool.PingSuccessCount < 2))
+               && (pingTicks.Count < 3 || pingSuccesses.Count < 2))
         {
             await Task.Delay(50, cts.Token);
         }
 
         Assert.True(
-            pool.PingTickCount >= 3,
-            $"Expected pool.PingTickCount >= 3 within deadline, got {pool.PingTickCount}.");
+            pingTicks.Count >= 3,
+            $"Expected PingTicks.Count >= 3 within deadline, got {pingTicks.Count}.");
         Assert.True(
-            pool.PingSuccessCount >= 2,
-            $"Expected pool.PingSuccessCount >= 2 within deadline, got {pool.PingSuccessCount}.");
+            pingSuccesses.Count >= 2,
+            $"Expected PingSuccesses.Count >= 2 within deadline, got {pingSuccesses.Count}.");
 
         // Sanity: pool conn was returned to the queue after each ping —
         // PoolSize must not have drained even though ping borrowed conns.

@@ -59,26 +59,19 @@ internal sealed class ThinClientPoolDM(
         : null;
 
     /// <summary>
-    /// PR single-hop metadata service. Built when
-    /// <see cref="CachePoolOptions.PrSingleHopEnabled"/>; lifecycle paired
-    /// with <see cref="StartBackgroundThreads"/> / <see cref="DestroyAsync"/>.
-    /// </summary>
-    private ClientMetadataService? _clientMetadataService;
-
-    /// <summary>
-    /// Sticky-transaction connection manager. Built unconditionally in
-    /// <see cref="InitAsync"/> (cppcache ctor L209); cleanup paired with
-    /// <see cref="DestroyAsync"/> step 6b.
-    /// </summary>
-    private ThinClientStickyManager? _stickyManager;
-
-    /// <summary>
     /// Whether to clear cached PDX type IDs when the pool fully disconnects.
     /// Mirrors cppcache <c>clear_pdx_registry_</c>; sourced from
     /// <see cref="PdxOptions.ClearTypeIdsOnDisconnect"/>. Reader
     /// (<c>decConnectedEndpoints</c> → <c>clearPdxTypeRegistry</c>) is Phase 2+.
     /// </summary>
     private bool _clearPdxRegistry;
+
+    /// <summary>
+    /// PR single-hop metadata service. Built when
+    /// <see cref="CachePoolOptions.PrSingleHopEnabled"/>; lifecycle paired
+    /// with <see cref="StartBackgroundThreads"/> / <see cref="DestroyAsync"/>.
+    /// </summary>
+    private ClientMetadataService? _clientMetadataService;
 
     /// <summary>
     /// Pool's view onto TCCM-owned <see cref="TcrEndpoint"/> instances —
@@ -105,6 +98,16 @@ internal sealed class ThinClientPoolDM(
     /// 0 / 1 destroy guard, gated by <see cref="Interlocked.Exchange(ref int, int)"/>.
     /// </summary>
     private int _isDestroyed;
+
+    /// <summary>
+    /// cppcache <c>m_isMultiUserMode</c> — from <see cref="CachePoolOptions.MultiuserAuthentication"/>.
+    /// </summary>
+    private bool _isMultiUserMode;
+
+    /// <summary>
+    /// cppcache <c>m_isSecurityOn</c> — true when the cache has any security-* property set (proxy until Phase 3 auth callback lands).
+    /// </summary>
+    private bool _isSecurityOn;
 
     /// <summary>
     /// <c>keepAlive</c> intent stashed in <see cref="DestroyAsync"/> for
@@ -161,14 +164,11 @@ internal sealed class ThinClientPoolDM(
     private readonly PoolStatistics _stats = ActivatorUtilities.CreateInstance<PoolStatistics>(serviceProvider, xmlPool.Name);
 
     /// <summary>
-    /// cppcache <c>m_isSecurityOn</c> — true when the cache has any security-* property set (proxy until Phase 3 auth callback lands).
+    /// Sticky-transaction connection manager. Built unconditionally in
+    /// <see cref="InitAsync"/> (cppcache ctor L209); cleanup paired with
+    /// <see cref="DestroyAsync"/> step 6b.
     /// </summary>
-    private bool _isSecurityOn;
-
-    /// <summary>
-    /// cppcache <c>m_isMultiUserMode</c> — from <see cref="CachePoolOptions.MultiuserAuthentication"/>.
-    /// </summary>
-    private bool _isMultiUserMode;
+    private ThinClientStickyManager? _stickyManager;
 
     /// <summary>
     /// Get-or-create the pool's view of <paramref name="endpointName"/>'s
@@ -787,7 +787,7 @@ internal sealed class ThinClientPoolDM(
         ct.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _isDestroyed) != 0, typeof(ThinClientPoolDM));
         if (Interlocked.Exchange(ref _initGuard, 1) != 0) return;
-        
+
         _stats.SetPoolConnectionsReader(() => Volatile.Read(ref _poolSize));
 
         _isMultiUserMode = xmlPool.MultiuserAuthentication ?? false;
@@ -1101,6 +1101,7 @@ internal sealed class ThinClientPoolDM(
     public bool IsDestroyed => Volatile.Read(ref _isDestroyed) != 0;
 
     public string Name => xmlPool.Name;
+
     public IQueryService QueryService =>
         LazyInitializer.EnsureInitialized(
             ref _queryService,
@@ -1110,8 +1111,6 @@ internal sealed class ThinClientPoolDM(
     #region Ping
 
     private Task? _pingLoop;
-    private int _pingTickCount;
-    private int _pingSuccessCount;
     private PeriodicTimer? _pingTimer;
     private readonly SemaphoreSlim _pingSignal = new(0, int.MaxValue);
 
@@ -1138,35 +1137,15 @@ internal sealed class ThinClientPoolDM(
         var pingInterval = xmlPool.PingInterval ?? options.Pool.PingInterval;
         if (pingInterval > TimeSpan.Zero)
         {
-            logger.LogDebug(
-                "ThinClientPoolDM::startBackgroundThreads: Scheduling ping task at {Interval}",
-                pingInterval);
+            logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Scheduling ping task at {Interval}", pingInterval);
             _pingTimer = new PeriodicTimer(pingInterval);
             _pingLoop = PingLoopAsync(_backgroundCts.Token);
         }
         else
         {
-            logger.LogDebug(
-                "ThinClientPoolDM::startBackgroundThreads: Not scheduling ping task as ping interval {Interval}",
-                pingInterval);
+            logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Not scheduling ping task as ping interval {Interval}", pingInterval);
         }
     }
-
-    /// <summary>
-    /// Test-only: number of ping-loop ticks that have entered
-    /// <see cref="PingServerLocalAsync"/>. Lets integration tests assert
-    /// the loop is alive without scraping logs. Phase 1.5 stats wrapper
-    /// (cppcache <c>PoolStats</c>) will subsume this.
-    /// </summary>
-    internal int PingTickCount => Volatile.Read(ref _pingTickCount);
-
-    /// <summary>
-    /// Test-only: number of <see cref="TcrEndpoint.PingAsync"/> calls that
-    /// returned without throwing AND left the endpoint still
-    /// <see cref="TcrEndpoint.IsConnected"/> true. Subsumed by Phase 1.5
-    /// stats once <c>PoolStats</c> lands.
-    /// </summary>
-    internal int PingSuccessCount => Volatile.Read(ref _pingSuccessCount);
 
     /// <summary>
     /// Periodic ping loop. Mirrors cppcache
@@ -1217,7 +1196,7 @@ internal sealed class ThinClientPoolDM(
     /// </remarks>
     private async Task PingServerLocalAsync(CancellationToken ct)
     {
-        Interlocked.Increment(ref _pingTickCount);
+        _stats.PingTick();
         logger.LogTrace("Ping sweep for pool {Pool}: {Count} endpoint(s)", Name, _endpoints.Count);
 
         foreach (var (_, endpoint) in _endpoints)
@@ -1235,17 +1214,17 @@ internal sealed class ThinClientPoolDM(
 
             if (endpoint.IsConnected)
             {
-                Interlocked.Increment(ref _pingSuccessCount);
+                _stats.PingSuccess();
             }
 
             if (!endpoint.IsConnected)
             {
-                // cppcache (ThinClientPoolDM.cpp:2034-2037): the ping just
-                // flipped the endpoint's connected_ bit to false → drop the
-                // pool's references on its conns + subscription.
-                // TODO Phase 1.5: RemoveEPConnections(endpoint);
-                //                 RemoveCallbackConnection(endpoint);
-                logger.LogDebug("Ping flipped endpoint {Endpoint} to disconnected; cleanup deferred to Phase 1.5", endpoint.Name);
+                // cppcache (ThinClientPoolDM.cpp:2034-2037): ping flipped
+                // endpoint's connected_ bit to false → drop pool's
+                // references on its conns + HA subscription channel.
+                logger.LogDebug("Ping flipped endpoint {Endpoint} to disconnected; cleaning up.", endpoint.Name);
+                await RemoveEPConnectionsAsync(endpoint, ct).ConfigureAwait(false);
+                await RemoveCallbackConnectionAsync(endpoint, ct).ConfigureAwait(false);
             }
         }
     }
@@ -1429,6 +1408,75 @@ internal sealed class ThinClientPoolDM(
             }
         }
 
+    }
+
+    /// <summary>
+    /// Close every conn in <see cref="_opConnections"/> that belongs to
+    /// <paramref name="endpoint"/>. Mirrors cppcache
+    /// <c>ThinClientPoolDM::removeEPConnections(TcrEndpoint*)</c>
+    /// (<c>ThinClientPoolDM.cpp:2170-2188</c>) — called when ping flips
+    /// the endpoint to disconnected, so the pool stops handing out its
+    /// stale conns.
+    /// </summary>
+    private async Task RemoveEPConnectionsAsync(TcrEndpoint endpoint, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        // Phase 1: scan + remove matching conns under lock (sync, snapshot).
+        var removed = new List<TcrConnection>();
+        lock (_opConnLock)
+        {
+            var node = _opConnections.First;
+            while (node is not null)
+            {
+                var next = node.Next;
+                if (ReferenceEquals(node.Value.Endpoint, endpoint))
+                {
+                    _opConnections.Remove(node);
+                    removed.Add(node.Value);
+                }
+                node = next;
+            }
+        }
+
+        // Phase 2: close each outside the lock — CloseAsync is wire I/O.
+        // Pass keepAlive:false (transient cleanup, not pool-wide destroy).
+        foreach (var conn in removed)
+        {
+            await conn.CloseAsync(keepAlive: false, ct).ConfigureAwait(false);
+            Interlocked.Decrement(ref _poolSize);
+            _capSlots?.Release();
+            _stats.PoolDisconnect();
+        }
+
+        // cppcache also `conn_semaphore_.release()`s the manage thread so it
+        // can re-fill MinConnections. Our ConnManageLoopAsync uses
+        // PeriodicTimer + fires on its next IdleTimeout tick — no explicit
+        // wake needed.
+
+        if (removed.Count > 0)
+        {
+            logger.LogDebug(
+                "Removed {Count} conn(s) for endpoint {Endpoint} from pool {Pool}.",
+                removed.Count, endpoint.Name, Name);
+        }
+    }
+
+    /// <summary>
+    /// HA subscription channel cleanup for <paramref name="endpoint"/>.
+    /// Mirrors cppcache <c>ThinClientPoolDM::removeCallbackConnection</c>
+    /// (<c>ThinClientPoolDM.hpp:281</c>) — base class no-op; the HA-pool
+    /// subclass (<c>ThinClientPoolHADM</c>, Phase 2+) delegates to
+    /// <c>redundancyManager_</c>. Pool-only mode has nothing to do here.
+    /// </summary>
+    private Task RemoveCallbackConnectionAsync(TcrEndpoint endpoint, CancellationToken ct)
+    {
+        _ = endpoint;
+        _ = ct;
+        // TODO Phase 2+ HA: redirect to ThinClientRedundancyManager.RemoveCallbackConnection(endpoint)
+        //   when ThinClientPoolHADM + ThinClientRedundancyManager land. Pool-only
+        //   mode stays no-op (cppcache ThinClientPoolDM.hpp:281 is `{}`).
+        return Task.CompletedTask;
     }
 
     #endregion

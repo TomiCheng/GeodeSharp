@@ -122,6 +122,26 @@ internal class PoolStatistics(string poolName)
         _idleDisconnects.Add(1, new KeyValuePair<string, object?>("poolName", poolName));
 
 
+    // Ping loop observability — no cppcache equivalent (cppcache PoolStats
+    // has no ping counters); our own design for "is the ping loop alive"
+    // + "are endpoints surviving health probes".
+    readonly static Counter<int> _pingTicks = _meter.CreateCounter<int>(
+        "PingTicks",
+        unit: "sweeps",
+        description: "Count of ping-loop sweeps completed by the pool's background ping task.");
+
+    readonly static Counter<int> _pingSuccesses = _meter.CreateCounter<int>(
+        "PingSuccesses",
+        unit: "pings",
+        description: "Count of endpoint pings that returned without throwing and left the endpoint still connected.");
+
+    public void PingTick() =>
+        _pingTicks.Add(1, new KeyValuePair<string, object?>("poolName", poolName));
+
+    public void PingSuccess() =>
+        _pingSuccesses.Add(1, new KeyValuePair<string, object?>("poolName", poolName));
+
+
     // Gauges — pull-based ObservableGauge with a static reader registry
     // keyed by poolName. cppcache uses push (`setCurPoolConnections` etc.)
     // on each modify; .NET idiomatic pull lets the listener decide cadence

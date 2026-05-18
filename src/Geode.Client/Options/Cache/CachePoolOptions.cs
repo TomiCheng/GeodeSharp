@@ -165,8 +165,7 @@ public class CachePoolOptions : ICloneable
     public string Name { get; set; } = string.Empty;
 
     /// <summary>
-    /// <c>ping-interval</c>. Same concept as
-    /// <see cref="PoolOptions.PingInterval"/>.
+    /// Same concept as <see cref="PoolOptions.PingInterval"/>.
     /// </summary>
     public TimeSpan? PingInterval { get; set; }
 

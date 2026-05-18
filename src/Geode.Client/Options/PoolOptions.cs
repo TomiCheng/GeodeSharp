@@ -37,8 +37,9 @@ public class PoolOptions : ICloneable
     /// <remarks>Per-connection. cppcache: <c>SystemProperties.cpp:275</c>, applied via <c>SO_SNDBUF</c>/<c>SO_RCVBUF</c> at <c>TcpConn.cpp:123</c>.</remarks>
     public int MaxSocketBufferSize { get; set; } = 65 * 1024;
 
-    /// <summary>Idle keep-alive ping cadence; <c>ping-interval</c>; default 10s.</summary>
-    /// <remarks>Endpoint-level. cppcache <c>TcrConnectionManager.cpp:74-81</c> schedules this gated <c>if (!isPool)</c>; pool mode has its own ping in <c>ThinClientPoolDM.PingLoopAsync</c>, so this value's role in pool mode needs Phase 1.5 verification.</remarks>
+    /// <summary>
+    /// Idle keep-alive ping cadence; <c>ping-interval</c>; default 10s.
+    /// </summary>
     public TimeSpan PingInterval { get; set; } = TimeSpan.FromSeconds(10);
 
     /// <summary>Whether to randomise server-list order at pool construction; cppcache <c>disable-shuffling-of-endpoints</c> inverted; default <c>true</c>.</summary>

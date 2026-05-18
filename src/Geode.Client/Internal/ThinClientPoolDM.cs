@@ -117,6 +117,44 @@ internal class ThinClientPoolDM(
     public override bool IsSecurityOn => _isSecurityOn;
 
     /// <summary>
+    /// Bump <see cref="_connectedEndpoints"/>. Mirrors cppcache
+    /// <c>ThinClientPoolDM::incConnectedEndpoints</c>
+    /// (<c>ThinClientPoolDM.cpp:2055-2059</c>). Fires from
+    /// <see cref="TcrEndpoint.SetConnected"/>'s broadcast on a real
+    /// disconnected&#x2192;connected transition.
+    /// </summary>
+    public override void IncConnectedEndpoints()
+    {
+        var val = Interlocked.Increment(ref _connectedEndpoints);
+        logger.LogDebug(
+            "Pool {Pool} has incremented to {Count} the number of connected endpoints",
+            Name, val);
+    }
+
+    /// <summary>
+    /// Decrement <see cref="_connectedEndpoints"/>. Mirrors cppcache
+    /// <c>ThinClientPoolDM::decConnectedEndpoints</c>
+    /// (<c>ThinClientPoolDM.cpp:2061-2068</c>). Fires from
+    /// <see cref="TcrEndpoint.SetConnected"/>'s broadcast on a real
+    /// connected&#x2192;disconnected transition.
+    /// </summary>
+    /// <remarks>
+    /// cppcache also clears the PDX type registry when the count hits
+    /// zero AND <c>clear_pdx_registry_</c> is true — that flag tracks
+    /// whether any PDX types were registered against now-dead servers.
+    /// Phase 2+ (PDX serialisation) work; TODO inline.
+    /// </remarks>
+    public override void DecConnectedEndpoints()
+    {
+        var val = Interlocked.Decrement(ref _connectedEndpoints);
+        logger.LogDebug(
+            "Pool {Pool} has decremented to {Count} the number of connected endpoints",
+            Name, val);
+        // TODO Phase 2+: if (val <= 0 && _clearPdxRegistry) ClearPdxTypeRegistry();
+        //   cppcache ThinClientPoolDM.cpp:2065-2067.
+    }
+
+    /// <summary>
     /// <c>keepAlive</c> intent stashed in <see cref="DestroyAsync"/> for
     /// each conn's <see cref="TcrConnection.CloseAsync"/>.
     /// </summary>
@@ -144,6 +182,17 @@ internal class ThinClientPoolDM(
     /// decremented on every close site. Surfaced via <see cref="PoolSize"/>.
     /// </summary>
     private int _poolSize = 0;
+
+    /// <summary>
+    /// Current count of endpoints whose <see cref="TcrEndpoint.IsConnected"/>
+    /// is true. Mirrors cppcache <c>connected_endpoints_</c>
+    /// (<c>ThinClientPoolDM.cpp:2055-2068</c>). Bumped / decremented by
+    /// <see cref="IncConnectedEndpoints"/> / <see cref="DecConnectedEndpoints"/>,
+    /// which fire from <see cref="TcrEndpoint.SetConnected"/>'s broadcast
+    /// on real 0&#x2194;1 transitions. Surfaced via the
+    /// <c>ConnectedServers</c> ObservableGauge.
+    /// </summary>
+    private int _connectedEndpoints = 0;
 
     /// <summary>
     /// Pool-scoped query service. Lazy-built on first
@@ -817,6 +866,7 @@ internal class ThinClientPoolDM(
         _stats.ClearPoolConnectionsReader();
         _stats.ClearLocatorsReader();
         _stats.ClearServersReader();
+        _stats.ClearConnectedServersReader();
 
         // 5d. TODO: PoolManager.RemovePool(name) — cppcache L838
         //     `cacheImpl->getPoolManager().removePool(m_poolName)`
@@ -848,6 +898,7 @@ internal class ThinClientPoolDM(
 
         _stats.SetPoolConnectionsReader(() => Volatile.Read(ref _poolSize));
         _stats.SetServersReader(() => _endpoints.Count);
+        _stats.SetConnectedServersReader(() => Volatile.Read(ref _connectedEndpoints));
         // _locatorHelper is built lazily in ScheduleUpdateLocatorLoop when
         // locators are configured; the reader closes over the field so the
         // gauge starts at 0 and flips to the helper's count once it appears.

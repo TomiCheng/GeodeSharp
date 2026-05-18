@@ -192,7 +192,9 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
   HA; `connectionWait*` in the conn queue; `clientOps*` on the
   send-sync-request path; `receivedBytes` / `messagesBeingReceived`
   wire I/O; `processedDelta*` Phase 2+ delta; `queryExecution*` already
-  has a path but the stat isn't wired).
+  has a path but the stat isn't wired). Non-catalogue gauge:
+  `ConnectedServers` (surfaces cppcache's internal `connected_endpoints_`
+  atomic — see Done entry).
 - **Auth-trio real throw sites** —
   `AuthenticationFailedException` / `AuthenticationRequiredException` /
   `NotAuthorizedException` classes exist but nothing throws them
@@ -201,6 +203,30 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
   `AUTH_FAILED`.
 
 #### Done
+
+- **Endpoint health monitoring (`SetConnected` broadcast +
+  `ConnectedServers` gauge)** — `TcrEndpoint.SetConnected(bool)` now
+  uses `Interlocked.CompareExchange` to detect real 0&#x2194;1
+  transitions (matches cppcache's `compare_exchange_strong`,
+  `TcrEndpoint.cpp:1114-1123`) and, on a real flip, fans out
+  `Inc/DecConnectedEndpoints` to every DM in `_distMgrs` under
+  `_distMgrsLock`. Diverges from cppcache (which notifies only
+  `m_baseDM`) so multi-pool endpoint sharing — legal in our TCCM
+  design — sees the transition on every interested DM. New
+  `ThinClientPoolDM._connectedEndpoints` counter (atomic via
+  `Interlocked`), overrides for `IncConnectedEndpoints` /
+  `DecConnectedEndpoints` (`Interlocked.Increment` / `Decrement` +
+  LogDebug, message text 1:1 with cppcache `ThinClientPoolDM.cpp:2057`
+  / `:2063`). PDX-registry clear on hitting zero left as Phase 2+
+  TODO inline (cppcache `:2065-2067`). Surfaced via new
+  `ConnectedServers` ObservableGauge in `PoolStatistics` (same
+  reader-registry pattern as `Servers` / `Locators` /
+  `PoolConnections`); `InitAsync` registers
+  `() => Volatile.Read(ref _connectedEndpoints)`, `DestroyAsync`
+  clears. `Servers` (ever-seen) stays unchanged for cppcache parity;
+  `ConnectedServers - Servers` is now the "how many endpoints have
+  flipped offline" signal. xmldoc on `_distMgrs` / `_distMgrsLock`
+  expanded to document the broadcast role.
 
 - **`Locators` + `Servers` ObservableGauges (catalogue gauges #0 + #1)** —
   Pull-mode, mirroring the existing `PoolConnections` pattern:

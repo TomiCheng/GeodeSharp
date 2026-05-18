@@ -40,6 +40,26 @@ internal sealed class TcrEndpoint(
     private int _disposed;
 
     /// <summary>
+    /// DMs that have registered interest in this endpoint via
+    /// <see cref="RegisterDMAsync"/>. Mirrors cppcache <c>m_distMgrs</c>
+    /// (<c>TcrEndpoint.hpp:213</c>). Used as the broadcast list for
+    /// endpoint-wide state transitions (e.g. <see cref="SetConnected"/>
+    /// fans out <c>Inc/DecConnectedEndpoints</c> to every DM here);
+    /// cppcache simplifies by notifying only <c>m_baseDM</c>, but our
+    /// list-walk handles multi-pool endpoint sharing correctly. All
+    /// access guarded by <see cref="_distMgrsLock"/>.
+    /// </summary>
+    private readonly List<ThinClientBaseDM> _distMgrs = [];
+
+    /// <summary>
+    /// Guards <see cref="_distMgrs"/>. Mirrors cppcache
+    /// <c>m_distMgrsLock</c> (<c>TcrEndpoint.hpp:215</c>). Held during
+    /// register / unregister and during transition broadcasts so a DM
+    /// can't be dropped mid-iteration.
+    /// </summary>
+    private readonly Lock _distMgrsLock = new();
+
+    /// <summary>
     /// cppcache <c>m_maxConnections</c> — per-endpoint conn cap from
     /// <see cref="PoolOptions.ConnectionPoolSize"/>. <c>0</c> = unlimited
     /// (our re-interpretation; cppcache's <c>0</c> is a separate "lazy
@@ -382,13 +402,41 @@ internal sealed class TcrEndpoint(
     }
 
     /// <summary>
-    /// Flip <see cref="IsConnected"/>. Mirrors cppcache
-    /// <c>TcrEndpoint::setConnected</c> /
-    /// <c>setConnectionStatus</c>.
+    /// Flip <see cref="IsConnected"/> and, on a real 0&#x2194;1 transition,
+    /// broadcast <c>Inc/DecConnectedEndpoints</c> to every DM in
+    /// <see cref="_distMgrs"/>. Mirrors cppcache
+    /// <c>TcrEndpoint::setConnected</c> / <c>setConnectionStatus</c>
+    /// (<c>TcrEndpoint.cpp:1114-1123</c>) — cppcache uses
+    /// <c>compare_exchange_strong</c> to gate the inc/dec on a real flip;
+    /// we use <see cref="Interlocked.CompareExchange(ref int,int,int)"/>
+    /// for the same effect. Same-value writes are silent no-ops.
     /// </summary>
+    /// <remarks>
+    /// Divergence from cppcache: cppcache notifies a single <c>m_baseDM</c>;
+    /// we walk <see cref="_distMgrs"/> so multi-pool endpoint sharing
+    /// (legal in our TCCM design) sees the transition on every interested
+    /// DM. Callees (<see cref="ThinClientBaseDM.IncConnectedEndpoints"/> /
+    /// <see cref="ThinClientBaseDM.DecConnectedEndpoints"/>) must stay
+    /// lock-free and non-reentrant w.r.t. this endpoint — they run under
+    /// <see cref="_distMgrsLock"/>.
+    /// </remarks>
     public void SetConnected(bool connected)
     {
-        Interlocked.Exchange(ref _connected, connected ? 1 : 0);
+        var newVal = connected ? 1 : 0;
+        var oldVal = connected ? 0 : 1;
+        if (Interlocked.CompareExchange(ref _connected, newVal, oldVal) != oldVal)
+        {
+            // Same-value write, or another thread won the flip race.
+            return;
+        }
+        lock (_distMgrsLock)
+        {
+            foreach (var dm in _distMgrs)
+            {
+                if (connected) dm.IncConnectedEndpoints();
+                else dm.DecConnectedEndpoints();
+            }
+        }
     }
 
     /// <summary>
@@ -445,10 +493,7 @@ internal sealed class TcrEndpoint(
     // only — m_baseDM stays unused. Non-pool mode (Phase 2+) may revive
     // m_baseDM as a back-pointer to the owning region's DM.
     private object? _baseDM;              // m_baseDM (ThinClientBaseDM*) — non-pool only
-    private readonly List<ThinClientBaseDM> _distMgrs = [];    // m_distMgrs
-    // m_distMgrsLock / m_connectionLock / m_connectLock / m_notifyReceiverLock /
-    //   m_endpointAuthenticationLock — collapsed where possible:
-    private readonly Lock _distMgrsLock = new();
+
     private readonly Lock _connectionLock = new();
     private readonly SemaphoreSlim _connectLock = new(1, 1);       // m_connectLock (timed_mutex; .NET uses await with timeout)
     private readonly Lock _notifyReceiverLock = new();

@@ -21,9 +21,10 @@ namespace Geode.Client.Internal;
 /// <c>PoolConnections</c> / <c>Locators</c> / <c>Servers</c> gauges /
 /// <c>LocatorListRequestTime</c> / <c>ClientConnectionRequestTime</c>
 /// (the last two merge cppcache's request+response halves into one
-/// Histogram each). Non-cppcache additions: <c>PingSweepTime</c> /
-/// <c>EndpointPingTime</c> (our own ping-loop liveness signals —
-/// cppcache PoolStats has no ping counters).
+/// Histogram each). Non-cppcache additions: <c>ConnectedServers</c>
+/// gauge (surfaces cppcache's internal <c>connected_endpoints_</c> atomic);
+/// <c>PingSweepTime</c> / <c>EndpointPingTime</c> (our own ping-loop
+/// liveness signals — cppcache PoolStats has no ping counters).
 /// </remarks>
 internal class PoolStatistics(string poolName)
 {
@@ -287,6 +288,44 @@ internal class PoolStatistics(string poolName)
     /// <summary>Drop this pool's reader from the gauge registry.</summary>
     public void ClearServersReader() =>
         _serversReaders.TryRemove(poolName, out _);
+
+    /// <summary>
+    /// Per-pool reader registry for the <see cref="_connectedServers"/>
+    /// pull-mode gauge. cppcache pushes via <c>incConnectedEndpoints</c> /
+    /// <c>decConnectedEndpoints</c> bumping the
+    /// <c>connected_endpoints_</c> atomic; pull-mode reads the live
+    /// counter on each listener tick.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, Func<int>> _connectedServersReaders = new();
+
+    /// <summary>
+    /// Current number of endpoints whose <c>IsConnected</c> bit is true
+    /// (i.e. healthy, ping-passing). No direct cppcache catalogue entry —
+    /// surfaces the <c>connected_endpoints_</c> atomic
+    /// (<c>ThinClientPoolDM.cpp:2055-2068</c>) that cppcache keeps as
+    /// internal state for the PDX-registry-clear trigger.
+    /// </summary>
+    readonly static ObservableGauge<int> _connectedServers = _meter.CreateObservableGauge(
+        "ConnectedServers",
+        observeValues: ObserveConnectedServers,
+        unit: "servers",
+        description: "Current number of endpoints whose IsConnected bit is true. Surfaces cppcache `connected_endpoints_` atomic.");
+
+    private static IEnumerable<Measurement<int>> ObserveConnectedServers()
+    {
+        foreach (var (name, reader) in _connectedServersReaders)
+        {
+            yield return new Measurement<int>(reader(), new KeyValuePair<string, object?>("poolName", name));
+        }
+    }
+
+    /// <summary>Register this pool's reader for the <c>ConnectedServers</c> gauge.</summary>
+    public void SetConnectedServersReader(Func<int> reader) =>
+        _connectedServersReaders[poolName] = reader;
+
+    /// <summary>Drop this pool's reader from the gauge registry.</summary>
+    public void ClearConnectedServersReader() =>
+        _connectedServersReaders.TryRemove(poolName, out _);
 
     /// <summary>ActivitySource for traceable RPC spans.</summary>
     readonly static ActivitySource _activitySource = new("Geode.Client.Pool", AssemblyVersion);

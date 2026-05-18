@@ -51,8 +51,6 @@ public class GeodeClientOptionsTests
         Assert.NotSame(original.Pool, clone.Pool);
         Assert.NotSame(original.Tls, clone.Tls);
         Assert.NotSame(original.Subscription, clone.Subscription);
-        Assert.NotSame(original.Log, clone.Log);
-        Assert.NotSame(original.Statistics, clone.Statistics);
         Assert.NotSame(original.Security, clone.Security);
         Assert.NotSame(original.Tx, clone.Tx);
         Assert.NotSame(original.Heap, clone.Heap);

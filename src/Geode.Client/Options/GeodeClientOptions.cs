@@ -43,12 +43,6 @@ public class GeodeClientOptions: ICloneable
     /// </summary>
     public SubscriptionOptions Subscription { get; set; } = new();
 
-    /// <summary>File-logging settings. See <see cref="LogOptions"/>.</summary>
-    public LogOptions Log { get; set; } = new();
-
-    /// <summary>Statistics-archive settings. See <see cref="StatisticsOptions"/>.</summary>
-    public StatisticsOptions Statistics { get; set; } = new();
-
     /// <summary>Security / auth settings. See <see cref="SecurityOptions"/>.</summary>
     public SecurityOptions Security { get; set; } = new();
 
@@ -86,8 +80,6 @@ public class GeodeClientOptions: ICloneable
         Pool = other.Pool.Clone();
         Tls = other.Tls.Clone();
         Subscription = other.Subscription.Clone();
-        Log = other.Log.Clone();
-        Statistics = other.Statistics.Clone();
         Security = other.Security.Clone();
         Tx = other.Tx.Clone();
         Heap = other.Heap.Clone();
@@ -106,8 +98,6 @@ public class GeodeClientOptions: ICloneable
         foreach (var f in Pool.Validate($"{prefix}.Pool")) yield return f;
         foreach (var f in Tls.Validate($"{prefix}.Tls")) yield return f;
         foreach (var f in Subscription.Validate($"{prefix}.Subscription")) yield return f;
-        foreach (var f in Log.Validate($"{prefix}.Log")) yield return f;
-        foreach (var f in Statistics.Validate($"{prefix}.Statistics")) yield return f;
         foreach (var f in Security.Validate($"{prefix}.Security")) yield return f;
         foreach (var f in Tx.Validate($"{prefix}.Tx")) yield return f;
         foreach (var f in Heap.Validate($"{prefix}.Heap")) yield return f;

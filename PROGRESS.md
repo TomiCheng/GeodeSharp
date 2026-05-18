@@ -175,11 +175,36 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
 
 #### To do
 
-- **`PoolOptions` mirror-then-prune review** — which cppcache fields to
-  keep / rename / drop (per CLAUDE.md "mirror then prune"; this is the
-  phase to do it). Also reassess `GeodeClientOptions`'s `LogOptions` /
-  `StatisticsOptions` / `HeapOptions` / `CacheXmlOptions` /
-  `ThreadPoolSize` / `EnableChunkHandlerThread` etc. in the same pass.
+- **`PoolOptions` mirror-then-prune execution** — audit complete, three
+  prune commits queued. Each entry below is a zero-functional-consumer
+  field (touched only by ctor/Clone/Validate scaffolding).
+  - **Commit A — whole-class deletes:** `HeapOptions` still pending
+    (server-side concept, no client analogue; referenced only by
+    `GeodeClientOptions.Heap` + clone/validate). `LogOptions` and
+    `StatisticsOptions` already dropped — see Done.
+  - **Commit B — system-properties layer:** `PoolOptions.ConnectionPoolSize`
+    (per-EP cap not implemented), `PoolOptions.ConnectWaitTimeout`
+    (Linux EPIPE workaround irrelevant under .NET async sockets),
+    `PoolOptions.MaxSocketBufferSize` (never applied to socket),
+    `PoolOptions.ShuffleEndpoints` (our DM uses `Random.Shared.Next` on
+    the server list at construction, not a config knob),
+    `PoolOptions.BucketWaitTimeout` (Phase 4+ PR routing);
+    `GeodeClientOptions.ThreadPoolSize` + `EnableChunkHandlerThread`
+    (xmldoc admits both are "very likely no-ops" under .NET; the latter
+    has one stale TODO marker in `ThinClientBaseDM.cs:66`).
+  - **Commit C — per-pool + cache layer:** `CachePoolOptions.SocketBufferSize`
+    (duplicate of `PoolOptions.MaxSocketBufferSize`),
+    `CachePoolOptions.Subscription{AckInterval,MessageTrackingTimeout,Redundancy}`
+    (Phase 2+ subscription — re-add when CQ work starts),
+    `CacheOptions.RedundancyLevel` (Phase 2+ subscription redundancy),
+    `CacheOptions.Version` (pinned `"1.0"`, never validated).
+  - **Keep (consumer scheduled for a known phase):**
+    `CachePoolOptions.MultiuserAuthentication` (Phase 3,
+    `_isMultiUserMode` already reads it), `SubscriptionEnabled`
+    (Phase 2+ `ThinClientPoolHADM` factory selector),
+    `ThreadLocalConnections` (Phase 1.5 sticky factory selector),
+    `PingInterval` (deliberately nullable for the two-layer
+    `xmlPool.PingInterval ?? options.Pool.PingInterval` fallback).
 - **TCCM dead-code removal** — the inventory is done but nothing has
   moved. Drop the 6 NIE methods + their dead fields, simplify
   `InitAsync` (drop the `isPool` parameter), rewrite the class XML doc
@@ -242,6 +267,19 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
   `AUTH_FAILED`.
 
 #### Done
+
+- **`LogOptions` + `StatisticsOptions` deleted** — first slice of the
+  `PoolOptions` mirror-then-prune execution. Both classes had been
+  flagged "deletion shortlist" in their own xmldoc: `LogOptions`
+  (`log-file` / `log-level` / `log-file-size-limit` /
+  `log-disk-space-limit` — superseded by `ILogger<T>` per CLAUDE.md)
+  and `StatisticsOptions` (`statistic-*` archive — superseded by
+  `EventCounters` / `Meter`). `GeodeClientOptions.Log` /
+  `.Statistics` properties + their ctor / clone / validate references
+  removed; corresponding test classes in `PrimitiveOptionsTests` and
+  the Clone-NotSame assertions in `GeodeClientOptionsTests` trimmed.
+  `HeapOptions` still pending (held back until we decide whether
+  Phase 4 `tombstone-timeout` needs a stub).
 
 - **DM-level retry frame in `SendSyncRequestCoreAsync`** — cppcache
   `ThinClientPoolDM.cpp:1294-1322` ported as Steps A-G. **A**: loop

@@ -80,58 +80,6 @@ public class PrimitiveOptionsTests
         public void Validate_empty() => Assert.Empty(new TlsOptions().Validate("t"));
     }
 
-    public class LogOptionsTests
-    {
-        [Fact]
-        public void Clone_round_trips()
-        {
-            var original = new LogOptions
-            {
-                Filename = "/log",
-                Level = LogLevel.Debug,
-                FileSizeLimit = 100,
-                DiskSpaceLimit = 1000,
-            };
-            var clone = original.Clone();
-
-            Assert.Equal("/log", clone.Filename);
-            Assert.Equal(LogLevel.Debug, clone.Level);
-            Assert.Equal(100u, clone.FileSizeLimit);
-            Assert.Equal(1000u, clone.DiskSpaceLimit);
-        }
-
-        [Fact]
-        public void Validate_empty() => Assert.Empty(new LogOptions().Validate("l"));
-    }
-
-    public class StatisticsOptionsTests
-    {
-        [Fact]
-        public void Clone_round_trips()
-        {
-            var original = new StatisticsOptions
-            {
-                Enabled = true,
-                SampleInterval = TimeSpan.FromSeconds(5),
-                ArchiveFile = "custom.gfs",
-                FileSizeLimit = 50,
-                DiskSpaceLimit = 500,
-                TimeStatisticsEnabled = true,
-            };
-            var clone = original.Clone();
-
-            Assert.True(clone.Enabled);
-            Assert.Equal(TimeSpan.FromSeconds(5), clone.SampleInterval);
-            Assert.Equal("custom.gfs", clone.ArchiveFile);
-            Assert.Equal(50u, clone.FileSizeLimit);
-            Assert.Equal(500u, clone.DiskSpaceLimit);
-            Assert.True(clone.TimeStatisticsEnabled);
-        }
-
-        [Fact]
-        public void Validate_empty() => Assert.Empty(new StatisticsOptions().Validate("st"));
-    }
-
     public class TxOptionsTests
     {
         [Fact]

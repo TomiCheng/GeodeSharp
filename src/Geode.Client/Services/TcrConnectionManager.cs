@@ -1,11 +1,12 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Threading.Channels;
+using Geode.Client.Internal;
 using Geode.Client.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-namespace Geode.Client.Internal;
+namespace Geode.Client.Services;
 
 /// <summary>
 /// Owns the live TCP/TLS endpoint connections and the background

@@ -13,7 +13,7 @@ namespace Geode.Client.Internal;
 /// <para>
 /// MVP is proxy-only (no client-side caching), so the in-memory map +
 /// callback machinery is all deferred. The class still exists in the
-/// hierarchy so <see cref="Services.ThinClientRegion"/> sits at the
+/// hierarchy so <see cref="ThinClientRegion"/> sits at the
 /// same depth as cppcache; once <c>caching-enabled</c> is honoured
 /// (Phase 2+), the local-cache code lands here without disturbing the
 /// derived class.
@@ -54,7 +54,7 @@ internal abstract class LocalRegion : RegionInternal
     public override string FullPath { get; }
 
     // 4 IRegion ops still abstract — concrete dispatch lives in
-    // Services.ThinClientRegion (Phase 1.2.e). When local caching
+    // ThinClientRegion (Phase 1.2.e). When local caching
     // lands, base impls go here that consult m_entries first and
     // delegate to the derived class for server roundtrips.
 

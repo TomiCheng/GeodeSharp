@@ -1,5 +1,6 @@
 using System.Threading.Channels;
 using Geode.Client.Protocol;
+using Geode.Client.Services;
 
 namespace Geode.Client.Internal;
 

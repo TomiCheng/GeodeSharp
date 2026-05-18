@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
+using Geode.Client.Internal;
 
-namespace Geode.Client.Internal;
+namespace Geode.Client.Services;
 
 /// <summary>
 /// Registry and lifecycle owner for named connection pools. Mirrors

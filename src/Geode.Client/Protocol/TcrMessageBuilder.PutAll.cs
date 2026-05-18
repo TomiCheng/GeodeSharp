@@ -49,7 +49,7 @@ partial class TcrMessageBuilder
     /// <b>EventId reservation:</b> same scheme as <see cref="RemoveAll"/>.
     /// cppcache calls <c>writeEventIdPart(map.size() - 1)</c>; one
     /// <c>(threadId, baseSeq)</c> pair on the wire, but
-    /// <see cref="Internal.EventIdGenerator.NextRange"/> bumps the
+    /// <see cref="Services.EventIdGenerator.NextRange"/> bumps the
     /// per-cache counter by <c>N</c> slots so each entry's logical
     /// event is <c>(clientId, threadId, baseSeq+i)</c> for
     /// <c>i &#x2208; [0, N)</c>.

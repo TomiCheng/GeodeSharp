@@ -3,6 +3,7 @@ using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
 using Geode.Client.Protocol.Serialization;
+using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Tests.Protocol.Serialization;

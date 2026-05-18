@@ -36,7 +36,7 @@ public class PutGetIntegrationTests(GeodeFixture fx)
     /// Process-wide monotonic counter for the EventId sequence id.
     /// Defensive: each test in this file creates its own raw
     /// <see cref="TcrConnection"/> (no <see cref="IGeodeCache"/> scope,
-    /// no <see cref="Internal.EventIdGenerator"/>), so we need our own
+    /// no <see cref="Services.EventIdGenerator"/>), so we need our own
     /// counter. The Geode server dedups events per
     /// <c>(clientId, threadId, sequenceId)</c>; bumping the seq each
     /// Put avoids any chance of the server treating two Puts as the

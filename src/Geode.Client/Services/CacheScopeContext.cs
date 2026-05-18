@@ -1,6 +1,6 @@
 using Geode.Client.Options;
 
-namespace Geode.Client.Internal;
+namespace Geode.Client.Services;
 
 /// <summary>
 /// Per-cache <see cref="Microsoft.Extensions.DependencyInjection.AsyncServiceScope"/>

@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Net;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
+using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 

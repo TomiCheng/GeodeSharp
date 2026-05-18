@@ -42,8 +42,8 @@ partial class TcrMessageBuilder
     /// <see cref="Put"/> / <see cref="ClearRegion"/>: server-side
     /// <c>ClientHealthMonitor</c> de-dupes on
     /// <c>(clientId, threadId, sequenceId)</c>, so every request needs
-    /// a fresh id. <see cref="Services.ThinClientRegion"/>'s caller
-    /// drives it via <see cref="Internal.EventIdGenerator"/>.
+    /// a fresh id. <see cref="Internal.ThinClientRegion"/>'s caller
+    /// drives it via <see cref="Services.EventIdGenerator"/>.
     /// </para>
     /// <para>
     /// <paramref name="messageResponseTimeoutMillis"/> mirrors cppcache

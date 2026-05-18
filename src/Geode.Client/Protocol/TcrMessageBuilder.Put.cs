@@ -51,8 +51,8 @@ partial class TcrMessageBuilder
     /// <para>
     /// <b>EventId is caller-supplied.</b> cppcache generates it inline
     /// inside <c>writeEventIdPart</c> from <c>EventIdTSS</c>; we keep
-    /// the values as parameters so <see cref="Services.ThinClientRegion"/>
-    /// can drive them from <see cref="Internal.EventIdGenerator"/> (DI
+    /// the values as parameters so <see cref="Internal.ThinClientRegion"/>
+    /// can drive them from <see cref="Services.EventIdGenerator"/> (DI
     /// Scoped) and unit tests can pin deterministic ids.
     /// </para>
     /// </remarks>

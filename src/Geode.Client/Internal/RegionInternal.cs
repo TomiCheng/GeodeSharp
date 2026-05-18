@@ -6,7 +6,7 @@ namespace Geode.Client.Internal;
 /// Abstract internal layer between the public <see cref="IRegion"/>
 /// interface and the concrete region implementations
 /// (<see cref="LocalRegion"/> &#x2192;
-/// <see cref="Services.ThinClientRegion"/>). Mirrors cppcache
+/// <see cref="ThinClientRegion"/>). Mirrors cppcache
 /// <c>RegionInternal</c> (<c>cppcache/src/RegionInternal.hpp:131</c>).
 /// </summary>
 /// <remarks>

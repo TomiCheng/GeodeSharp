@@ -104,7 +104,7 @@ internal sealed class VersionedCacheableObjectPartList(
 
     /// <summary>
     /// Number of (miss-flag, value) entries decoded in this chunk's
-    /// objects section. Used by <see cref="Services.ChunkedGetAllResponse"/>
+    /// objects section. Used by <see cref="Internal.ChunkedGetAllResponse"/>
     /// to advance the shared <c>KeysOffset</c> across chunks — cppcache
     /// passes <c>m_keysOffset</c> as <c>uint32_t*</c> so the cursor is
     /// shared by reference between chunks; .NET prefers an explicit

@@ -50,8 +50,8 @@ partial class TcrMessageBuilder
     /// </para>
     /// <para>
     /// EventId is caller-supplied for the same reason as
-    /// <see cref="Put"/> — <see cref="Services.ThinClientRegion"/>
-    /// drives it from <see cref="Internal.EventIdGenerator"/>.
+    /// <see cref="Put"/> — <see cref="Internal.ThinClientRegion"/>
+    /// drives it from <see cref="Services.EventIdGenerator"/>.
     /// </para>
     /// </remarks>
     public TcrMessage Destroy(

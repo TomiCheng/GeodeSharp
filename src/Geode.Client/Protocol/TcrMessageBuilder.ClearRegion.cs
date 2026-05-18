@@ -31,8 +31,8 @@ partial class TcrMessageBuilder
     /// <para>
     /// EventId is caller-supplied for the same reason as <see cref="Put"/> /
     /// <see cref="Destroy"/> / <see cref="Invalidate"/> &#x2014;
-    /// <see cref="Services.ThinClientRegion"/> drives it from
-    /// <see cref="Internal.EventIdGenerator"/>. Server-side
+    /// <see cref="Internal.ThinClientRegion"/> drives it from
+    /// <see cref="Services.EventIdGenerator"/>. Server-side
     /// <c>ClientHealthMonitor</c> de-dupes on
     /// <c>(clientId, threadId, sequenceId)</c>, so a fresh id is required
     /// even though clear has no per-key payload.

@@ -65,7 +65,7 @@ partial class TcrMessageBuilder
     /// <b>No EventId.</b> Unlike <see cref="PutAll"/> / <see cref="RemoveAll"/>,
     /// GetAll has no per-key event id concept (it's read-only on the
     /// server side &#x2014; no mutation to dedup). The
-    /// <see cref="Internal.EventIdGenerator"/> isn't touched by this
+    /// <see cref="Services.EventIdGenerator"/> isn't touched by this
     /// path.
     /// </para>
     /// </remarks>

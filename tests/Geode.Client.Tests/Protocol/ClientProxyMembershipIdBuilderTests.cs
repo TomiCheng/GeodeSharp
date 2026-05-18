@@ -4,6 +4,7 @@ using System.Text;
 using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
+using Geode.Client.Services;
 using Xunit;
 
 namespace Geode.Client.Tests.Protocol;

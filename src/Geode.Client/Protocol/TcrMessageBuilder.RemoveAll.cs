@@ -56,12 +56,12 @@ partial class TcrMessageBuilder
     /// so the server can dedup each key's logical event as
     /// <c>(clientId, threadId, baseSeq+i)</c> for
     /// <c>i &#x2208; [0, N)</c>. Our
-    /// <see cref="Internal.EventIdGenerator"/> uses a single shared
+    /// <see cref="Services.EventIdGenerator"/> uses a single shared
     /// <c>Interlocked</c> counter; the caller must allocate <c>N</c>
     /// consecutive sequence ids upfront and pass the lowest
     /// (<c>baseSeq</c>) here. Plumbing is the caller's responsibility
     /// (the builder has no view into the generator) and lands with
-    /// the <see cref="Services.ThinClientRegion"/> wiring later in
+    /// the <see cref="Internal.ThinClientRegion"/> wiring later in
     /// Phase 1.3.b.
     /// </para>
     /// <para>

@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Geode.Client.Internal;
 using Geode.Client.Options;
+using Geode.Client.Services;
 
 namespace Geode.Client.Protocol;
 

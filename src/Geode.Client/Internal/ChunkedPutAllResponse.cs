@@ -2,7 +2,7 @@ using Geode.Client.Protocol;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-namespace Geode.Client.Services;
+namespace Geode.Client.Internal;
 
 /// <summary>
 /// <see cref="TcrChunkedResult"/> consumer for the chunked reply of a

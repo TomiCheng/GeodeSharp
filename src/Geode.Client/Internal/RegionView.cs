@@ -1,6 +1,6 @@
 using Geode.Client.Protocol.Serialization;
 
-namespace Geode.Client.Services;
+namespace Geode.Client.Internal;
 
 /// <summary>
 /// Compile-time-only typed view over a non-generic <see cref="IRegion"/>.

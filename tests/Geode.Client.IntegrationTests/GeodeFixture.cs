@@ -117,8 +117,8 @@ public sealed class GeodeFixture : IAsyncLifetime
                 "sh", "-c",
                 "mkdir -p /work && cd /work && "
                     + "gfsh "
-                    + $"-e 'start locator --name=loc1 --port={Locator1ContainerPort} --locators={locators}' "
-                    + $"-e 'start locator --name=loc2 --port={Locator2ContainerPort} --locators={locators}' "
+                    + $"-e 'start locator --name=loc1 --port={Locator1ContainerPort} --hostname-for-clients=localhost --locators={locators}' "
+                    + $"-e 'start locator --name=loc2 --port={Locator2ContainerPort} --hostname-for-clients=localhost --locators={locators}' "
                     + $"-e 'start server --name=srv1 --server-port={Server1ContainerPort} --hostname-for-clients=localhost --locators={locators}' "
                     + $"-e 'start server --name=srv2 --server-port={Server2ContainerPort} --hostname-for-clients=localhost --locators={locators}' "
                     + $"-e 'start server --name=srv3 --server-port={Server3ContainerPort} --hostname-for-clients=localhost --locators={locators}' "

@@ -180,14 +180,6 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
 
 #### To do
 
-- **Server failover verification test** — fixture topology
-  (2 locators + 3 servers) landed in d7f1b3d, and outer retry wrap
-  (`SendSyncRequestCoreAsync` Steps A-G) + `excludeServers` thread-
-  through is in place. Remaining: an integration test that kills a
-  server mid-session (e.g. `gfsh stop server --name=srv1` via the
-  fixture's `GfshAsync` helper) and asserts the next op succeeds via
-  a different endpoint, proving the retry/exclude path actually fires
-  under server loss (currently only the success path is exercised).
 - **Server endpoint health monitoring.**
 - **Fresh-conn race proper fix** (pool warmup / readiness probe) —
   tests currently use `FreshConnectionSettleDelay = 3s` to dodge it
@@ -210,6 +202,23 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
   `AUTH_FAILED`.
 
 #### Done
+
+- **Server failover verification test landed** —
+  `ServerFailoverIntegrationTests.Ops_succeed_via_failover_after_one_server_is_stopped`
+  drives the retry frame end-to-end: locator-mode pool against the
+  2-locator + 3-server fixture, sentinel Put/Get to confirm baseline
+  health, `gfsh stop server --name=srv1` via the fixture's
+  `GfshAsync`, then 30 Put + 30 Get round trips that must all
+  succeed via failover to srv2 / srv3 — any unhandled socket /
+  connection-refused that escapes `SendSyncRequestCoreAsync`'s
+  catch block surfaces as a test failure here. `try / finally`
+  restarts srv1 so downstream tests in the same collection-fixture
+  run see the full topology. Side fix: `--hostname-for-clients=localhost`
+  re-added to both locators in `GeodeFixture` (was temporarily removed
+  while diagnosing the locator-request ordinal-width bug fixed in
+  d7f1b3d), so `LocatorListResponse` peer entries stay host-reachable
+  and future locator-mode tests don't each need to set
+  `UpdateLocatorListInterval = TimeSpan.Zero` as a workaround.
 
 - **Connection pool cap — design decided as two-layer** —
   pool-wide (`CachePoolOptions.MaxConnections`) AND per-endpoint

@@ -439,8 +439,8 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
             })
             .BuildServiceProvider();
 
-        using var pingTicks = new MeterCapture("Geode.Client.Pool", "PingTicks");
-        using var pingSuccesses = new MeterCapture("Geode.Client.Pool", "PingSuccesses");
+        using var pingSweeps = new MeterCapture("Geode.Client.Pool", "PingSweepTime");
+        using var endpointPings = new MeterCapture("Geode.Client.Pool", "EndpointPingTime");
 
         var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();
         await cache.EnsureInitializedAsync(cts.Token);
@@ -448,28 +448,28 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
         var pool = (ThinClientPoolDM)((Cache)cache).PoolManager.DefaultPool!;
 
         // Two independent assertions, both must hold:
-        //   (1) PingTicks.Count >= 3 → ping loop is alive (PeriodicTimer
-        //       firing, foreach completing without deadlock).
-        //   (2) PingSuccesses.Count >= 2 → at least one PingAsync returned
+        //   (1) PingSweepTime.Count >= 3 → ping loop is alive (PeriodicTimer
+        //       firing, foreach completing, finally always records).
+        //   (2) EndpointPingTime.Count >= 2 → at least one PingAsync returned
         //       without throwing AND endpoint stayed connected. Cppcache's
-        //       _msgSent / _pingSent short-circuit lets a tick count as
+        //       _msgSent / _pingSent short-circuit lets a tick complete as
         //       success without sending bytes, so >= 2 (rather than == 3)
         //       tolerates that pattern. >= 2 still proves the first real
         //       ping succeeded — failure would have flipped IsConnected
-        //       and zeroed the success counter.
+        //       and the histogram wouldn't have recorded.
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
         while (DateTime.UtcNow < deadline
-               && (pingTicks.Count < 3 || pingSuccesses.Count < 2))
+               && (pingSweeps.Count < 3 || endpointPings.Count < 2))
         {
             await Task.Delay(50, cts.Token);
         }
 
         Assert.True(
-            pingTicks.Count >= 3,
-            $"Expected PingTicks.Count >= 3 within deadline, got {pingTicks.Count}.");
+            pingSweeps.Count >= 3,
+            $"Expected PingSweepTime.Count >= 3 within deadline, got {pingSweeps.Count}.");
         Assert.True(
-            pingSuccesses.Count >= 2,
-            $"Expected PingSuccesses.Count >= 2 within deadline, got {pingSuccesses.Count}.");
+            endpointPings.Count >= 2,
+            $"Expected EndpointPingTime.Count >= 2 within deadline, got {endpointPings.Count}.");
 
         // Sanity: pool conn was returned to the queue after each ping —
         // PoolSize must not have drained even though ping borrowed conns.

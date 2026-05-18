@@ -21,8 +21,8 @@ namespace Geode.Client.Internal;
 /// <c>PoolConnections</c> gauge / <c>LocatorListRequestTime</c> /
 /// <c>ClientConnectionRequestTime</c> (the last two merge cppcache's
 /// request+response halves into one Histogram each). Non-cppcache
-/// additions: <c>PingTicks</c> / <c>PingSuccesses</c> (our own ping-loop
-/// liveness signals — cppcache PoolStats has no ping counters).
+/// additions: <c>PingSweepTime</c> / <c>EndpointPingTime</c> (our own
+/// ping-loop liveness signals — cppcache PoolStats has no ping counters).
 /// </remarks>
 internal class PoolStatistics(string poolName)
 {
@@ -152,30 +152,34 @@ internal class PoolStatistics(string poolName)
         _idleDisconnects.Add(1, new KeyValuePair<string, object?>("poolName", poolName));
 
     /// <summary>
-    /// Count of ping-loop sweeps. No cppcache equivalent — our own design
-    /// for "is the ping loop alive".
+    /// Elapsed time of one <c>PingServerLocalAsync</c> sweep. No cppcache
+    /// equivalent — our own design for "is the ping loop alive".
+    /// <c>.Count</c> subsumes the old <c>PingTicks</c> counter; recorded in
+    /// <c>finally</c> so exception paths still tick.
     /// </summary>
-    readonly static Counter<int> _pingTicks = _meter.CreateCounter<int>(
-        "PingTicks",
-        unit: "sweeps",
-        description: "Count of ping-loop sweeps completed by the pool's background ping task.");
+    readonly static Histogram<double> _pingSweepTime = _meter.CreateHistogram<double>(
+        "PingSweepTime",
+        unit: "s",
+        description: "Elapsed time of one ping-loop sweep over the pool's connected endpoints.");
 
     /// <summary>
-    /// Count of endpoint pings that returned without throwing AND left the
-    /// endpoint still connected. Pair with <see cref="_pingTicks"/>.
+    /// Elapsed time of one <c>endpoint.PingAsync</c> that returned without
+    /// throwing AND left the endpoint still connected. <c>.Count</c>
+    /// subsumes the old <c>PingSuccesses</c> counter. Pair with
+    /// <see cref="_pingSweepTime"/>.
     /// </summary>
-    readonly static Counter<int> _pingSuccesses = _meter.CreateCounter<int>(
-        "PingSuccesses",
-        unit: "pings",
-        description: "Count of endpoint pings that returned without throwing and left the endpoint still connected.");
+    readonly static Histogram<double> _endpointPingTime = _meter.CreateHistogram<double>(
+        "EndpointPingTime",
+        unit: "s",
+        description: "Elapsed time of one successful endpoint ping (returned without throwing and left the endpoint still connected).");
 
-    /// <summary>Bump <see cref="_pingTicks"/>.</summary>
-    public void PingTick() =>
-        _pingTicks.Add(1, new KeyValuePair<string, object?>("poolName", poolName));
+    /// <summary>Record one <see cref="_pingSweepTime"/> sample.</summary>
+    public void PingSweep(TimeSpan elapsed) =>
+        _pingSweepTime.Record(elapsed.TotalSeconds, new KeyValuePair<string, object?>("poolName", poolName));
 
-    /// <summary>Bump <see cref="_pingSuccesses"/>.</summary>
-    public void PingSuccess() =>
-        _pingSuccesses.Add(1, new KeyValuePair<string, object?>("poolName", poolName));
+    /// <summary>Record one <see cref="_endpointPingTime"/> sample.</summary>
+    public void EndpointPing(TimeSpan elapsed) =>
+        _endpointPingTime.Record(elapsed.TotalSeconds, new KeyValuePair<string, object?>("poolName", poolName));
 
     /// <summary>
     /// Per-pool reader registry for the <see cref="_poolConnections"/>

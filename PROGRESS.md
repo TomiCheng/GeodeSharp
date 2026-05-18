@@ -181,9 +181,6 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
 #### To do
 
 - **Server endpoint health monitoring.**
-- **Fresh-conn race proper fix** (pool warmup / readiness probe) —
-  tests currently use `FreshConnectionSettleDelay = 3s` to dodge it
-  (memory `geode-fresh-conn-race.md`).
 - **`PoolStatistics` catalogue progression** — 7 of 27 fields wired
   (`locatorRequests` / `locatorResponses` collapsed into
   `ClientConnectionRequestTime`, `PoolConnections` gauge,
@@ -192,8 +189,6 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
   `PoolDisconnects` exists but isn't wired into every close site. The
   remaining 20 land per catalogue order (`clientOps*` on the
   send-sync-request path, `connectionWait*` in the conn queue, ...).
-  `_pingTickCount` / `_pingSuccessCount` to be folded the same way
-  `_updateLocatorTickCount` was (Histogram + `MeterCapture`).
 - **Auth-trio real throw sites** —
   `AuthenticationFailedException` / `AuthenticationRequiredException` /
   `NotAuthorizedException` classes exist but nothing throws them
@@ -202,6 +197,23 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
   `AUTH_FAILED`.
 
 #### Done
+
+- **Ping instruments folded to Histograms** — `PingTicks` Counter →
+  `PingSweepTime` Histogram<double> (`unit: "s"`), `PingSuccesses`
+  Counter → `EndpointPingTime` Histogram<double>. `PingServerLocalAsync`
+  wraps the whole sweep in `Stopwatch` + `finally` so exception paths
+  still tick (matches the `UpdateLocatorsLocalAsync` /
+  `LocatorListRequestTime` pattern); per-endpoint Stopwatch only records
+  when `endpoint.IsConnected` stays true after `PingAsync` (preserves
+  the old `PingSuccess` semantic). `.Count` on each histogram subsumes
+  the old counter 1:1. `CacheConnectionIntegrationTests.PingLoop_*`
+  switched to `MeterCapture("PingSweepTime")` /
+  `MeterCapture("EndpointPingTime")`; assertion bounds unchanged
+  (`>= 3` sweeps, `>= 2` successful endpoint pings within 5s deadline).
+  Side cleanup: the two `if (endpoint.IsConnected)` /
+  `if (!endpoint.IsConnected)` branches that bracketed the success
+  counter collapsed to one `if/else` — `EndpointPing(...)` is sync and
+  doesn't flip the bit.
 
 - **Server failover verification test landed** —
   `ServerFailoverIntegrationTests.Ops_succeed_via_failover_after_one_server_is_stopped`
@@ -1697,8 +1709,7 @@ override) all green against a real server, with 3s
 
 Deferred to later phases: built-in DSFID type codecs beyond int32/bool
 (Phase 1.3.0 covers most), `callbackArgument` overloads on the public
-API (wire is ready but `IRegion` doesn't expose), fresh-conn race
-proper fix (Phase 1.5).
+API (wire is ready but `IRegion` doesn't expose).
 
 ---
 
@@ -1767,10 +1778,6 @@ See [CLAUDE.md](.claude/CLAUDE.md) Phase 2 / 3 / 4.
 
 ### Locator follow-ons (deferred from Phase 1.5)
 
-- **Fixture NAT fix** so locator-mode Put/Get can run:
-  `--hostname-for-clients=<host>` + `WithPortBinding(40404, 40404)` to
-  pin the server port mapping. Needed for locator-mode integration
-  tests in Phase 2+ once subscription / CQ work needs them.
 - **`getEndpointForNewCallBackConn`** — subscription channel
   (Phase 2 Continuous Query).
 - **`getAllServers`** — Phase 4 single-hop bucket-to-server resolution.

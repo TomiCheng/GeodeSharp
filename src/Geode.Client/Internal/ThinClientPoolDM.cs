@@ -1315,36 +1315,43 @@ internal class ThinClientPoolDM(
     /// </remarks>
     private async Task PingServerLocalAsync(CancellationToken ct)
     {
-        _stats.PingTick();
-        logger.LogTrace("Ping sweep for pool {Pool}: {Count} endpoint(s)", Name, _endpoints.Count);
-
-        foreach (var (_, endpoint) in _endpoints)
+        var sweepStopwatch = Stopwatch.StartNew();
+        try
         {
-            ct.ThrowIfCancellationRequested();
+            logger.LogTrace("Ping sweep for pool {Pool}: {Count} endpoint(s)", Name, _endpoints.Count);
 
-            if (!endpoint.IsConnected)
+            foreach (var (_, endpoint) in _endpoints)
             {
-                // cppcache: pingServerLocal skips disconnected endpoints
-                // (the test is inside the loop body at L2032).
-                continue;
-            }
+                ct.ThrowIfCancellationRequested();
 
-            await endpoint.PingAsync(this, ct).ConfigureAwait(false);
+                if (!endpoint.IsConnected)
+                {
+                    // cppcache: pingServerLocal skips disconnected endpoints
+                    // (the test is inside the loop body at L2032).
+                    continue;
+                }
 
-            if (endpoint.IsConnected)
-            {
-                _stats.PingSuccess();
-            }
+                var endpointStopwatch = Stopwatch.StartNew();
+                await endpoint.PingAsync(this, ct).ConfigureAwait(false);
 
-            if (!endpoint.IsConnected)
-            {
-                // cppcache (ThinClientPoolDM.cpp:2034-2037): ping flipped
-                // endpoint's connected_ bit to false → drop pool's
-                // references on its conns + HA subscription channel.
-                logger.LogDebug("Ping flipped endpoint {Endpoint} to disconnected; cleaning up.", endpoint.Name);
-                await RemoveEPConnectionsAsync(endpoint, ct).ConfigureAwait(false);
-                await RemoveCallbackConnectionAsync(endpoint, ct).ConfigureAwait(false);
+                if (endpoint.IsConnected)
+                {
+                    _stats.EndpointPing(endpointStopwatch.Elapsed);
+                }
+                else
+                {
+                    // cppcache (ThinClientPoolDM.cpp:2034-2037): ping flipped
+                    // endpoint's connected_ bit to false → drop pool's
+                    // references on its conns + HA subscription channel.
+                    logger.LogDebug("Ping flipped endpoint {Endpoint} to disconnected; cleaning up.", endpoint.Name);
+                    await RemoveEPConnectionsAsync(endpoint, ct).ConfigureAwait(false);
+                    await RemoveCallbackConnectionAsync(endpoint, ct).ConfigureAwait(false);
+                }
             }
+        }
+        finally
+        {
+            _stats.PingSweep(sweepStopwatch.Elapsed);
         }
     }
 

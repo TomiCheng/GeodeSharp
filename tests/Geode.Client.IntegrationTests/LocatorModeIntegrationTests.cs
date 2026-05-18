@@ -11,9 +11,7 @@ namespace Geode.Client.IntegrationTests;
 /// that <see cref="ThinClientLocatorHelper.GetEndpointForNewFwdConnAsync"/>
 /// queries a real locator and that the periodic locator-list refresh
 /// loop fires against the fixture's locator. A full Put/Get round trip
-/// through a locator-discovered server is included; it succeeds only
-/// when the locator hands the client back a server address that's
-/// reachable from the test host — see the Put/Get test's remarks.
+/// through a locator-discovered server is included.
 /// </summary>
 [Collection(nameof(GeodeCollection))]
 public class LocatorModeIntegrationTests(GeodeFixture fx)
@@ -152,20 +150,12 @@ public class LocatorModeIntegrationTests(GeodeFixture fx)
 
     /// <summary>
     /// Full end-to-end Put/Get through a locator-discovered server.
+    /// The fixture starts each server with
+    /// <c>--hostname-for-clients=localhost</c> and pins host-side ports
+    /// 1:1 to the in-container ports, so the address the locator hands
+    /// back resolves on the test host.
     /// </summary>
-    /// <remarks>
-    /// Requires the locator to return a server address the test host
-    /// can actually reach. Testcontainers maps the server port to a
-    /// random host port, but the server registers its own
-    /// hostname-for-clients with the locator (default: the container's
-    /// internal address + the in-container port 40404). If the locator
-    /// echoes that internal address back, the client can't connect.
-    /// This test is therefore expected to fail until the fixture is
-    /// extended with <c>--hostname-for-clients=&lt;host&gt;</c> and a
-    /// fixed-port mapping for 40404. Kept here so the gap is visible
-    /// and the lift is tracked.
-    /// </remarks>
-    [Fact(Skip = "Fixture needs --hostname-for-clients + fixed-port mapping for locator NAT — see remarks.")]
+    [Fact]
     public async Task Pool_with_locator_supports_region_put_get_round_trip()
     {
         using var cts = new CancellationTokenSource(TestTimeout);

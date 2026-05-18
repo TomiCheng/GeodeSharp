@@ -251,7 +251,13 @@ internal sealed class ThinClientLocatorHelper(
         var writer = new BigEndianBinaryWriter(bufferWriter);
 
         writer.WriteInt32(GossipVersion);
-        writer.WriteInt32(ProtocolVersion.Current.Ordinal);
+        // Ordinal MUST be int16 — Java TcpServer.processOneConnection reads
+        // `input.readShort()` at TcpServer.java:413; an int32 here leaves
+        // the trailing 2 bytes mis-aligning the DSCode/DSFid envelope and
+        // the server rejects with
+        // `UnsupportedSerializationVersionException: ordinal 0 not supported`.
+        // Matches Java TcpClient.java:312 (`writeShort(ordinalVersion)`).
+        writer.WriteInt16(ProtocolVersion.Current.Ordinal);
         writer.WriteByte(DSCode.FixedIDByte);
         writer.WriteSByte((sbyte)dsfid);
         writeBody(writer);

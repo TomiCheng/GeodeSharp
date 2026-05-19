@@ -250,6 +250,16 @@ internal class ThinClientPoolDM(
     private int _connectionWaitsInProgress = 0;
 
     /// <summary>
+    /// In-flight pool ops — incremented at <see cref="SendSyncRequestCoreAsync"/>
+    /// entry, decremented in <c>finally</c>. Mirrors cppcache
+    /// <c>m_clientOps</c> tracked via <c>setCurClientOps(++m_clientOps)</c> /
+    /// <c>setCurClientOps(--m_clientOps)</c> around <c>sendSyncRequest</c>
+    /// (<c>ThinClientPoolDM.cpp:1272, 1519, 1538</c>). Surfaced via the
+    /// <c>ClientOpsInProgress</c> ObservableGauge.
+    /// </summary>
+    private int _clientOpsInProgress = 0;
+
+    /// <summary>
     /// Pool-scoped query service. Lazy-built on first
     /// <see cref="QueryService"/> access (primary-ctor field-init can't
     /// reference <c>this</c>). Mirrors cppcache
@@ -913,6 +923,7 @@ internal class ThinClientPoolDM(
         _stats.ClearServersReader();
         _stats.ClearConnectedServersReader();
         _stats.ClearConnectionWaitsInProgressReader();
+        _stats.ClearClientOpsInProgressReader();
 
         // 5d. TODO: PoolManager.RemovePool(name) — cppcache L838
         //     `cacheImpl->getPoolManager().removePool(m_poolName)`
@@ -946,6 +957,7 @@ internal class ThinClientPoolDM(
         _stats.SetServersReader(() => _endpoints.Count);
         _stats.SetConnectedServersReader(() => Volatile.Read(ref _connectedEndpoints));
         _stats.SetConnectionWaitsInProgressReader(() => Volatile.Read(ref _connectionWaitsInProgress));
+        _stats.SetClientOpsInProgressReader(() => Volatile.Read(ref _clientOpsInProgress));
         // _locatorHelper is built lazily in ScheduleUpdateLocatorLoop when
         // locators are configured; the reader closes over the field so the
         // gauge starts at 0 and flips to the helper's count once it appears.
@@ -1201,74 +1213,102 @@ internal class ThinClientPoolDM(
         }
         var effectiveCt = linkedCts.Token;
 
-        // Step A — retry frame state. cppcache:1294-1304.
-        // attemptFailover=false pins to a single attempt regardless of
-        // pool config (subscription / one-shot callers).
-        var retriesLeft = attemptFailover ? xmlPool.RetryAttempts + 1 : 1;
-        var retryAllEpsOnce = attemptFailover && xmlPool.RetryAttempts == -1;
-        var excludeServers = new HashSet<DnsEndPoint>();
-        var firstTry = true;
-        Exception? lastError = null;
-
-        // Step B — retry frame. cppcache:1294-1322.
-        while (retryAllEpsOnce || retriesLeft-- > 0)
+        // #15 in-progress + #16/#17 timing. cppcache bumps m_clientOps at
+        // entry (`:1272`) and decrements + records #16/#17/#18/#19 at every
+        // exit (`:1519, 1538`). Stopwatch only records on the success path;
+        // outer catch classifies non-success exits into #18 / #19 +
+        // re-throws. Caller-cancellation propagates without classification.
+        Interlocked.Increment(ref _clientOpsInProgress);
+        var stopwatch = Stopwatch.StartNew();
+        try
         {
-            // Step C — retry bit on resend. cppcache:1309.
-            if (!firstTry) request = request.UpdateHeaderForRetry();
+            // Step A — retry frame state. cppcache:1294-1304.
+            // attemptFailover=false pins to a single attempt regardless of
+            // pool config (subscription / one-shot callers).
+            var retriesLeft = attemptFailover ? xmlPool.RetryAttempts + 1 : 1;
+            var retryAllEpsOnce = attemptFailover && xmlPool.RetryAttempts == -1;
+            var excludeServers = new HashSet<DnsEndPoint>();
+            var firstTry = true;
+            Exception? lastError = null;
 
-            // Step D — query-family timeout doesn't retry. cppcache:1312-1322.
-            if (lastError is OperationCanceledException && IsQueryFamilyType(request.MessageType))
+            // Step B — retry frame. cppcache:1294-1322.
+            while (retryAllEpsOnce || retriesLeft-- > 0)
             {
-                throw lastError;
-            }
+                // Step C — retry bit on resend. cppcache:1309.
+                if (!firstTry) request = request.UpdateHeaderForRetry();
 
-            // Hoisted for Step F (catch quarantines the failed location).
-            DnsEndPoint? attemptedLocation = null;
-            try
-            {
-                // Step 1 — pick endpoint. cppcache: selectEndpoint(excludeServers).
-                attemptedLocation = await SelectEndpointAsync(excludeServers, effectiveCt).ConfigureAwait(false);
-
-                // Step 2 — get-or-create TcrEndpoint (cppcache inlines this in selectEndpoint).
-                var endpoint = await AddEPAsync(attemptedLocation, effectiveCt).ConfigureAwait(false);
-
-                // Step 3 — endpoint-pinned send.
-                // TODO Phase 1.5 — sticky / isBGThread put-back flag
-                // (cppcache:1427-1436: isBGThread || GET_ALL_70 ||
-                // GET_ALL_WITH_CALLBACK || EXECUTE_REGION_FUNCTION_SINGLE_HOP).
-                // Blocked on StickyManager landing.
-                var reply = chunkedResult is null
-                    ? await SendRequestToEndpointAsync(request, endpoint, effectiveCt).ConfigureAwait(false)
-                    : await SendRequestToEndpointAsync(request, chunkedResult, endpoint, effectiveCt).ConfigureAwait(false);
-
-                // TODO Phase 4 — PR single-hop metadata refresh
-                // (cppcache:1484-1508: reply.getMetaDataVersion() +
-                // request.forSingleHop() → EnqueueForMetadataRefresh).
-
-                return reply;
-            }
-            catch (Exception ex) when (IsRetryableTransportError(ex, ct))
-            {
-                // Step E — transport-error catch (first-cut taxonomy in
-                // IsRetryableTransportError; full GfErrType port deferred).
-                lastError = ex;
-                logger.LogDebug(
-                    ex,
-                    "ThinClientPoolDM::sendSyncRequest retry-eligible failure (type={MessageType} txId={TxId} endpoint={Endpoint}); attempts left {RetriesLeft}.",
-                    request.MessageType, request.TransactionId, attemptedLocation, retriesLeft);
-
-                // Step F — quarantine the failed endpoint. cppcache:1453.
-                if (attemptedLocation is not null)
+                // Step D — query-family timeout doesn't retry. cppcache:1312-1322.
+                if (lastError is OperationCanceledException && IsQueryFamilyType(request.MessageType))
                 {
-                    excludeServers.Add(attemptedLocation);
+                    throw lastError;
                 }
-                firstTry = false;
-            }
-        }
 
-        // Step G — retries exhausted (cppcache: GfErrType return).
-        throw lastError ?? new GeodeException(
-            $"Pool '{xmlPool.Name}': all retry attempts exhausted.");
+                // Hoisted for Step F (catch quarantines the failed location).
+                DnsEndPoint? attemptedLocation = null;
+                try
+                {
+                    // Step 1 — pick endpoint. cppcache: selectEndpoint(excludeServers).
+                    attemptedLocation = await SelectEndpointAsync(excludeServers, effectiveCt).ConfigureAwait(false);
+
+                    // Step 2 — get-or-create TcrEndpoint (cppcache inlines this in selectEndpoint).
+                    var endpoint = await AddEPAsync(attemptedLocation, effectiveCt).ConfigureAwait(false);
+
+                    // Step 3 — endpoint-pinned send.
+                    // TODO Phase 1.5 — sticky / isBGThread put-back flag
+                    // (cppcache:1427-1436: isBGThread || GET_ALL_70 ||
+                    // GET_ALL_WITH_CALLBACK || EXECUTE_REGION_FUNCTION_SINGLE_HOP).
+                    // Blocked on StickyManager landing.
+                    var reply = chunkedResult is null
+                        ? await SendRequestToEndpointAsync(request, endpoint, effectiveCt).ConfigureAwait(false)
+                        : await SendRequestToEndpointAsync(request, chunkedResult, endpoint, effectiveCt).ConfigureAwait(false);
+
+                    // TODO Phase 4 — PR single-hop metadata refresh
+                    // (cppcache:1484-1508: reply.getMetaDataVersion() +
+                    // request.forSingleHop() → EnqueueForMetadataRefresh).
+
+                    // #16 + #17 success record. cppcache:1521, 1541.
+                    _stats.ClientOp(stopwatch.Elapsed);
+                    return reply;
+                }
+                catch (Exception ex) when (IsRetryableTransportError(ex, ct))
+                {
+                    // Step E — transport-error catch (first-cut taxonomy in
+                    // IsRetryableTransportError; full GfErrType port deferred).
+                    lastError = ex;
+                    logger.LogDebug(
+                        ex,
+                        "ThinClientPoolDM::sendSyncRequest retry-eligible failure (type={MessageType} txId={TxId} endpoint={Endpoint}); attempts left {RetriesLeft}.",
+                        request.MessageType, request.TransactionId, attemptedLocation, retriesLeft);
+
+                    // Step F — quarantine the failed endpoint. cppcache:1453.
+                    if (attemptedLocation is not null)
+                    {
+                        excludeServers.Add(attemptedLocation);
+                    }
+                    firstTry = false;
+                }
+            }
+
+            // Step G — retries exhausted (cppcache: GfErrType return).
+            throw lastError ?? new GeodeException(
+                $"Pool '{xmlPool.Name}': all retry attempts exhausted.");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Caller-driven cancellation — not an op failure, no #18/#19.
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // #18 / #19 classify-on-exit. cppcache:1522-1525, 1542-1545.
+            if (IsClientOpTimeout(ex)) _stats.ClientOpTimeout();
+            else _stats.ClientOpFailure();
+            throw;
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _clientOpsInProgress);
+        }
     }
 
     /// <summary>
@@ -1296,6 +1336,18 @@ internal class ThinClientPoolDM(
         TimeoutException => true,
         _ => false,
     };
+
+    /// <summary>
+    /// True when <paramref name="ex"/> represents a pool-op timeout for
+    /// stat classification (cppcache <c>incTimeoutClientOps</c>, #19).
+    /// Caller-cancellation is filtered upstream by the outer
+    /// <c>catch (OperationCanceledException) when (ct.IsCancellationRequested)</c>,
+    /// so any <see cref="OperationCanceledException"/> reaching here was
+    /// driven by our linked CTS (ReadTimeout) or a query-family wire
+    /// timeout — both timeouts.
+    /// </summary>
+    private static bool IsClientOpTimeout(Exception ex) =>
+        ex is TimeoutException or OperationCanceledException;
 
     /// <summary>
     /// True for the query / bulk / function message types that cppcache

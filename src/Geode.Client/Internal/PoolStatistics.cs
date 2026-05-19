@@ -17,17 +17,18 @@ namespace Geode.Client.Internal;
 /// (<c>PoolStatistics.cpp:34-122</c>): gauge × 6, counter × 15,
 /// time/bytes × 6. Ported so far: <c>PoolConnects</c> / <c>PoolDisconnects</c>
 /// / <c>MinPoolSizeConnects</c> / <c>LoadConditioningConnects</c> /
-/// <c>LoadConditioningDisconnects</c> / <c>IdleDisconnects</c> Counters
-/// / <c>PoolConnections</c> / <c>Locators</c> / <c>Servers</c> /
-/// <c>ConnectionWaitsInProgress</c> gauges /
+/// <c>LoadConditioningDisconnects</c> / <c>IdleDisconnects</c> /
+/// <c>ClientOpFailures</c> / <c>ClientOpTimeouts</c> Counters /
+/// <c>PoolConnections</c> / <c>Locators</c> / <c>Servers</c> /
+/// <c>ConnectionWaitsInProgress</c> / <c>ClientOpsInProgress</c> gauges /
 /// <c>LocatorListRequestTime</c> / <c>ClientConnectionRequestTime</c> /
-/// <c>ConnectionWaitTime</c> Histograms (the last three each merge
-/// cppcache's request+response or counter+timer halves into one
-/// Histogram — <c>.Count</c> subsumes the integer counter). Non-cppcache
-/// additions: <c>ConnectedServers</c> gauge (surfaces cppcache's internal
-/// <c>connected_endpoints_</c> atomic); <c>PingSweepTime</c> /
-/// <c>EndpointPingTime</c> (our own ping-loop liveness signals —
-/// cppcache PoolStats has no ping counters).
+/// <c>ConnectionWaitTime</c> / <c>ClientOpTime</c> Histograms (the last
+/// four each merge cppcache's request+response or counter+timer halves
+/// into one Histogram — <c>.Count</c> subsumes the integer counter).
+/// Non-cppcache additions: <c>ConnectedServers</c> gauge (surfaces
+/// cppcache's internal <c>connected_endpoints_</c> atomic);
+/// <c>PingSweepTime</c> / <c>EndpointPingTime</c> (our own ping-loop
+/// liveness signals — cppcache PoolStats has no ping counters).
 /// </remarks>
 internal class PoolStatistics(string poolName)
 {
@@ -388,6 +389,96 @@ internal class PoolStatistics(string poolName)
     /// <summary>Record one <see cref="_connectionWaitTime"/> sample.</summary>
     public void ConnectionWait(TimeSpan elapsed) =>
         _connectionWaitTime.Record(elapsed.TotalSeconds, new KeyValuePair<string, object?>("poolName", poolName));
+
+    /// <summary>
+    /// Per-pool reader registry for the <see cref="_clientOpsInProgress"/>
+    /// pull-mode gauge. cppcache pushes via
+    /// <c>setCurClientOps(++m_clientOps)</c> /
+    /// <c>setCurClientOps(--m_clientOps)</c> around every
+    /// <c>sendSyncRequest</c> entry/exit
+    /// (<c>ThinClientPoolDM.cpp:1272, 1519, 1538</c>); pull-mode reads the
+    /// live counter on each listener tick.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, Func<int>> _clientOpsInProgressReaders = new();
+
+    /// <summary>
+    /// Current number of in-flight pool ops (entered
+    /// <see cref="ThinClientPoolDM.SendSyncRequestCoreAsync"/> but not yet
+    /// returned/thrown). Mirrors cppcache <c>clientOpsInProgress</c>
+    /// IntGauge (<c>PoolStatistics.cpp:86-88</c>).
+    /// </summary>
+    readonly static ObservableGauge<int> _clientOpsInProgress = _meter.CreateObservableGauge(
+        "ClientOpsInProgress",
+        observeValues: ObserveClientOpsInProgress,
+        unit: "clientOps",
+        description: "Current number of in-flight pool ops. Mirrors cppcache `clientOpsInProgress` IntGauge.");
+
+    private static IEnumerable<Measurement<int>> ObserveClientOpsInProgress()
+    {
+        foreach (var (name, reader) in _clientOpsInProgressReaders)
+        {
+            yield return new Measurement<int>(reader(), new KeyValuePair<string, object?>("poolName", name));
+        }
+    }
+
+    /// <summary>Register this pool's reader for the <c>ClientOpsInProgress</c> gauge.</summary>
+    public void SetClientOpsInProgressReader(Func<int> reader) =>
+        _clientOpsInProgressReaders[poolName] = reader;
+
+    /// <summary>Drop this pool's reader from the gauge registry.</summary>
+    public void ClearClientOpsInProgressReader() =>
+        _clientOpsInProgressReaders.TryRemove(poolName, out _);
+
+    /// <summary>
+    /// Elapsed time of one successful pool op
+    /// (<see cref="ThinClientPoolDM.SendSyncRequestCoreAsync"/> returning a
+    /// reply). Mirrors cppcache <c>clientOpTime</c> LongCounter (ns;
+    /// <c>PoolStatistics.cpp:92-95</c>), recorded at success sites
+    /// (<c>ThinClientPoolDM.cpp:1521, 1541</c>). <c>.Count</c> subsumes
+    /// cppcache <c>clientOps</c> IntCounter (#16; <c>:89-91</c>) the same
+    /// way <see cref="_connectionWaitTime"/> subsumes
+    /// <c>connectionWaits</c>; sum gives total successful-op time, mean
+    /// gives average op latency.
+    /// </summary>
+    readonly static Histogram<double> _clientOpTime = _meter.CreateHistogram<double>(
+        "ClientOpTime",
+        unit: "s",
+        description: "Elapsed time of one successful pool op. .Count subsumes cppcache `clientOps` IntCounter (#16).");
+
+    /// <summary>Record one <see cref="_clientOpTime"/> sample (success path).</summary>
+    public void ClientOp(TimeSpan elapsed) =>
+        _clientOpTime.Record(elapsed.TotalSeconds, new KeyValuePair<string, object?>("poolName", poolName));
+
+    /// <summary>
+    /// Total pool ops that failed for any reason other than timeout.
+    /// Mirrors cppcache <c>clientOpFailures</c> IntCounter
+    /// (<c>PoolStatistics.cpp:96-98</c>, bumped at
+    /// <c>ThinClientPoolDM.cpp:1389, 1525, 1545</c>).
+    /// </summary>
+    readonly static Counter<int> _clientOpFailures = _meter.CreateCounter<int>(
+        "ClientOpFailures",
+        unit: "clientOps",
+        description: "Total pool ops that failed for any reason other than timeout. Mirrors cppcache `clientOpFailures` IntCounter.");
+
+    /// <summary>Bump <see cref="_clientOpFailures"/>.</summary>
+    public void ClientOpFailure() =>
+        _clientOpFailures.Add(1, new KeyValuePair<string, object?>("poolName", poolName));
+
+    /// <summary>
+    /// Total pool ops that ended with a timeout (read-timeout, query
+    /// timeout, or per-attempt <c>OperationCanceledException</c> not
+    /// driven by the caller's ct). Mirrors cppcache <c>clientOpTimeouts</c>
+    /// IntCounter (<c>PoolStatistics.cpp:99-101</c>, bumped at
+    /// <c>ThinClientPoolDM.cpp:1523, 1543</c>).
+    /// </summary>
+    readonly static Counter<int> _clientOpTimeouts = _meter.CreateCounter<int>(
+        "ClientOpTimeouts",
+        unit: "clientOps",
+        description: "Total pool ops that ended with a timeout. Mirrors cppcache `clientOpTimeouts` IntCounter.");
+
+    /// <summary>Bump <see cref="_clientOpTimeouts"/>.</summary>
+    public void ClientOpTimeout() =>
+        _clientOpTimeouts.Add(1, new KeyValuePair<string, object?>("poolName", poolName));
 
     /// <summary>ActivitySource for traceable RPC spans.</summary>
     readonly static ActivitySource _activitySource = new("Geode.Client.Pool", AssemblyVersion);

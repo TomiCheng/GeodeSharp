@@ -180,20 +180,22 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
 
 #### To do
 
-- **`PoolStatistics` catalogue progression** — 14 of 27 fields wired
+- **`PoolStatistics` catalogue progression** — 19 of 27 fields wired
   (`locatorRequests` / `locatorResponses` collapsed into
   `ClientConnectionRequestTime`; `connectionWaits` /
   `connectionWaitTime` collapsed into `ConnectionWaitTime`;
+  `clientOps` / `clientOpTime` collapsed into `ClientOpTime`;
   `PoolConnections` / `Locators` / `Servers` /
-  `ConnectionWaitsInProgress` ObservableGauges;
-  `LoadConditioningConnects` / `LoadConditioningDisconnects` /
-  `IdleDisconnects` / `MinPoolSizeConnects` / `PoolConnects` /
-  `PoolDisconnects` Counters). `PoolDisconnects` exists but isn't
-  wired into every close site. The remaining 13 land per catalogue
-  order (`subscriptionServers` Phase 2+ HA; `clientOps*` on the
-  send-sync-request path; `receivedBytes` / `messagesBeingReceived`
-  wire I/O; `processedDelta*` Phase 2+ delta; `queryExecution*`
-  already has a path but the stat isn't wired). Non-catalogue gauge:
+  `ConnectionWaitsInProgress` / `ClientOpsInProgress`
+  ObservableGauges; `LoadConditioningConnects` /
+  `LoadConditioningDisconnects` / `IdleDisconnects` /
+  `MinPoolSizeConnects` / `PoolConnects` / `PoolDisconnects` /
+  `ClientOpFailures` / `ClientOpTimeouts` Counters).
+  `PoolDisconnects` exists but isn't wired into every close site.
+  The remaining 8 land per catalogue order (`subscriptionServers`
+  Phase 2+ HA; `receivedBytes` / `messagesBeingReceived` wire I/O;
+  `processedDelta*` Phase 2+ delta; `queryExecution*` already has a
+  path but the stat isn't wired). Non-catalogue gauge:
   `ConnectedServers` (surfaces cppcache's internal
   `connected_endpoints_` atomic — see Done entry).
 - **Auth-trio real throw sites** —
@@ -204,6 +206,31 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
   `AUTH_FAILED`.
 
 #### Done
+
+- **`clientOps*` quintet (catalogue #15 / #16+#17 collapsed / #18 / #19)** —
+  Wire-up of the four cppcache "pool op" stats around
+  `SendSyncRequestCoreAsync`. New `ThinClientPoolDM._clientOpsInProgress`
+  int (Interlocked) exposes catalogue #15 via the new
+  `ClientOpsInProgress` ObservableGauge — increment at method entry,
+  decrement in the outer `finally` so the gauge falls back even on
+  caller cancellation. `ClientOpTime` Histogram&lt;double&gt; seconds
+  collapses #16 + #17 the same way `ConnectionWaitTime` collapses
+  #13+#14: recorded on the success path (`return reply`) right before
+  return, `.Count` subsumes the success counter, `.Sum` subsumes the
+  cumulative time. Outer `try/catch` filters caller-cancellation
+  (`when (ct.IsCancellationRequested)`) — no #18/#19 record on a user
+  abort — and a second `catch (Exception ex)` classifies every other
+  non-success exit: `TimeoutException` or
+  `OperationCanceledException` reaching the outer catch came from our
+  linked CTS (ReadTimeout) or query-family wire timeout → #19
+  `ClientOpTimeouts`; everything else → #18 `ClientOpFailures`. Both
+  are simple `Counter<int>` instruments. New `IsClientOpTimeout`
+  helper sits next to the existing `IsRetryableTransportError` —
+  same first-cut-taxonomy spirit. cppcache parity:
+  `ThinClientPoolDM.cpp:1272, 1519-1545` (entry / success / timeout /
+  failure sites); the retry loop's per-attempt
+  `IsRetryableTransportError` catch is the inner story, the outer
+  try/catch we add is the "final outcome" story.
 
 - **`ConnectionWaitTime` Histogram (catalogue #13 + #14 collapsed)** —
   cppcache instruments the conn-queue wait with two separate fields:

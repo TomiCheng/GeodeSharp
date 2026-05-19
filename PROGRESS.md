@@ -180,7 +180,7 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
 
 #### To do
 
-- **`PoolStatistics` catalogue progression** — 19 of 27 fields wired
+- **`PoolStatistics` catalogue progression** — 20 of 27 fields wired
   (`locatorRequests` / `locatorResponses` collapsed into
   `ClientConnectionRequestTime`; `connectionWaits` /
   `connectionWaitTime` collapsed into `ConnectionWaitTime`;
@@ -190,14 +190,14 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
   ObservableGauges; `LoadConditioningConnects` /
   `LoadConditioningDisconnects` / `IdleDisconnects` /
   `MinPoolSizeConnects` / `PoolConnects` / `PoolDisconnects` /
-  `ClientOpFailures` / `ClientOpTimeouts` Counters).
-  `PoolDisconnects` exists but isn't wired into every close site.
-  The remaining 8 land per catalogue order (`subscriptionServers`
-  Phase 2+ HA; `receivedBytes` / `messagesBeingReceived` wire I/O;
-  `processedDelta*` Phase 2+ delta; `queryExecution*` already has a
-  path but the stat isn't wired). Non-catalogue gauge:
-  `ConnectedServers` (surfaces cppcache's internal
-  `connected_endpoints_` atomic — see Done entry).
+  `ClientOpFailures` / `ClientOpTimeouts` / `ReceivedBytes`
+  Counters). `PoolDisconnects` exists but isn't wired into every
+  close site. The remaining 7 land per catalogue order
+  (`subscriptionServers` Phase 2+ HA; `messagesBeingReceived` Phase 2+
+  notification channel; `processedDelta*` Phase 2+ delta;
+  `queryExecution*` already has a path but the stat isn't wired).
+  Non-catalogue gauge: `ConnectedServers` (surfaces cppcache's
+  internal `connected_endpoints_` atomic — see Done entry).
 - **Auth-trio real throw sites** —
   `AuthenticationFailedException` / `AuthenticationRequiredException` /
   `NotAuthorizedException` classes exist but nothing throws them
@@ -206,6 +206,35 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
   `AUTH_FAILED`.
 
 #### Done
+
+- **`ReceivedBytes` Counter (catalogue #20) + `TcrConnection.PoolDM` back-ref wired** —
+  cppcache `receivedBytes` LongCounter
+  (`PoolStatistics.cpp:102-104`), bumped at `TcrConnection.cpp:513` on
+  every socket recv. Recording happens once per full frame inside
+  `TcrConnection.ReceiveAsync` (after both header + body
+  `ReadExactlyAsync` complete) — sum identical to cppcache's
+  per-receive accumulation, frame total = `HeaderLength +
+  messageLength` regardless of how many syscalls. `Counter<long>` not
+  `<int>` because per-frame payload routinely exceeds 2 GB over a
+  long pool lifetime.
+
+  Routing is via the cppcache `poolDM_` mirror that already existed
+  as a placeholder field on `TcrConnection`. Promoted from the
+  unused-mirror `#pragma` block into a real `internal PoolDM
+  { get; set; }` property (matching the `Endpoint` property style).
+  Both `ThinClientPoolDM.CreatePoolConnectionAsync` and
+  `CreatePoolConnectionToAEndPointAsync` now set `conn.PoolDM = this`
+  right after `endpoint.CreateNewConnectionAsync` returns. The
+  recording delegates through `ThinClientPoolDM.RecordReceivedBytes`
+  so `PoolStatistics _stats` stays encapsulated.
+
+  Deliberate deviation from cppcache: `poolDM_` is wired
+  post-handshake, so the few-hundred bytes of handshake reads aren't
+  counted (cppcache wires `poolDM_` in the TcrConnection ctor and
+  catches them). Trading rounding-error fidelity for not having to
+  thread the DM through `TcrEndpoint.CreateNewConnectionAsync`.
+  Caveat called out in both the `PoolDM` xmldoc and the
+  `ReceivedBytes` xmldoc.
 
 - **`clientOps*` quintet (catalogue #15 / #16+#17 collapsed / #18 / #19)** —
   Wire-up of the four cppcache "pool op" stats around

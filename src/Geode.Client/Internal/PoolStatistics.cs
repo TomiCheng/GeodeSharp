@@ -18,17 +18,18 @@ namespace Geode.Client.Internal;
 /// time/bytes × 6. Ported so far: <c>PoolConnects</c> / <c>PoolDisconnects</c>
 /// / <c>MinPoolSizeConnects</c> / <c>LoadConditioningConnects</c> /
 /// <c>LoadConditioningDisconnects</c> / <c>IdleDisconnects</c> /
-/// <c>ClientOpFailures</c> / <c>ClientOpTimeouts</c> Counters /
-/// <c>PoolConnections</c> / <c>Locators</c> / <c>Servers</c> /
-/// <c>ConnectionWaitsInProgress</c> / <c>ClientOpsInProgress</c> gauges /
-/// <c>LocatorListRequestTime</c> / <c>ClientConnectionRequestTime</c> /
-/// <c>ConnectionWaitTime</c> / <c>ClientOpTime</c> Histograms (the last
-/// four each merge cppcache's request+response or counter+timer halves
-/// into one Histogram — <c>.Count</c> subsumes the integer counter).
-/// Non-cppcache additions: <c>ConnectedServers</c> gauge (surfaces
-/// cppcache's internal <c>connected_endpoints_</c> atomic);
-/// <c>PingSweepTime</c> / <c>EndpointPingTime</c> (our own ping-loop
-/// liveness signals — cppcache PoolStats has no ping counters).
+/// <c>ClientOpFailures</c> / <c>ClientOpTimeouts</c> /
+/// <c>ReceivedBytes</c> Counters / <c>PoolConnections</c> /
+/// <c>Locators</c> / <c>Servers</c> / <c>ConnectionWaitsInProgress</c> /
+/// <c>ClientOpsInProgress</c> gauges / <c>LocatorListRequestTime</c> /
+/// <c>ClientConnectionRequestTime</c> / <c>ConnectionWaitTime</c> /
+/// <c>ClientOpTime</c> Histograms (the last four each merge cppcache's
+/// request+response or counter+timer halves into one Histogram —
+/// <c>.Count</c> subsumes the integer counter). Non-cppcache additions:
+/// <c>ConnectedServers</c> gauge (surfaces cppcache's internal
+/// <c>connected_endpoints_</c> atomic); <c>PingSweepTime</c> /
+/// <c>EndpointPingTime</c> (our own ping-loop liveness signals —
+/// cppcache PoolStats has no ping counters).
 /// </remarks>
 internal class PoolStatistics(string poolName)
 {
@@ -479,6 +480,28 @@ internal class PoolStatistics(string poolName)
     /// <summary>Bump <see cref="_clientOpTimeouts"/>.</summary>
     public void ClientOpTimeout() =>
         _clientOpTimeouts.Add(1, new KeyValuePair<string, object?>("poolName", poolName));
+
+    /// <summary>
+    /// Total bytes received from the server on op-channel conns. Mirrors
+    /// cppcache <c>receivedBytes</c> LongCounter
+    /// (<c>PoolStatistics.cpp:102-104</c>, bumped at
+    /// <c>TcrConnection.cpp:513</c> per socket receive). Our recording
+    /// fires once per full frame inside
+    /// <see cref="Protocol.TcrConnection.ReceiveAsync"/>; sum is
+    /// identical to cppcache's per-receive accumulation (frame total =
+    /// header + body, no matter how many syscalls). Handshake bytes are
+    /// not counted — the conn's <c>PoolDM</c> back-ref is wired
+    /// post-handshake (see <see cref="Protocol.TcrConnection.PoolDM"/>
+    /// xmldoc for the deficit caveat).
+    /// </summary>
+    readonly static Counter<long> _receivedBytes = _meter.CreateCounter<long>(
+        "ReceivedBytes",
+        unit: "bytes",
+        description: "Total bytes received from the server on op-channel conns. Mirrors cppcache `receivedBytes` LongCounter.");
+
+    /// <summary>Bump <see cref="_receivedBytes"/> by <paramref name="bytes"/>.</summary>
+    public void ReceivedBytes(long bytes) =>
+        _receivedBytes.Add(bytes, new KeyValuePair<string, object?>("poolName", poolName));
 
     /// <summary>ActivitySource for traceable RPC spans.</summary>
     readonly static ActivitySource _activitySource = new("Geode.Client.Pool", AssemblyVersion);

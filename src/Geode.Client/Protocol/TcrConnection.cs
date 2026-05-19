@@ -101,6 +101,27 @@ internal sealed class TcrConnection(
     /// </summary>
     internal bool OwnsEndpointSlot { get; set; }
 
+    /// <summary>
+    /// The <see cref="ThinClientPoolDM"/> that opened this conn. Mirrors
+    /// cppcache <c>TcrConnection::poolDM_</c>. Each conn belongs to
+    /// exactly one pool (endpoints are TCCM-shared across pools, conns
+    /// aren't). Set by the pool's create sites
+    /// (<see cref="ThinClientPoolDM.CreatePoolConnectionAsync"/> /
+    /// <see cref="ThinClientPoolDM.CreatePoolConnectionToAEndPointAsync"/>)
+    /// right after <see cref="TcrEndpoint.CreateNewConnectionAsync"/>
+    /// returns. Consumed by <see cref="ReceiveAsync"/> to route wire-byte
+    /// stats back into the owning pool's <c>PoolStatistics</c>.
+    /// </summary>
+    /// <remarks>
+    /// Wired late (post-handshake) rather than via ctor, so handshake
+    /// read bytes (~few hundred per conn) are <b>not</b> counted in
+    /// <c>ReceivedBytes</c>. cppcache wires <c>poolDM_</c> in the conn
+    /// ctor so it catches those bytes; we accept the rounding-error
+    /// deficit to avoid threading the DM through
+    /// <see cref="TcrEndpoint.CreateNewConnectionAsync"/>.
+    /// </remarks>
+    internal ThinClientPoolDM? PoolDM { get; set; }
+
 #pragma warning disable CS0169, CS0414, CS0649 // placeholder mirror fields wired up phase by phase
     private long _connectionId;                                 // connectionId
     private TcrConnectionManager? _connectionManager;           // connectionManager_
@@ -110,7 +131,6 @@ internal sealed class TcrConnection(
 
     private int _isBeingUsed;                                   // volatile bool isBeingUsed_ (Interlocked 0/1)
     private uint _isUsed;                                       // atomic<uint32_t> isUsed_
-    private ThinClientPoolDM? _poolDM;                          // poolDM_
 
 #pragma warning restore CS0169, CS0414, CS0649
 
@@ -603,6 +623,12 @@ internal sealed class TcrConnection(
                     frame.AsMemory(TcrMessage.HeaderLength, messageLength), cancellationToken)
                 .ConfigureAwait(false);
         }
+
+        // Catalogue #20 — receivedBytes. cppcache instruments at every
+        // socket receive (TcrConnection.cpp:513); ours fires once per
+        // full frame, sum identical. Null when conn is opened pre-pool
+        // (handshake reads — see PoolDM xmldoc caveat).
+        PoolDM?.RecordReceivedBytes(frame.Length);
 
         return frame;
     }

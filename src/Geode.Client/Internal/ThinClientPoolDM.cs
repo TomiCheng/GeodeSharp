@@ -432,6 +432,12 @@ internal class ThinClientPoolDM(
                     }
 
                     endpoint.SetConnected(true);
+                    // Wire poolDM back-ref so TcrConnection.ReceiveAsync can route
+                    // #20 ReceivedBytes back to this pool's stats. cppcache sets
+                    // poolDM_ in the conn ctor; we set post-handshake so handshake
+                    // bytes are unmeasured (small deficit, see TcrConnection.PoolDM
+                    // xmldoc).
+                    conn.PoolDM = this;
                     var newSize = Interlocked.Increment(ref _poolSize);
                     _stats.PoolConnect();
                     // cppcache :1707-1711 — pool growing past Min means this conn is
@@ -537,6 +543,10 @@ internal class ThinClientPoolDM(
 
             // cppcache L1704-1712: mark endpoint healthy + grow counter + stats.
             endpoint.SetConnected(true);
+            // Wire poolDM back-ref so TcrConnection.ReceiveAsync can route
+            // #20 ReceivedBytes back to this pool's stats. cppcache sets
+            // poolDM_ in the conn ctor; see TcrConnection.PoolDM xmldoc.
+            conn.PoolDM = this;
             var newSize = Interlocked.Increment(ref _poolSize);
             _stats.PoolConnect();
             if (newSize > xmlPool.MinConnections)
@@ -1348,6 +1358,16 @@ internal class ThinClientPoolDM(
     /// </summary>
     private static bool IsClientOpTimeout(Exception ex) =>
         ex is TimeoutException or OperationCanceledException;
+
+    /// <summary>
+    /// Record <paramref name="bytes"/> on the <c>ReceivedBytes</c>
+    /// Counter (catalogue #20). Called from
+    /// <see cref="TcrConnection.ReceiveAsync"/> via the conn's
+    /// <see cref="TcrConnection.PoolDM"/> back-ref. Wrapper so
+    /// <c>_stats</c> stays encapsulated.
+    /// </summary>
+    internal void RecordReceivedBytes(long bytes) =>
+        _stats.ReceivedBytes(bytes);
 
     /// <summary>
     /// True for the query / bulk / function message types that cppcache

@@ -27,8 +27,17 @@ namespace Geode.Client.Internal;
 /// Subscription channel + redundancy + multi-user auth + HA queue
 /// state are all Phase 2+.
 /// </para>
+/// <para>
+/// Inheritance: base for the cppcache <c>TcrEndpoint</c> /
+/// <c>TcrPoolEndPoint</c> split. Pool-mode endpoints should be
+/// instantiated as <see cref="TcrPoolEndPoint"/>; this base is reserved
+/// for non-pool / legacy paths (deferred per memory
+/// <c>pool-only-no-non-pool.md</c>). Migration of pool-only state
+/// (per-pool DM ref, <c>getPoolHADM</c>-style accessor) to the
+/// subclass is in progress — see PORTING.md.
+/// </para>
 /// </remarks>
-internal sealed class TcrEndpoint(
+internal class TcrEndpoint(
     IServiceProvider serviceProvider,
     ILogger<TcrEndpoint> logger,
     CacheScopeContext cacheScopeContext,

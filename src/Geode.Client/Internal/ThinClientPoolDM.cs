@@ -60,6 +60,48 @@ internal class ThinClientPoolDM(
         : null;
 
     /// <summary>
+    /// Reserve one <see cref="_capSlots"/> slot, waiting up to
+    /// <see cref="CachePoolOptions.FreeConnectionTimeout"/>. No-op when
+    /// <see cref="_capSlots"/> is <c>null</c> (unbounded pool). Throws
+    /// <see cref="AllConnectionsInUseException"/> on timeout. The wait
+    /// is bracketed by <see cref="_connectionWaitsInProgress"/>
+    /// inc/dec — mirrors cppcache <c>getConnectionFromQueue</c>
+    /// (<c>ThinClientPoolDM.cpp:1819, 1835</c>) so the
+    /// <c>ConnectionWaitsInProgress</c> gauge reflects threads queued
+    /// on the pool-wide cap (inc/dec safe across cancellation and
+    /// throw via <c>try/finally</c>).
+    /// </summary>
+    private async Task AcquirePoolCapSlotAsync(CancellationToken ct)
+    {
+        if (_capSlots is null) return;
+
+        // cppcache (:1819-1820) bumps the gauge (#12) AND the cumulative
+        // counter (#13) at the entry point, then records elapsed time
+        // (#14) after `getUntil` (:1822-1833). We collapse #13 + #14 into
+        // a single Histogram: .Count subsumes the wait-attempt counter,
+        // sum subsumes the cumulative time. Recording sits in `finally`
+        // so timeouts / cancellations still tick (matches the
+        // LocatorListRequestTime pattern).
+        Interlocked.Increment(ref _connectionWaitsInProgress);
+        var stopwatch = Stopwatch.StartNew();
+        bool acquired;
+        try
+        {
+            acquired = await _capSlots.WaitAsync(xmlPool.FreeConnectionTimeout, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _connectionWaitsInProgress);
+            _stats.ConnectionWait(stopwatch.Elapsed);
+        }
+        if (!acquired)
+        {
+            throw new AllConnectionsInUseException(
+                $"Pool '{xmlPool.Name}': MaxConnections={xmlPool.MaxConnections} reached.");
+        }
+    }
+
+    /// <summary>
     /// Whether to clear cached PDX type IDs when the pool fully disconnects.
     /// Mirrors cppcache <c>clear_pdx_registry_</c>; sourced from
     /// <see cref="PdxOptions.ClearTypeIdsOnDisconnect"/>. Reader
@@ -195,6 +237,19 @@ internal class ThinClientPoolDM(
     private int _connectedEndpoints = 0;
 
     /// <summary>
+    /// Threads currently inside the pool-wide <see cref="_capSlots"/> wait
+    /// in <see cref="CreatePoolConnectionAsync"/> /
+    /// <see cref="CreatePoolConnectionToAEndPointAsync"/>. Mirrors cppcache
+    /// <c>connectionWaitsInProgress</c> (<c>PoolStatistics.cpp:74-76</c>,
+    /// bumped in <c>getConnectionFromQueue</c> at <c>:1819</c>). Surfaced via
+    /// the <c>ConnectionWaitsInProgress</c> ObservableGauge. cppcache
+    /// instruments only the pool-wide cap; per-EP cap waits
+    /// (<see cref="TcrEndpoint.AcquireSlotAsync"/>) are our addition and
+    /// not counted here.
+    /// </summary>
+    private int _connectionWaitsInProgress = 0;
+
+    /// <summary>
     /// Pool-scoped query service. Lazy-built on first
     /// <see cref="QueryService"/> access (primary-ctor field-init can't
     /// reference <c>this</c>). Mirrors cppcache
@@ -274,16 +329,11 @@ internal class ThinClientPoolDM(
     {
         // Failover retry loop mirroring cppcache createPoolConnection
         // (ThinClientPoolDM.cpp:1725-1802). MaxConnections cap enforced
-        // via _capSlots semaphore: WaitAsync(FreeConnectionTimeout) reserves
-        // a slot atomically, waiting up to that timeout for a returning conn
-        // before throwing. finally releases unless ownership transferred to
-        // a freshly-opened conn (success path clears releaseSlot).
-        if (_capSlots is not null &&
-            !await _capSlots.WaitAsync(xmlPool.FreeConnectionTimeout, ct).ConfigureAwait(false))
-        {
-            throw new AllConnectionsInUseException(
-                $"Pool '{xmlPool.Name}': MaxConnections={xmlPool.MaxConnections} reached.");
-        }
+        // via _capSlots: AcquirePoolCapSlotAsync reserves a slot atomically,
+        // waiting up to FreeConnectionTimeout for a returning conn before
+        // throwing. finally releases unless ownership transferred to a
+        // freshly-opened conn (success path clears releaseSlot).
+        await AcquirePoolCapSlotAsync(ct).ConfigureAwait(false);
 
         var releaseSlot = true;
         try
@@ -429,16 +479,11 @@ internal class ThinClientPoolDM(
         TcrEndpoint endpoint, CancellationToken ct)
     {
         // Pool-wide MaxConnections cap (cppcache ThinClientPoolDM.cpp:1672-1687) —
-        // same SemaphoreSlim pattern as CreatePoolConnectionAsync. cppcache
-        // signals "cap reached" via a maxConnLimit out-flag so the caller
-        // can fall back to a temporary non-pool conn; we throw
+        // same AcquirePoolCapSlotAsync helper as CreatePoolConnectionAsync.
+        // cppcache signals "cap reached" via a maxConnLimit out-flag so the
+        // caller can fall back to a temporary non-pool conn; we throw
         // AllConnectionsInUseException and let the caller catch it.
-        if (_capSlots is not null &&
-            !await _capSlots.WaitAsync(xmlPool.FreeConnectionTimeout, ct).ConfigureAwait(false))
-        {
-            throw new AllConnectionsInUseException(
-                $"Pool '{xmlPool.Name}': MaxConnections={xmlPool.MaxConnections} reached.");
-        }
+        await AcquirePoolCapSlotAsync(ct).ConfigureAwait(false);
 
         var releasePoolSlot = true;
         var releaseEndpointSlot = false;
@@ -867,6 +912,7 @@ internal class ThinClientPoolDM(
         _stats.ClearLocatorsReader();
         _stats.ClearServersReader();
         _stats.ClearConnectedServersReader();
+        _stats.ClearConnectionWaitsInProgressReader();
 
         // 5d. TODO: PoolManager.RemovePool(name) — cppcache L838
         //     `cacheImpl->getPoolManager().removePool(m_poolName)`
@@ -899,6 +945,7 @@ internal class ThinClientPoolDM(
         _stats.SetPoolConnectionsReader(() => Volatile.Read(ref _poolSize));
         _stats.SetServersReader(() => _endpoints.Count);
         _stats.SetConnectedServersReader(() => Volatile.Read(ref _connectedEndpoints));
+        _stats.SetConnectionWaitsInProgressReader(() => Volatile.Read(ref _connectionWaitsInProgress));
         // _locatorHelper is built lazily in ScheduleUpdateLocatorLoop when
         // locators are configured; the reader closes over the field so the
         // gauge starts at 0 and flips to the helper's count once it appears.

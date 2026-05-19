@@ -145,8 +145,7 @@ internal sealed class TcrEndpoint(
         // cppcache LOGFINE entry log (TcrEndpoint.cpp:188-191) — simplified:
         // we don't have m_needToConnectInLock / appThreadRequest, so just
         // log host:port and let TcrConnection log its own handshake steps.
-        logger.LogDebug(
-            "TcrEndpoint.CreateNewConnection: opening request/response connection to {Host}:{Port}",
+        logger.LogDebug("TcrEndpoint.CreateNewConnection: opening request/response connection to {Host}:{Port}",
             endpoint.Host, endpoint.Port);
 
         // Pull TcrConnection through DI so its own deps (ILogger<TcrConnection>,

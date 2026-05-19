@@ -180,21 +180,22 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
 
 #### To do
 
-- **Server endpoint health monitoring.**
-- **`PoolStatistics` catalogue progression** — 11 of 27 fields wired
+- **`PoolStatistics` catalogue progression** — 14 of 27 fields wired
   (`locatorRequests` / `locatorResponses` collapsed into
-  `ClientConnectionRequestTime`; `PoolConnections` / `Locators` /
-  `Servers` ObservableGauges; `LoadConditioningConnects` /
-  `LoadConditioningDisconnects` / `IdleDisconnects` /
-  `MinPoolSizeConnects` / `PoolConnects` / `PoolDisconnects` Counters).
-  `PoolDisconnects` exists but isn't wired into every close site. The
-  remaining 16 land per catalogue order (`subscriptionServers` Phase 2+
-  HA; `connectionWait*` in the conn queue; `clientOps*` on the
+  `ClientConnectionRequestTime`; `connectionWaits` /
+  `connectionWaitTime` collapsed into `ConnectionWaitTime`;
+  `PoolConnections` / `Locators` / `Servers` /
+  `ConnectionWaitsInProgress` ObservableGauges;
+  `LoadConditioningConnects` / `LoadConditioningDisconnects` /
+  `IdleDisconnects` / `MinPoolSizeConnects` / `PoolConnects` /
+  `PoolDisconnects` Counters). `PoolDisconnects` exists but isn't
+  wired into every close site. The remaining 13 land per catalogue
+  order (`subscriptionServers` Phase 2+ HA; `clientOps*` on the
   send-sync-request path; `receivedBytes` / `messagesBeingReceived`
-  wire I/O; `processedDelta*` Phase 2+ delta; `queryExecution*` already
-  has a path but the stat isn't wired). Non-catalogue gauge:
-  `ConnectedServers` (surfaces cppcache's internal `connected_endpoints_`
-  atomic — see Done entry).
+  wire I/O; `processedDelta*` Phase 2+ delta; `queryExecution*`
+  already has a path but the stat isn't wired). Non-catalogue gauge:
+  `ConnectedServers` (surfaces cppcache's internal
+  `connected_endpoints_` atomic — see Done entry).
 - **Auth-trio real throw sites** —
   `AuthenticationFailedException` / `AuthenticationRequiredException` /
   `NotAuthorizedException` classes exist but nothing throws them
@@ -204,7 +205,46 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
 
 #### Done
 
-- **Endpoint health monitoring (`SetConnected` broadcast +
+- **`ConnectionWaitTime` Histogram (catalogue #13 + #14 collapsed)** —
+  cppcache instruments the conn-queue wait with two separate fields:
+  `connectionWaits` IntCounter (#13, `PoolStatistics.cpp:77-82`) and
+  `connectionWaitTime` LongCounter ns (#14, `:82-85`). cppcache bumps
+  #13 at the entry point of `getConnectionFromQueue` (`:1820`) and
+  accumulates #14 around `getUntil` (`:1822-1833`). We collapse both
+  into one `ConnectionWaitTime` Histogram&lt;double&gt; (seconds) —
+  `.Count` subsumes #13 (wait attempts), `.Sum` subsumes #14 (total
+  time), mean gives average wait latency. Recording happens in
+  `finally` so timeouts / cancellations still tick. Same collapse
+  pattern as `LocatorListRequestTime` (which subsumes cppcache
+  `locatorRequests` + `locatorResponses`).
+
+  Side cleanup: the two identical `_capSlots.WaitAsync` blocks in
+  `CreatePoolConnectionAsync` and `CreatePoolConnectionToAEndPointAsync`
+  pulled into a new `AcquirePoolCapSlotAsync(ct)` helper — single
+  source for bumping the gauge + recording the Histogram, the
+  `try/finally` cancellation-safety, and the
+  `AllConnectionsInUseException` throw. Both call sites collapse to
+  one `await AcquirePoolCapSlotAsync(ct)` line.
+
+- **`ConnectionWaitsInProgress` ObservableGauge (catalogue #12)** —
+  cppcache `connectionWaitsInProgress` IntGauge
+  (`PoolStatistics.cpp:74-76`), instrumentation site
+  `ThinClientPoolDM::getConnectionFromQueue` at
+  `ThinClientPoolDM.cpp:1819, 1835` (`incCurWaitingConnections` /
+  `decCurWaitingConnections` around `getUntil`). Ported as a new
+  `ThinClientPoolDM._connectionWaitsInProgress` int (atomic via
+  `Interlocked`), bumped/decremented via try/finally around
+  `_capSlots.WaitAsync` in `CreatePoolConnectionAsync` /
+  `CreatePoolConnectionToAEndPointAsync` — both wait sites covered
+  even on cancellation/throw. Pull-mode `ObservableGauge<int>` with
+  the same per-pool reader-registry pattern as the existing gauges;
+  `InitAsync` registers `() => Volatile.Read(ref
+  _connectionWaitsInProgress)`, `DestroyAsync` clears. Per-EP cap
+  waits (`TcrEndpoint.AcquireSlotAsync`) are deliberately NOT counted
+  here — cppcache only has a pool-wide cap, so this stat preserves
+  parity. xmldoc on the field flags the divergence.
+
+- **Endpoint health monitoring complete (`SetConnected` broadcast +
   `ConnectedServers` gauge)** — `TcrEndpoint.SetConnected(bool)` now
   uses `Interlocked.CompareExchange` to detect real 0&#x2194;1
   transitions (matches cppcache's `compare_exchange_strong`,
@@ -227,6 +267,16 @@ regions. A DBA pre-creates regions with `gfsh` (`gfsh create region
   `ConnectedServers - Servers` is now the "how many endpoints have
   flipped offline" signal. xmldoc on `_distMgrs` / `_distMgrsLock`
   expanded to document the broadcast role.
+  **Verified end-to-end** that both `SetConnected(true)` call sites
+  were already in place: `CreatePoolConnectionAsync` L374 (cppcache
+  `:1793`) and `CreatePoolConnectionToAEndPointAsync` L484 (cppcache
+  `:1705`) — both right after `CreateNewConnectionAsync` succeeds,
+  before `_poolSize++`. `AddEPAsync` →
+  `TcrConnectionManager.AddRefToTcrEndpointAsync` registers the pool
+  DM into `_distMgrs` before `SetConnected(true)` fires, so the
+  broadcast finds the registered DM and the gauge moves end-to-end.
+  `SetConnected(false)` site already in `PingAsync` (L265, L279).
+  Phase 1.5 "Server endpoint health monitoring" To-do item closed.
 
 - **`Locators` + `Servers` ObservableGauges (catalogue gauges #0 + #1)** —
   Pull-mode, mirroring the existing `PoolConnections` pattern:

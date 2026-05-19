@@ -17,14 +17,17 @@ namespace Geode.Client.Internal;
 /// (<c>PoolStatistics.cpp:34-122</c>): gauge × 6, counter × 15,
 /// time/bytes × 6. Ported so far: <c>PoolConnects</c> / <c>PoolDisconnects</c>
 /// / <c>MinPoolSizeConnects</c> / <c>LoadConditioningConnects</c> /
-/// <c>LoadConditioningDisconnects</c> / <c>IdleDisconnects</c> /
-/// <c>PoolConnections</c> / <c>Locators</c> / <c>Servers</c> gauges /
-/// <c>LocatorListRequestTime</c> / <c>ClientConnectionRequestTime</c>
-/// (the last two merge cppcache's request+response halves into one
-/// Histogram each). Non-cppcache additions: <c>ConnectedServers</c>
-/// gauge (surfaces cppcache's internal <c>connected_endpoints_</c> atomic);
-/// <c>PingSweepTime</c> / <c>EndpointPingTime</c> (our own ping-loop
-/// liveness signals — cppcache PoolStats has no ping counters).
+/// <c>LoadConditioningDisconnects</c> / <c>IdleDisconnects</c> Counters
+/// / <c>PoolConnections</c> / <c>Locators</c> / <c>Servers</c> /
+/// <c>ConnectionWaitsInProgress</c> gauges /
+/// <c>LocatorListRequestTime</c> / <c>ClientConnectionRequestTime</c> /
+/// <c>ConnectionWaitTime</c> Histograms (the last three each merge
+/// cppcache's request+response or counter+timer halves into one
+/// Histogram — <c>.Count</c> subsumes the integer counter). Non-cppcache
+/// additions: <c>ConnectedServers</c> gauge (surfaces cppcache's internal
+/// <c>connected_endpoints_</c> atomic); <c>PingSweepTime</c> /
+/// <c>EndpointPingTime</c> (our own ping-loop liveness signals —
+/// cppcache PoolStats has no ping counters).
 /// </remarks>
 internal class PoolStatistics(string poolName)
 {
@@ -326,6 +329,65 @@ internal class PoolStatistics(string poolName)
     /// <summary>Drop this pool's reader from the gauge registry.</summary>
     public void ClearConnectedServersReader() =>
         _connectedServersReaders.TryRemove(poolName, out _);
+
+    /// <summary>
+    /// Per-pool reader registry for the <see cref="_connectionWaitsInProgress"/>
+    /// pull-mode gauge. cppcache bumps via <c>incCurWaitingConnections</c> /
+    /// <c>decCurWaitingConnections</c> around <c>getConnectionFromQueue</c>
+    /// (<c>ThinClientPoolDM.cpp:1819, 1835</c>); pull-mode reads the live
+    /// counter on each listener tick.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, Func<int>> _connectionWaitsInProgressReaders = new();
+
+    /// <summary>
+    /// Current number of threads waiting on the pool-wide <c>MaxConnections</c>
+    /// cap. Mirrors cppcache <c>connectionWaitsInProgress</c> IntGauge
+    /// (<c>PoolStatistics.cpp:74-76</c>).
+    /// </summary>
+    readonly static ObservableGauge<int> _connectionWaitsInProgress = _meter.CreateObservableGauge(
+        "ConnectionWaitsInProgress",
+        observeValues: ObserveConnectionWaitsInProgress,
+        unit: "threads",
+        description: "Current number of threads waiting on the pool-wide MaxConnections cap. Mirrors cppcache `connectionWaitsInProgress` IntGauge.");
+
+    private static IEnumerable<Measurement<int>> ObserveConnectionWaitsInProgress()
+    {
+        foreach (var (name, reader) in _connectionWaitsInProgressReaders)
+        {
+            yield return new Measurement<int>(reader(), new KeyValuePair<string, object?>("poolName", name));
+        }
+    }
+
+    /// <summary>Register this pool's reader for the <c>ConnectionWaitsInProgress</c> gauge.</summary>
+    public void SetConnectionWaitsInProgressReader(Func<int> reader) =>
+        _connectionWaitsInProgressReaders[poolName] = reader;
+
+    /// <summary>Drop this pool's reader from the gauge registry.</summary>
+    public void ClearConnectionWaitsInProgressReader() =>
+        _connectionWaitsInProgressReaders.TryRemove(poolName, out _);
+
+    /// <summary>
+    /// Elapsed time of one pool-wide <c>MaxConnections</c> cap wait —
+    /// every <c>AcquirePoolCapSlotAsync</c> invocation with a cap
+    /// configured, recorded in <c>finally</c> so timeouts / cancellations
+    /// still tick. Mirrors cppcache <c>connectionWaitTime</c> LongCounter
+    /// (ns; <c>PoolStatistics.cpp:82-85</c>), timing brackets at
+    /// <c>ThinClientPoolDM.cpp:1822-1833</c>. <c>.Count</c> subsumes
+    /// cppcache <c>connectionWaits</c> IntCounter (#13) the same way
+    /// <see cref="_locatorListRequestTime"/> subsumes
+    /// <c>locatorRequests</c> / <c>locatorResponses</c>; sum gives total
+    /// time, mean gives average wait latency. cppcache stores ns; we
+    /// follow the Histogram convention with <c>&lt;double&gt;</c> seconds
+    /// (Prometheus / Grafana <c>_seconds</c> suffix).
+    /// </summary>
+    readonly static Histogram<double> _connectionWaitTime = _meter.CreateHistogram<double>(
+        "ConnectionWaitTime",
+        unit: "s",
+        description: "Elapsed time of one pool-wide MaxConnections cap wait. .Count subsumes cppcache `connectionWaits` IntCounter (#13).");
+
+    /// <summary>Record one <see cref="_connectionWaitTime"/> sample.</summary>
+    public void ConnectionWait(TimeSpan elapsed) =>
+        _connectionWaitTime.Record(elapsed.TotalSeconds, new KeyValuePair<string, object?>("poolName", poolName));
 
     /// <summary>ActivitySource for traceable RPC spans.</summary>
     readonly static ActivitySource _activitySource = new("Geode.Client.Pool", AssemblyVersion);

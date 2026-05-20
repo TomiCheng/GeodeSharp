@@ -250,6 +250,24 @@ public class GeodeCacheFactoryTests
         Assert.False(second.IsClosed);
     }
 
+    // ── PDX flag plumbing — Options → Cache property ────────────
+
+    [Fact]
+    public async Task Create_WithPdxAction_PdxFlagsReflectAction()
+    {
+        await using var sp = BuildSp();
+        var f = sp.GetRequiredService<IGeodeCacheFactory>();
+
+        var cache = f.Create(action: (_, o) =>
+        {
+            o.Cache!.Pdx.IgnoreUnreadFields = true;
+            o.Cache.Pdx.ReadSerialized = true;
+        });
+
+        Assert.True(cache.PdxIgnoreUnreadFields);
+        Assert.True(cache.PdxReadSerialized);
+    }
+
     // ── disposed-factory contract ───────────────────────────────
 
     [Fact]

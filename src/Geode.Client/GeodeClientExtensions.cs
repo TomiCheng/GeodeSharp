@@ -1,5 +1,6 @@
 using Geode.Client.Internal;
 using Geode.Client.Options;
+using Geode.Client.Pdx;
 using Geode.Client.Protocol;
 using Geode.Client.Protocol.Serialization;
 using Geode.Client.Services;
@@ -145,6 +146,7 @@ public static class GeodeClientExtensions
         services.TryAddScoped<Services.Cache>();
         services.TryAddSingleton<TcrPartBuilder>();
         services.TryAddScoped<SerializationRegistry>();
+        services.TryAddScoped<ITypeRegistry, TypeRegistry>();
         services.TryAddScoped<TypedResultAdapter>();
         services.TryAddScoped<TcrMessageBuilder>();
         services.TryAddScoped<TcrMessageHelper>();

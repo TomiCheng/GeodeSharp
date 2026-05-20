@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Geode.Client.Internal;
 using Geode.Client.Options;
+using Geode.Client.Pdx;
 using Geode.Client.Protocol;
 using Geode.Client.Protocol.Serialization;
 using Microsoft.Extensions.DependencyInjection;
@@ -44,7 +45,6 @@ internal sealed class Cache(
     TcrConnectionManager tcrConnectionManager,
     TypedResultAdapter typedResultAdapter) : IGeodeCache
 {
-    private readonly GeodeClientOptions _options = scopeContext.Options;
 
     /// <summary>
     /// <c>SemaphoreSlim</c>-gated double-checked init. cppcache
@@ -66,132 +66,9 @@ internal sealed class Cache(
     /// </summary>
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private Task? _initTask;
+    private readonly GeodeClientOptions _options = scopeContext.Options;
 
-#pragma warning disable CS0169, CS0414, CS0649 // placeholder fields mirroring CacheImpl; wired up phase by phase
-
-    // ── Lifecycle (CacheImpl.hpp:359-374) ──
-    // m_closed       → IsClosed property (already exposed)
-    // m_initialized  → captured by _initTask (null = not started)
-    // m_initDoneLock → _initLock (SemaphoreSlim, async-friendly)
-    // m_destroyCacheMutex → bucket 1, replaced by System.Threading.Lock
-    private int _destroyPending;          // m_destroyPending (Interlocked 0/1)
-    private bool _keepAlive;              // m_keepAlive
-
-    // ── Region registry (CacheImpl.hpp:364-366) ──
-    // cppcache m_regions is std::map<string, shared_ptr<Region>>; we
-    // hold the non-generic IRegion base because XML-driven population
-    // happens before TKey/TValue are known.
-    private readonly ConcurrentDictionary<string, IRegion> _regions = new(StringComparer.Ordinal);
-
-    // ── Connection / Pool (CacheImpl.hpp:330, 362-363, 369) ──
-    private object? _distributedSystem;   // m_distributedSystem
-    // m_tcrConnectionManager / m_poolManager / m_clientProxyMembershipIDFactory
-    //                                  → fields above (DI / Cache-owned)
-
-    // ── Query (CacheImpl.hpp:370) ──
-    // cppcache m_remoteQueryServicePtr is the non-pool fallback —
-    // CacheImpl owns its own RemoteQueryService when no default pool
-    // exists. We are pool-only (memory pool-only-no-non-pool.md), so
-    // GetQueryService always delegates to PoolManager and never builds
-    // a cache-owned service. The cppcache field has no .NET counterpart.
-
-    // ── Transactions (CacheImpl.hpp:376) ──
-    private object? _cacheTransactionManager; // m_cacheTXManager
-
-    // ── PDX / serialization (CacheImpl.hpp:323-324, 379-383) ──
-    private bool _pdxIgnoreUnreadFields;  // m_ignorePdxUnreadFields
-    private bool _pdxReadSerialized;      // m_readPdxSerialized
-    private object? _pdxTypeRegistry;     // m_pdxTypeRegistry
-    private object? _serializationRegistry;// m_serializationRegistry
-    private object? _typeRegistry;        // m_typeRegistry
-
-    // ── Versioning (CacheImpl.hpp:378) ──
-    private object? _memberListForVersionStamp; // m_memberListForVersionStamp
-
-    // ── Partition-routing flags (CacheImpl.hpp:320-322) ──
-    private int _networkHop;              // m_networkhop (Interlocked 0/1)
-    private int _prMetadataUpdated;       // m_pr_metadata_updated (Interlocked 0/1)
-    private int _serverGroupFlag;         // m_serverGroupFlag (Interlocked int8_t)
-
-    // ── Auth (CacheImpl.hpp:382) ──
-    private object? _authInitialize;      // m_authInitialize
-
-#pragma warning restore CS0169, CS0414, CS0649
-
-    public string Name { get; } = scopeContext.Name;
-
-    /// <summary>
-    /// Delegates to <c>PoolManager.DefaultPool.QueryService</c> (or the
-    /// named pool's). Mirrors cppcache <c>CacheImpl::getQueryService()</c>
-    /// pool-mode branch (<c>CacheImpl.cpp:171-203</c>); the non-pool
-    /// fallback in the same method has no .NET counterpart per memory
-    /// <c>pool-only-no-non-pool.md</c>.
-    /// </summary>
-    public IQueryService GetQueryService(string? poolName = null)
-    {
-        ObjectDisposedException.ThrowIf(IsClosed, this);
-
-        // null / empty → DefaultPool. Aligns with PoolManager.Find's
-        // own empty-string convention, but null gets normalised here
-        // so PoolManager.Find (which throws on null) never sees it.
-        if (string.IsNullOrEmpty(poolName))
-        {
-            var defaultPool = poolManager.DefaultPool
-                ?? throw new InvalidOperationException(
-                    "Cache has no default pool — call EnsureInitializedAsync " +
-                    "first or ensure at least one pool is registered.");
-            return defaultPool.QueryService;
-        }
-
-        var pool = poolManager.Find(poolName)
-            ?? throw new ArgumentException(
-                $"Pool '{poolName}' is not registered.", nameof(poolName));
-        return pool.QueryService;
-    }
-
-    /// <summary>
-    /// Test-only escape hatch: expose the scoped <see cref="PoolManager"/>
-    /// so integration tests can reach <see cref="ThinClientPoolDM"/>
-    /// internals (e.g. <c>PoolSize</c>) without DI scope wrangling. Not
-    /// part of the public API — gated by <c>InternalsVisibleTo</c>.
-    /// </summary>
-    internal PoolManager PoolManager => poolManager;
-
-    public bool IsClosed { get; private set; }
-
-    public async Task EnsureInitializedAsync(CancellationToken ct = default)
-    {
-        // Outer fast-path: once init started, every caller awaits the
-        // shared Task. Volatile.Read pairs with the Volatile.Write
-        // inside the lock so the publish is observable without
-        // re-acquiring the semaphore.
-        var task = Volatile.Read(ref _initTask);
-        if (task is null)
-        {
-            await _initLock.WaitAsync(ct).ConfigureAwait(false);
-            try
-            {
-                // Double-check: a concurrent caller may have set it
-                // while we waited on the semaphore.
-                task = _initTask;
-                if (task is null)
-                {
-                    // Start the init under the lock. The first caller's
-                    // ct flows into InitializeCoreAsync; later callers
-                    // observe their own ct only via WaitAsync below.
-                    task = InitializeCoreAsync(ct);
-                    Volatile.Write(ref _initTask, task);
-                }
-            }
-            finally
-            {
-                _initLock.Release();
-            }
-        }
-        // Per-caller cancellation: WaitAsync(ct) cancels *this* await,
-        // not the underlying init Task. Other callers keep waiting.
-        await task.WaitAsync(ct).ConfigureAwait(false);
-    }
+    private ITypeRegistry? _typeRegistry;
 
     /// <summary>
     /// Runs once via <see cref="EnsureInitializedAsync"/>. Two config
@@ -411,29 +288,6 @@ internal sealed class Cache(
     }
 
     /// <summary>
-    /// Pure projection from <see cref="CacheOptions"/> to the list of
-    /// pools the cache should build. When <see cref="CacheOptions.Endpoints"/>
-    /// is non-empty, synthesises a single <c>"default"</c>-named
-    /// <see cref="CachePoolOptions"/> whose <see cref="CachePoolOptions.Servers"/>
-    /// is a deep copy of the endpoint list; otherwise returns
-    /// <see cref="CacheOptions.Pools"/> as-is. Validator guarantees
-    /// the two are mutually exclusive.
-    /// </summary>
-    internal static IReadOnlyList<CachePoolOptions> ResolvePoolsToBuild(CacheOptions cache)
-    {
-        if (cache.Endpoints.Count == 0) return cache.Pools;
-
-        return
-        [
-            new()
-            {
-                Name = "default",
-                Servers = cache.Endpoints.Select(e => e.Clone()).ToList(),
-            },
-        ];
-    }
-
-    /// <summary>
     /// Apply a refid template (if any) and merge the region's inline
     /// attribute overrides on top. Mirrors cppcache
     /// <c>CacheParser</c> refid handling
@@ -510,6 +364,133 @@ internal sealed class Cache(
             CacheWriter = inline.CacheWriter ?? template.CacheWriter,
             PersistenceManager = inline.PersistenceManager ?? template.PersistenceManager,
         };
+    }
+
+    /// <summary>
+    /// Pure projection from <see cref="CacheOptions"/> to the list of
+    /// pools the cache should build. When <see cref="CacheOptions.Endpoints"/>
+    /// is non-empty, synthesises a single <c>"default"</c>-named
+    /// <see cref="CachePoolOptions"/> whose <see cref="CachePoolOptions.Servers"/>
+    /// is a deep copy of the endpoint list; otherwise returns
+    /// <see cref="CacheOptions.Pools"/> as-is. Validator guarantees
+    /// the two are mutually exclusive.
+    /// </summary>
+    internal static IReadOnlyList<CachePoolOptions> ResolvePoolsToBuild(CacheOptions cache)
+    {
+        if (cache.Endpoints.Count == 0) return cache.Pools;
+
+        return
+        [
+            new()
+            {
+                Name = "default",
+                Servers = cache.Endpoints.Select(e => e.Clone()).ToList(),
+            },
+        ];
+    }
+
+    /// <summary>
+    /// Test-only escape hatch: expose the scoped <see cref="PoolManager"/>
+    /// so integration tests can reach <see cref="ThinClientPoolDM"/>
+    /// internals (e.g. <c>PoolSize</c>) without DI scope wrangling. Not
+    /// part of the public API — gated by <c>InternalsVisibleTo</c>.
+    /// </summary>
+    internal PoolManager PoolManager => poolManager;
+
+    public async Task CloseAsync(CancellationToken ct = default)
+    {
+        if (IsClosed) return;   // idempotent
+
+        // Mirror cppcache CacheImpl::close() ordering:
+        //   TODO Phase 1.5: TCCM.CloseAsync — stop background workers
+        //     (m_tcrConnectionManager->close() comes first in cppcache so
+        //     scheduled ping tasks can't fire on torn-down state).
+        //   TODO Phase 1.2: destroy regions (region drop happens between
+        //     TCCM stop and pool close in cppcache).
+        //
+        // Pool drain — cascades pool.DestroyAsync into each
+        // ThinClientPoolDM (cancels its conn-management loop, releases
+        // timers, drains connections). PoolManager.CloseAsync is
+        // internally idempotent so a later DI-scope dispose is safe.
+        await poolManager.CloseAsync(keepAlive: false, ct).ConfigureAwait(false);
+
+        IsClosed = true;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        // Forward to CloseAsync; idempotent until connection logic lands.
+        await CloseAsync().ConfigureAwait(false);
+
+        // TCCM is now DI-Scoped — the per-cache AsyncServiceScope
+        // disposes it for us in reverse-resolve order, after Cache.
+        // PoolManager / ClientProxyMembershipIdBuilder / CacheScopeContext
+        // ride the same cascade.
+
+        _initLock.Dispose();
+    }
+
+    public async Task EnsureInitializedAsync(CancellationToken ct = default)
+    {
+        // Outer fast-path: once init started, every caller awaits the
+        // shared Task. Volatile.Read pairs with the Volatile.Write
+        // inside the lock so the publish is observable without
+        // re-acquiring the semaphore.
+        var task = Volatile.Read(ref _initTask);
+        if (task is null)
+        {
+            await _initLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                // Double-check: a concurrent caller may have set it
+                // while we waited on the semaphore.
+                task = _initTask;
+                if (task is null)
+                {
+                    // Start the init under the lock. The first caller's
+                    // ct flows into InitializeCoreAsync; later callers
+                    // observe their own ct only via WaitAsync below.
+                    task = InitializeCoreAsync(ct);
+                    Volatile.Write(ref _initTask, task);
+                }
+            }
+            finally
+            {
+                _initLock.Release();
+            }
+        }
+        // Per-caller cancellation: WaitAsync(ct) cancels *this* await,
+        // not the underlying init Task. Other callers keep waiting.
+        await task.WaitAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Delegates to <c>PoolManager.DefaultPool.QueryService</c> (or the
+    /// named pool's). Mirrors cppcache <c>CacheImpl::getQueryService()</c>
+    /// pool-mode branch (<c>CacheImpl.cpp:171-203</c>); the non-pool
+    /// fallback in the same method has no .NET counterpart per memory
+    /// <c>pool-only-no-non-pool.md</c>.
+    /// </summary>
+    public IQueryService GetQueryService(string? poolName = null)
+    {
+        ObjectDisposedException.ThrowIf(IsClosed, this);
+
+        // null / empty → DefaultPool. Aligns with PoolManager.Find's
+        // own empty-string convention, but null gets normalised here
+        // so PoolManager.Find (which throws on null) never sees it.
+        if (string.IsNullOrEmpty(poolName))
+        {
+            var defaultPool = poolManager.DefaultPool
+                ?? throw new InvalidOperationException(
+                    "Cache has no default pool — call EnsureInitializedAsync " +
+                    "first or ensure at least one pool is registered.");
+            return defaultPool.QueryService;
+        }
+
+        var pool = poolManager.Find(poolName)
+            ?? throw new ArgumentException(
+                $"Pool '{poolName}' is not registered.", nameof(poolName));
+        return pool.QueryService;
     }
 
     public IRegion<TKey, TValue>? GetRegion<TKey, TValue>(string path)
@@ -594,36 +575,65 @@ internal sealed class Cache(
         return region;
     }
 
-    public async Task CloseAsync(CancellationToken ct = default)
-    {
-        if (IsClosed) return;   // idempotent
+    public bool IsClosed { get; private set; }
+    public string Name { get; } = scopeContext.Name;
+    public ITypeRegistry TypeRegistry => LazyInitializer.EnsureInitialized(
+        ref _typeRegistry,
+        () => ActivatorUtilities.CreateInstance<TypeRegistry>(serviceProvider, this));
 
-        // Mirror cppcache CacheImpl::close() ordering:
-        //   TODO Phase 1.5: TCCM.CloseAsync — stop background workers
-        //     (m_tcrConnectionManager->close() comes first in cppcache so
-        //     scheduled ping tasks can't fire on torn-down state).
-        //   TODO Phase 1.2: destroy regions (region drop happens between
-        //     TCCM stop and pool close in cppcache).
-        //
-        // Pool drain — cascades pool.DestroyAsync into each
-        // ThinClientPoolDM (cancels its conn-management loop, releases
-        // timers, drains connections). PoolManager.CloseAsync is
-        // internally idempotent so a later DI-scope dispose is safe.
-        await poolManager.CloseAsync(keepAlive: false, ct).ConfigureAwait(false);
+    public bool PdxIgnoreUnreadFields => _options.Cache?.Pdx.IgnoreUnreadFields ?? false;
+    public bool PdxReadSerialized => _options.Cache?.Pdx.ReadSerialized ?? false;
 
-        IsClosed = true;
-    }
 
-    public async ValueTask DisposeAsync()
-    {
-        // Forward to CloseAsync; idempotent until connection logic lands.
-        await CloseAsync().ConfigureAwait(false);
+#pragma warning disable CS0169, CS0414, CS0649 // placeholder fields mirroring CacheImpl; wired up phase by phase
 
-        // TCCM is now DI-Scoped — the per-cache AsyncServiceScope
-        // disposes it for us in reverse-resolve order, after Cache.
-        // PoolManager / ClientProxyMembershipIdBuilder / CacheScopeContext
-        // ride the same cascade.
+    // ── Lifecycle (CacheImpl.hpp:359-374) ──
+    // m_closed       → IsClosed property (already exposed)
+    // m_initialized  → captured by _initTask (null = not started)
+    // m_initDoneLock → _initLock (SemaphoreSlim, async-friendly)
+    // m_destroyCacheMutex → bucket 1, replaced by System.Threading.Lock
+    private int _destroyPending;          // m_destroyPending (Interlocked 0/1)
+    private bool _keepAlive;              // m_keepAlive
 
-        _initLock.Dispose();
-    }
+    // ── Region registry (CacheImpl.hpp:364-366) ──
+    // cppcache m_regions is std::map<string, shared_ptr<Region>>; we
+    // hold the non-generic IRegion base because XML-driven population
+    // happens before TKey/TValue are known.
+    private readonly ConcurrentDictionary<string, IRegion> _regions = new(StringComparer.Ordinal);
+
+    // ── Connection / Pool (CacheImpl.hpp:330, 362-363, 369) ──
+    private object? _distributedSystem;   // m_distributedSystem
+    // m_tcrConnectionManager / m_poolManager / m_clientProxyMembershipIDFactory
+    //                                  → fields above (DI / Cache-owned)
+
+    // ── Query (CacheImpl.hpp:370) ──
+    // cppcache m_remoteQueryServicePtr is the non-pool fallback —
+    // CacheImpl owns its own RemoteQueryService when no default pool
+    // exists. We are pool-only (memory pool-only-no-non-pool.md), so
+    // GetQueryService always delegates to PoolManager and never builds
+    // a cache-owned service. The cppcache field has no .NET counterpart.
+
+    // ── Transactions (CacheImpl.hpp:376) ──
+    private object? _cacheTransactionManager; // m_cacheTXManager
+
+    // ── PDX / serialization (CacheImpl.hpp:323-324, 379-383) ──
+    private bool _pdxIgnoreUnreadFields;  // m_ignorePdxUnreadFields
+    private bool _pdxReadSerialized;      // m_readPdxSerialized
+    private object? _pdxTypeRegistry;     // m_pdxTypeRegistry
+    private object? _serializationRegistry;// m_serializationRegistry
+
+    // ── Versioning (CacheImpl.hpp:378) ──
+    private object? _memberListForVersionStamp; // m_memberListForVersionStamp
+
+    // ── Partition-routing flags (CacheImpl.hpp:320-322) ──
+    private int _networkHop;              // m_networkhop (Interlocked 0/1)
+    private int _prMetadataUpdated;       // m_pr_metadata_updated (Interlocked 0/1)
+    private int _serverGroupFlag;         // m_serverGroupFlag (Interlocked int8_t)
+
+    // ── Auth (CacheImpl.hpp:382) ──
+    private object? _authInitialize;      // m_authInitialize
+
+#pragma warning restore CS0169, CS0414, CS0649
+
+
 }

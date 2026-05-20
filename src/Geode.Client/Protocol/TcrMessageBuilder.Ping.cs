@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+
 namespace Geode.Client.Protocol;
 
 partial class TcrMessageBuilder
@@ -11,5 +13,5 @@ partial class TcrMessageBuilder
             MessageType: MessageType.Ping,
             TransactionId: MetaTransactionId,
             EarlyAck: 0,
-            Parts: []);
+            Parts: [], ServiceProvider: _serviceProvider);
 }

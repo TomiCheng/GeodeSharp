@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+
 using Geode.Client.Protocol.Serialization;
 
 namespace Geode.Client.Protocol;
@@ -12,7 +14,7 @@ namespace Geode.Client.Protocol;
 /// file (<c>TcrMessageBuilder.Ping.cs</c>, <c>TcrMessageBuilder.Put.cs</c>,
 /// ...). The collection mirrors cppcache's <c>TcrMessage.hpp</c> family
 /// of <c>TcrMessage*</c> subclasses (<c>TcrMessagePing</c>,
-/// <c>TcrMessagePut</c>, <c>TcrMessageRequest</c>, ...) — same
+/// <c>TcrMessagePut</c>, <c>TcrMessageRequest</c>, ...) ??same
 /// per-operation recipe, expressed as functions returning an immutable
 /// <see cref="TcrMessage"/> rather than as a class hierarchy.
 /// </para>
@@ -32,8 +34,11 @@ namespace Geode.Client.Protocol;
 /// </remarks>
 internal sealed partial class TcrMessageBuilder(
     TcrPartBuilder partBuilder,
-    SerializationRegistry serializationRegistry)
+    SerializationRegistry serializationRegistry,
+    IServiceProvider serviceProvider)
 {
+    private readonly IServiceProvider _serviceProvider = serviceProvider;
+
     /// <summary>
     /// Sentinel used for any request that isn't part of a Geode
     /// transaction. Geode transactions land in Phase 11+.
@@ -42,7 +47,7 @@ internal sealed partial class TcrMessageBuilder(
 
     // partBuilder is consumed positionally by the operation partials
     // (.Put / .Get / .ContainsKey / ...). serializationRegistry is the
-    // key/value codec dispatch — partials use it to replace inline type
+    // key/value codec dispatch ??partials use it to replace inline type
     // guards with central registry lookup as each op is reworked.
     private readonly SerializationRegistry _serializationRegistry = serializationRegistry;
 }

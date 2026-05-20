@@ -2,11 +2,11 @@ namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
 /// Codec for one built-in DSCode type pair (e.g.
-/// <see cref="DSCode.CacheableInt32"/> ↔ <see cref="int"/>). Mirrors
+/// <see cref="DSCode.CacheableInt32"/> ??<see cref="int"/>). Mirrors
 /// cppcache <c>Serializable</c> family
 /// (<c>cppcache/include/geode/Serializable.hpp</c>) but expressed as
 /// an external codec object rather than a method on the value itself
-/// — primitives (<c>int</c>, <c>string</c>) can't be modified to
+/// ??primitives (<c>int</c>, <c>string</c>) can't be modified to
 /// implement an interface, so a sidecar codec keeps the design
 /// uniform.
 /// </summary>
@@ -20,11 +20,10 @@ namespace Geode.Client.Protocol.Serialization;
 /// </para>
 /// <para>
 /// <b>One converter, possibly many DSCodes.</b> Most converters
-/// handle exactly one wire DSCode (<c>int</c> ↔
-/// <see cref="DSCode.CacheableInt32"/>). <c>string</c> is special:
+/// handle exactly one wire DSCode (<c>int</c> ??/// <see cref="DSCode.CacheableInt32"/>). <c>string</c> is special:
 /// one converter handles four DSCodes (<c>CacheableASCIIString</c> /
-/// <c>…ASCIIStringHuge</c> / <c>CacheableString</c> /
-/// <c>…StringHuge</c>) and picks which one at <see cref="Write"/>
+/// <c>?�ASCIIStringHuge</c> / <c>CacheableString</c> /
+/// <c>?�StringHuge</c>) and picks which one at <see cref="Write"/>
 /// time based on content. The <see cref="DsCodes"/> array is the
 /// decode-side index; <see cref="GetDsCode"/> resolves the
 /// encode-side choice.
@@ -45,14 +44,14 @@ namespace Geode.Client.Protocol.Serialization;
 /// + <see cref="DataConverter{T}"/>):
 /// </para>
 /// <list type="bullet">
-///   <item><b>Non-generic <see cref="IDataConverter"/></b> — what
+///   <item><b>Non-generic <see cref="IDataConverter"/></b> ??what
 ///         <c>SerializationRegistry</c> stores. Heterogeneous storage
 ///         (<c>Dictionary&lt;byte, IDataConverter&gt;</c>) needs an
 ///         erased base; that's this one.</item>
-///   <item><b>Generic <see cref="IDataConverter{T}"/></b> — what
+///   <item><b>Generic <see cref="IDataConverter{T}"/></b> ??what
 ///         implementers write against; compile-time type safety on
 ///         <see cref="IDataConverter{T}.Write"/> / <see cref="IDataConverter{T}.Read"/>.</item>
-///   <item><b>Abstract <see cref="DataConverter{T}"/></b> — bridges
+///   <item><b>Abstract <see cref="DataConverter{T}"/></b> ??bridges
 ///         the two so concrete codecs only override the typed
 ///         methods, never the <see cref="object"/> overloads.</item>
 /// </list>
@@ -65,14 +64,14 @@ internal interface IDataConverter
     /// per element pointing at the same converter instance. Single
     /// element for most converters; four for <c>string</c>. Mirrors
     /// the implicit one-DSCode-per-class layout cppcache enforces via
-    /// <c>Serializable::getDsCode()</c> — we generalise to many
+    /// <c>Serializable::getDsCode()</c> ??we generalise to many
     /// because .NET represents <c>string</c> as a single CLR type.
     /// </summary>
     byte[] DsCodes { get; }
 
     /// <summary>
     /// CLR type this converter handles. Used as the registry encode
-    /// key (runtime type → codec lookup). Cppcache's runtime type
+    /// key (runtime type ??codec lookup). Cppcache's runtime type
     /// system is implicit through <c>typeid</c>; we make it explicit
     /// because .NET dictionary keys need it.
     /// </summary>
@@ -91,14 +90,14 @@ internal interface IDataConverter
     /// <summary>
     /// Write <paramref name="value"/>'s payload to
     /// <paramref name="writer"/>. The DSCode byte is NOT written here
-    /// — the registry writes it before delegating in, then passes the
+    /// ??the registry writes it before delegating in, then passes the
     /// byte back as <paramref name="dsCode"/> so multi-DSCode
     /// converters can branch without re-scanning the value.
     /// </summary>
     /// <param name="value">
     /// Boxed instance of <see cref="ManagedType"/>; concrete
     /// implementations unbox and forward to the generic
-    /// <see cref="IDataConverter{T}.Write(BigEndianBinaryWriter, T, byte)"/>.
+    /// <see cref="IDataConverter{T}.Write(DataOutput, T, byte)"/>.
     /// </param>
     /// <param name="dsCode">
     /// The DSCode the registry just wrote (the return value of an
@@ -106,7 +105,7 @@ internal interface IDataConverter
     /// Single-DSCode converters ignore it.
     /// </param>
     /// <param name="depth">
-    /// Current nesting level — <c>0</c> at the top-level call, one
+    /// Current nesting level ??<c>0</c> at the top-level call, one
     /// higher per nested container. Scalar / primitive-array
     /// converters ignore. Container converters MUST forward
     /// <c>depth + 1</c> when they re-enter
@@ -117,7 +116,7 @@ internal interface IDataConverter
     /// defending against stack-overflow DoS from a malicious /
     /// pathological object graph.
     /// </param>
-    void Write(BigEndianBinaryWriter writer, object value, byte dsCode, int depth);
+    void Write(DataOutput writer, object value, byte dsCode, int depth);
 
     /// <summary>
     /// Read one payload from <paramref name="reader"/>. The DSCode
@@ -127,8 +126,8 @@ internal interface IDataConverter
     /// Single-DSCode converters ignore it.
     /// </summary>
     /// <param name="depth">
-    /// Current nesting level — see
-    /// <see cref="Write(BigEndianBinaryWriter, object, byte, int)"/>
+    /// Current nesting level ??see
+    /// <see cref="Write(DataOutput, object, byte, int)"/>
     /// for semantics. Container converters forward <c>depth + 1</c>
     /// when re-entering <see cref="SerializationRegistry.ReadObject"/>
     /// for each element.

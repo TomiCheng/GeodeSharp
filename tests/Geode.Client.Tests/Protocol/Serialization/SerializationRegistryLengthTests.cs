@@ -35,20 +35,18 @@ public class SerializationRegistryLengthTests
     {
         // maxArrayLength=3, int[3] — inclusive bound, exact-fit OK.
         var registry = SerializationTestHelpers.CreateRegistry(maxArrayLength: 3);
-        var buffer = new ArrayBufferWriter<byte>();
-        var writer = new BigEndianBinaryWriter(buffer);
+        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
         registry.WriteObject(writer, new[] { 1, 2, 3 });
 
-        Assert.NotEmpty(buffer.WrittenSpan.ToArray());
+        Assert.NotEmpty(writer.WrittenSpan.ToArray());
     }
 
     [Fact]
     public void Int32Array_write_over_limit_throws_InvalidOperationException()
     {
         var registry = SerializationTestHelpers.CreateRegistry(maxArrayLength: 3);
-        var buffer = new ArrayBufferWriter<byte>();
-        var writer = new BigEndianBinaryWriter(buffer);
+        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
         var ex = Assert.Throws<InvalidOperationException>(
             () => registry.WriteObject(writer, new[] { 1, 2, 3, 4 }));
@@ -84,8 +82,7 @@ public class SerializationRegistryLengthTests
         // Same limit reaches via _registry.MaxArrayLength inside
         // ListDataConverter — different injection path, same behaviour.
         var registry = SerializationTestHelpers.CreateRegistry(maxArrayLength: 3);
-        var buffer = new ArrayBufferWriter<byte>();
-        var writer = new BigEndianBinaryWriter(buffer);
+        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
         var ex = Assert.Throws<InvalidOperationException>(
             () => registry.WriteObject(writer, new List<int> { 1, 2, 3, 4 }));
@@ -117,20 +114,18 @@ public class SerializationRegistryLengthTests
         var registry = SerializationTestHelpers.CreateRegistry(
             maxArrayLength: 3,
             maxBytesLength: 10);
-        var buffer = new ArrayBufferWriter<byte>();
-        var writer = new BigEndianBinaryWriter(buffer);
+        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
         registry.WriteObject(writer, new byte[] { 1, 2, 3, 4, 5 });
 
-        Assert.NotEmpty(buffer.WrittenSpan.ToArray());
+        Assert.NotEmpty(writer.WrittenSpan.ToArray());
     }
 
     [Fact]
     public void Bytes_write_over_limit_throws_InvalidOperationException()
     {
         var registry = SerializationTestHelpers.CreateRegistry(maxBytesLength: 4);
-        var buffer = new ArrayBufferWriter<byte>();
-        var writer = new BigEndianBinaryWriter(buffer);
+        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
         var ex = Assert.Throws<InvalidOperationException>(
             () => registry.WriteObject(writer, new byte[] { 1, 2, 3, 4, 5 }));
@@ -159,8 +154,7 @@ public class SerializationRegistryLengthTests
     {
         // "abcd" = 4 chars > maxStringLength=3
         var registry = SerializationTestHelpers.CreateRegistry(maxStringLength: 3);
-        var buffer = new ArrayBufferWriter<byte>();
-        var writer = new BigEndianBinaryWriter(buffer);
+        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
         var ex = Assert.Throws<InvalidOperationException>(
             () => registry.WriteObject(writer, "abcd"));
@@ -172,12 +166,11 @@ public class SerializationRegistryLengthTests
     {
         // "abc" = 3 chars, exact fit at maxStringLength=3
         var registry = SerializationTestHelpers.CreateRegistry(maxStringLength: 3);
-        var buffer = new ArrayBufferWriter<byte>();
-        var writer = new BigEndianBinaryWriter(buffer);
+        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
         registry.WriteObject(writer, "abc");
 
-        Assert.NotEmpty(buffer.WrittenSpan.ToArray());
+        Assert.NotEmpty(writer.WrittenSpan.ToArray());
     }
 
     [Fact]

@@ -17,10 +17,10 @@ internal interface IDataConverter<T> : IDataConverter
 
     /// <summary>
     /// Typed counterpart to
-    /// <see cref="IDataConverter.Write(BigEndianBinaryWriter, object, byte, int)"/>;
+    /// <see cref="IDataConverter.Write(DataOutput, object, byte, int)"/>;
     /// no boxing.
     /// </summary>
-    void Write(BigEndianBinaryWriter writer, T value, byte dsCode, int depth);
+    void Write(DataOutput writer, T value, byte dsCode, int depth);
 
     /// <summary>
     /// Typed counterpart to

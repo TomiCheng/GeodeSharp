@@ -3,16 +3,14 @@ using Geode.Client.Services;
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
-/// <see cref="IDataConverter"/> for <see cref="bool"/><c>[]</c> ↔
-/// <see cref="DSCode.BooleanArray"/> (26). Wire payload is a
+/// <see cref="IDataConverter"/> for <see cref="bool"/><c>[]</c> ??/// <see cref="DSCode.BooleanArray"/> (26). Wire payload is a
 /// VL-encoded length (1 / 3 / 5 bytes; see
-/// <see cref="BigEndianBinaryWriter.WriteArrayLen"/>) followed by
+/// <see cref="DataOutput.WriteArrayLen"/>) followed by
 /// one byte per element (<c>0</c> = false, <c>0x01</c> = true).
 /// Mirrors cppcache <c>BooleanArray</c>
 /// (<c>cppcache/src/CacheableBuiltins.cpp</c> typedef of
 /// <c>CacheableArrayPrimitive&lt;bool, BooleanArray&gt;</c>) which
-/// routes through <c>serializer::writeArrayObject</c> →
-/// <c>writeArrayLen(size) + per-element writeObject(bool)</c>.
+/// routes through <c>serializer::writeArrayObject</c> ??/// <c>writeArrayLen(size) + per-element writeObject(bool)</c>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -25,7 +23,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// </para>
 /// <para>
 /// <b>Not a Key.</b> Same reasoning as <see cref="BytesDataConverter"/>
-/// — <see cref="System.Array"/> doesn't implement
+/// ??<see cref="System.Array"/> doesn't implement
 /// <see cref="IEquatable{T}"/>, so <see cref="IRegion{TKey, TValue}"/>'s
 /// <c>where TKey : IEquatable&lt;TKey&gt;</c> constraint rejects
 /// <see cref="bool"/><c>[]</c> keys at compile time. Values are fine.
@@ -55,13 +53,13 @@ internal sealed class BooleanArrayDataConverter(CacheScopeContext cacheScopeCont
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, bool[] value, byte dsCode, int depth)
+    public override void Write(DataOutput writer, bool[] value, byte dsCode, int depth)
     {
         if (value.Length > _maxArrayLength)
         {
             throw new InvalidOperationException(
                 $"BooleanArrayDataConverter: cannot serialise an array of {value.Length} elements "
-                + $"— exceeds Serialization.MaxArrayLength ({_maxArrayLength}). "
+                + $"??exceeds Serialization.MaxArrayLength ({_maxArrayLength}). "
                 + "Tune GeodeClientOptions.Serialization.MaxArrayLength if the workload "
                 + "genuinely warrants larger payloads.");
         }
@@ -83,7 +81,7 @@ internal sealed class BooleanArrayDataConverter(CacheScopeContext cacheScopeCont
         {
             throw new GeodeException(
                 $"BooleanArrayDataConverter: wire array length {length} exceeds "
-                + $"Serialization.MaxArrayLength ({_maxArrayLength}) — refusing to allocate. "
+                + $"Serialization.MaxArrayLength ({_maxArrayLength}) ??refusing to allocate. "
                 + "Treat as a hostile / buggy payload unless a legitimate workload "
                 + "warrants raising the limit.");
         }

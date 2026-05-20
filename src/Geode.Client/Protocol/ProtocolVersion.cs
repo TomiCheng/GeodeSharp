@@ -6,12 +6,12 @@ namespace Geode.Client.Protocol;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Only the ordinal goes on the wire — major/minor/patch are not part of
+/// Only the ordinal goes on the wire ??major/minor/patch are not part of
 /// the handshake (despite what some upstream comments imply). Two encodings:
 /// </para>
 /// <list type="bullet">
 ///   <item>
-///     <b>Compressed</b> (default, ordinal ≤ <see cref="sbyte.MaxValue"/>):
+///     <b>Compressed</b> (default, ordinal ??<see cref="sbyte.MaxValue"/>):
 ///     1 byte (i8) carrying the ordinal directly.
 ///   </item>
 ///   <item>
@@ -36,7 +36,7 @@ internal readonly record struct ProtocolVersion(short Ordinal)
     /// Bump this only when:
     /// <list type="bullet">
     ///   <item>We need a feature gated behind a newer ordinal.</item>
-    ///   <item>The new ordinal &gt; 127 — at which point <see cref="WriteTo"/>
+    ///   <item>The new ordinal &gt; 127 ??at which point <see cref="WriteTo"/>
     ///         starts taking the uncompressed branch; verify it's correct.</item>
     /// </list>
     /// </remarks>
@@ -52,7 +52,7 @@ internal readonly record struct ProtocolVersion(short Ordinal)
     /// Append this version to <paramref name="writer"/> using the cppcache
     /// <c>Version::write</c> wire format.
     /// </summary>
-    public void WriteTo(BigEndianBinaryWriter writer)
+    public void WriteTo(DataOutput writer)
     {
         if (Ordinal <= sbyte.MaxValue)
         {

@@ -3,8 +3,7 @@ using Geode.Client.Services;
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
-/// <see cref="IDataConverter"/> for <see cref="int"/><c>[]</c> ↔
-/// <see cref="DSCode.CacheableInt32Array"/> (48). Wire payload is a
+/// <see cref="IDataConverter"/> for <see cref="int"/><c>[]</c> ??/// <see cref="DSCode.CacheableInt32Array"/> (48). Wire payload is a
 /// VL-encoded length (1 / 3 / 5 bytes) followed by 4 bytes big-endian
 /// per element. Mirrors cppcache <c>CacheableInt32Array</c>
 /// (<c>CacheableArrayPrimitive&lt;int32_t, CacheableInt32Array&gt;</c>).
@@ -24,13 +23,13 @@ internal sealed class Int32ArrayDataConverter(CacheScopeContext cacheScopeContex
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, int[] value, byte dsCode, int depth)
+    public override void Write(DataOutput writer, int[] value, byte dsCode, int depth)
     {
         if (value.Length > _maxArrayLength)
         {
             throw new InvalidOperationException(
                 $"Int32ArrayDataConverter: cannot serialise an array of {value.Length} elements "
-                + $"— exceeds Serialization.MaxArrayLength ({_maxArrayLength}).");
+                + $"??exceeds Serialization.MaxArrayLength ({_maxArrayLength}).");
         }
         writer.WriteArrayLen(value.Length);
         foreach (var element in value)
@@ -50,7 +49,7 @@ internal sealed class Int32ArrayDataConverter(CacheScopeContext cacheScopeContex
         {
             throw new GeodeException(
                 $"Int32ArrayDataConverter: wire array length {length} exceeds "
-                + $"Serialization.MaxArrayLength ({_maxArrayLength}) — refusing to allocate.");
+                + $"Serialization.MaxArrayLength ({_maxArrayLength}) ??refusing to allocate.");
         }
         var array = new int[length];
         for (var i = 0; i < length; i++)

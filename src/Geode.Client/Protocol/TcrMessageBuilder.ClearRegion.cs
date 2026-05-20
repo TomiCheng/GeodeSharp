@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+
 namespace Geode.Client.Protocol;
 
 partial class TcrMessageBuilder
@@ -11,7 +13,7 @@ partial class TcrMessageBuilder
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Wire layout — Header (<see cref="MessageType.ClearRegion"/>=36,
+    /// Wire layout ??Header (<see cref="MessageType.ClearRegion"/>=36,
     /// NumParts=2 or 3, TransactionId=-1, EarlyAck=0) followed by:
     /// </para>
     /// <code>
@@ -21,8 +23,8 @@ partial class TcrMessageBuilder
     /// 3 (optional)   1         DSCode-tagged callback argument
     /// </code>
     /// <para>
-    /// <b>No key part</b> — clear is region-wide.
-    /// <b>No millisecondsResponseTimeout part</b> — cppcache writes it
+    /// <b>No key part</b> ??clear is region-wide.
+    /// <b>No millisecondsResponseTimeout part</b> ??cppcache writes it
     /// only when <c>messageResponseTimeout &gt;= 0</c>, but
     /// <c>ThinClientRegion::clear</c> hard-codes <c>std::chrono::milliseconds(-1)</c>
     /// when invoking the ctor (cppcache/src/ThinClientRegion.cpp:777),
@@ -49,10 +51,10 @@ partial class TcrMessageBuilder
 
         var parts = new List<TcrPart>(3)
         {
-            // Part 1 — Region name. Raw ASCII bytes (cppcache writeRegionPart).
+            // Part 1 ??Region name. Raw ASCII bytes (cppcache writeRegionPart).
             partBuilder.RegionName(regionName),
 
-            // Part 2 — EventId. 18 raw bytes:
+            // Part 2 ??EventId. 18 raw bytes:
             //   [u8 longCode=3][i64 threadId BE][u8 longCode=3][i64 sequenceId BE]
             partBuilder.Raw(w =>
             {
@@ -63,16 +65,17 @@ partial class TcrMessageBuilder
             }, sizeHint: 18),
         };
 
-        // Part 3 — Optional callback argument (DSCode-tagged via registry).
+        // Part 3 ??Optional callback argument (DSCode-tagged via registry).
         if (callbackArgument is not null)
         {
             parts.Add(partBuilder.Object(w => _serializationRegistry.WriteObject(w, callbackArgument)));
         }
 
-        return new TcrMessage(
-            MessageType: MessageType.ClearRegion,
-            TransactionId: transactionId,
-            EarlyAck: 0,
-            Parts: parts);
+        return ActivatorUtilities.CreateInstance<TcrMessage>(
+            _serviceProvider,
+            MessageType.ClearRegion,
+            transactionId,
+            (byte)0,
+            parts);
     }
 }

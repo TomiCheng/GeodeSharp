@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+
 namespace Geode.Client.Protocol;
 
 partial class TcrMessageBuilder
@@ -10,7 +12,7 @@ partial class TcrMessageBuilder
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Wire layout — Header (<see cref="MessageType.Request"/>=0,
+    /// Wire layout ??Header (<see cref="MessageType.Request"/>=0,
     /// NumParts=2 or 3, TransactionId=-1, EarlyAck=0) followed by:
     /// </para>
     /// <code>
@@ -20,7 +22,7 @@ partial class TcrMessageBuilder
     /// 3 (optional)   1         DSCode-tagged callback argument
     /// </code>
     /// <para>
-    /// Compared with <see cref="Put"/> the layout is much simpler — no
+    /// Compared with <see cref="Put"/> the layout is much simpler ??no
     /// Operation / Flags / isDelta / Value / EventId parts. Get doesn't
     /// produce a server-visible event, so there's nothing to dedup.
     /// </para>
@@ -44,23 +46,19 @@ partial class TcrMessageBuilder
 
         var parts = new List<TcrPart>(3)
         {
-            // Part 1 — Region name. Raw ASCII bytes (cppcache writeRegionPart).
+            // Part 1 ??Region name. Raw ASCII bytes (cppcache writeRegionPart).
             partBuilder.RegionName(regionName),
 
-            // Part 2 — Key (DSCode-tagged via registry).
+            // Part 2 ??Key (DSCode-tagged via registry).
             partBuilder.Object(w => _serializationRegistry.WriteObject(w, key)),
         };
 
-        // Part 3 — Optional callback argument (DSCode-tagged via registry).
+        // Part 3 ??Optional callback argument (DSCode-tagged via registry).
         if (callbackArgument is not null)
         {
             parts.Add(partBuilder.Object(w => _serializationRegistry.WriteObject(w, callbackArgument)));
         }
 
-        return new TcrMessage(
-            MessageType: MessageType.Request,
-            TransactionId: transactionId,
-            EarlyAck: 0,
-            Parts: parts);
+        return ActivatorUtilities.CreateInstance<TcrMessage>(_serviceProvider, MessageType.Request, transactionId, (byte)0, parts);
     }
 }

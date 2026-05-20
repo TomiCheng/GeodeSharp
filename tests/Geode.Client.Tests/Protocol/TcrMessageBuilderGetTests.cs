@@ -1,6 +1,7 @@
 using Geode.Client.Protocol;
 using Geode.Client.Protocol.Serialization;
 using Geode.Client.Tests.Protocol.Serialization;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Geode.Client.Tests.Protocol;
@@ -15,8 +16,11 @@ public class TcrMessageBuilderGetTests
 {
     private const int Key = 123;
 
-    private static TcrMessageBuilder NewBuilder() =>
-        new(new TcrPartBuilder(), SerializationTestHelpers.CreateRegistry());
+    private static TcrMessageBuilder NewBuilder()
+    {
+        var sp = SerializationTestHelpers.BuildSp();
+        return new(new TcrPartBuilder(sp), sp.GetRequiredService<SerializationRegistry>(), sp);
+    }
 
     // Helper: the on-wire bytes for an int32 key (CacheableInt32(57) +
     // 4-byte big-endian payload). Mirrors what Int32DataConverter
@@ -165,7 +169,7 @@ public class TcrMessageBuilderGetTests
     public void Get_roundtrips_through_encode_decode()
     {
         var original = NewBuilder().Get("/test", Key);
-        var decoded = TcrMessage.Decode(original.Encode());
+        var decoded = TcrMessage.Decode(original.Encode(), SerializationTestHelpers.BuildSp());
         Assert.Equal(original, decoded);
     }
 
@@ -174,7 +178,7 @@ public class TcrMessageBuilderGetTests
     {
         var original = NewBuilder().Get(
             "/test", Key, callbackArgument: 7, transactionId: 99);
-        var decoded = TcrMessage.Decode(original.Encode());
+        var decoded = TcrMessage.Decode(original.Encode(), SerializationTestHelpers.BuildSp());
         Assert.Equal(original, decoded);
     }
 }

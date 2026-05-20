@@ -3,10 +3,9 @@ using Geode.Client.Services;
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
-/// <see cref="IDataConverter"/> for <see cref="char"/><c>[]</c> ↔
-/// <see cref="DSCode.CharArray"/> (27). Wire payload is a VL-encoded
+/// <see cref="IDataConverter"/> for <see cref="char"/><c>[]</c> ??/// <see cref="DSCode.CharArray"/> (27). Wire payload is a VL-encoded
 /// length (1 / 3 / 5 bytes) followed by 2 bytes big-endian per
-/// element — each element is one Java <c>char</c> / UTF-16 code
+/// element ??each element is one Java <c>char</c> / UTF-16 code
 /// unit. Mirrors cppcache <c>CharArray</c>
 /// (<c>CacheableArrayPrimitive&lt;char16_t, CharArray&gt;</c>).
 /// </summary>
@@ -17,7 +16,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// element stream with a VL length prefix.
 /// </para>
 /// <para>
-/// <b>Not a Key</b> — see <see cref="BooleanArrayDataConverter"/>.
+/// <b>Not a Key</b> ??see <see cref="BooleanArrayDataConverter"/>.
 /// <c>null</c> is intercepted as <see cref="DSCode.NullObj"/> by the
 /// registry; <see cref="Array.Empty{T}"/> writes <c>[27, 0x00]</c>.
 /// </para>
@@ -32,13 +31,13 @@ internal sealed class CharArrayDataConverter(CacheScopeContext cacheScopeContext
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, char[] value, byte dsCode, int depth)
+    public override void Write(DataOutput writer, char[] value, byte dsCode, int depth)
     {
         if (value.Length > _maxArrayLength)
         {
             throw new InvalidOperationException(
                 $"CharArrayDataConverter: cannot serialise an array of {value.Length} elements "
-                + $"— exceeds Serialization.MaxArrayLength ({_maxArrayLength}).");
+                + $"??exceeds Serialization.MaxArrayLength ({_maxArrayLength}).");
         }
         writer.WriteArrayLen(value.Length);
         foreach (var element in value)
@@ -58,7 +57,7 @@ internal sealed class CharArrayDataConverter(CacheScopeContext cacheScopeContext
         {
             throw new GeodeException(
                 $"CharArrayDataConverter: wire array length {length} exceeds "
-                + $"Serialization.MaxArrayLength ({_maxArrayLength}) — refusing to allocate.");
+                + $"Serialization.MaxArrayLength ({_maxArrayLength}) ??refusing to allocate.");
         }
         var array = new char[length];
         for (var i = 0; i < length; i++)

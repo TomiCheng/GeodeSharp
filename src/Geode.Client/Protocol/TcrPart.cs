@@ -20,15 +20,15 @@ namespace Geode.Client.Protocol;
 /// </para>
 /// <list type="table">
 ///   <item><term><c>0</c></term><description>
-///     Raw bytes — no DSCode, no length prefix. Used for region names,
+///     Raw bytes ??no DSCode, no length prefix. Used for region names,
 ///     i32 flags, EventId payloads, and the CacheableBytes special case
 ///     for non-empty <c>byte[]</c> values.
 ///   </description></item>
 ///   <item><term><c>1</c></term><description>
-///     Serialized object — payload's first byte is a DSCode.
+///     Serialized object ??payload's first byte is a DSCode.
 ///   </description></item>
 ///   <item><term><c>2</c></term><description>
-///     Empty CacheableBytes sentinel — payload length is zero, no body.
+///     Empty CacheableBytes sentinel ??payload length is zero, no body.
 ///   </description></item>
 /// </list>
 /// <para>
@@ -40,7 +40,7 @@ namespace Geode.Client.Protocol;
 internal sealed record TcrPart(byte IsObject, ReadOnlyMemory<byte> Payload)
 {
     /// <summary>Serialise this Part onto <paramref name="writer"/>.</summary>
-    public void Encode(BigEndianBinaryWriter writer)
+    public void Encode(DataOutput writer)
     {
         writer.WriteInt32(Payload.Length);
         writer.WriteByte(IsObject);

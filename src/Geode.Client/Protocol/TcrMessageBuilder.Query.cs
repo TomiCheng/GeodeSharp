@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+
 namespace Geode.Client.Protocol;
 
 partial class TcrMessageBuilder
@@ -19,13 +21,13 @@ partial class TcrMessageBuilder
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Wire layout — Header (<see cref="MessageType.Query"/>=34,
+    /// Wire layout ??Header (<see cref="MessageType.Query"/>=34,
     /// NumParts=2 or 3, TransactionId=-1, EarlyAck=0) followed by:
     /// </para>
     /// <code>
     /// # Part         IsObject  Payload
     /// 1 QueryString  0         raw OQL bytes (cppcache writeRegionPart
-    ///                          reused — the OQL lives in m_regionName)
+    ///                          reused ??the OQL lives in m_regionName)
     /// 2 EventId      0         18 raw bytes: [3][i64 tid][3][i64 seq]
     /// 3 (optional)   0         4 raw bytes:  i32 BE response timeout ms
     /// </code>
@@ -65,13 +67,13 @@ partial class TcrMessageBuilder
 
         var parts = new List<TcrPart>(3)
         {
-            // Part 1 — Query string. cppcache writeRegionPart of the OQL
+            // Part 1 ??Query string. cppcache writeRegionPart of the OQL
             // (it re-uses the region-name part for the OQL body); we
             // call ModifiedUtf8 directly to make the encoding intent
-            // explicit — server-side decoder is the same in both cases.
+            // explicit ??server-side decoder is the same in both cases.
             partBuilder.ModifiedUtf8(queryString),
 
-            // Part 2 — EventId. 18 raw bytes:
+            // Part 2 ??EventId. 18 raw bytes:
             //   [u8 longCode=3][i64 threadId BE][u8 longCode=3][i64 sequenceId BE]
             partBuilder.Raw(w =>
             {
@@ -82,17 +84,13 @@ partial class TcrMessageBuilder
             }, sizeHint: 18),
         };
 
-        // Part 3 — Optional response timeout. cppcache writeMillisecondsPart
+        // Part 3 ??Optional response timeout. cppcache writeMillisecondsPart
         //   = writeIntPart = [part_len=4][isObj=0][int32 BE ms].
         if (messageResponseTimeoutMillis is { } ms)
         {
             parts.Add(partBuilder.Raw(w => w.WriteInt32(ms), sizeHint: 4));
         }
 
-        return new TcrMessage(
-            MessageType: MessageType.Query,
-            TransactionId: transactionId,
-            EarlyAck: 0,
-            Parts: parts);
+        return ActivatorUtilities.CreateInstance<TcrMessage>(_serviceProvider, MessageType.Query, transactionId, (byte)0, parts);
     }
 }

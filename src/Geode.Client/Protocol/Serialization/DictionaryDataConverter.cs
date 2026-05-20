@@ -4,10 +4,9 @@ namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
 /// <see cref="IDataConverter"/> for <c>Dictionary&lt;K,V&gt;</c> /
-/// <c>IDictionary&lt;K,V&gt;</c> ↔
-/// <see cref="DSCode.CacheableHashMap"/> (67). Wire payload is a
+/// <c>IDictionary&lt;K,V&gt;</c> ??/// <see cref="DSCode.CacheableHashMap"/> (67). Wire payload is a
 /// VL-encoded entry count followed by N
-/// <c>(key, value)</c> pairs — each side a fully-serialised object
+/// <c>(key, value)</c> pairs ??each side a fully-serialised object
 /// with its own DSCode. Mirrors cppcache <c>CacheableHashMap</c> +
 /// the generic <c>writeObject(unordered_map)</c> in
 /// <c>cppcache/include/geode/Serializer.hpp:338-348</c>.
@@ -22,15 +21,15 @@ namespace Geode.Client.Protocol.Serialization;
 /// </para>
 /// <para>
 /// <b>Key-value interleaved on the wire.</b> Entries are
-/// <c>[k0, v0, k1, v1, …]</c> (cppcache calls <c>writeObject(key)</c>
+/// <c>[k0, v0, k1, v1, ?�]</c> (cppcache calls <c>writeObject(key)</c>
 /// then <c>writeObject(value)</c> per entry), NOT all-keys-then-all-
 /// values. Read mirrors the order. Iteration order is non-
-/// deterministic — same as <c>std::unordered_map</c>.
+/// deterministic ??same as <c>std::unordered_map</c>.
 /// </para>
 /// <para>
 /// <b>Read returns canonical <c>Dictionary&lt;object, object?&gt;</c>.</b>
 /// Target-shape conversion (<c>Dictionary&lt;int, string&gt;</c>,
-/// <c>IDictionary&lt;K,V&gt;</c>, …) happens at
+/// <c>IDictionary&lt;K,V&gt;</c>, ?? happens at
 /// <see cref="TypedResultAdapter"/> in
 /// <see cref="Regions.RegionView{TKey,TValue}"/>, not here.
 /// </para>
@@ -42,12 +41,12 @@ namespace Geode.Client.Protocol.Serialization;
 /// carries a null key (a Java-side <c>map.put(null, v)</c>) we throw
 /// <see cref="GeodeException"/> with a descriptive message rather
 /// than let Dictionary surface a generic argument-null error.
-/// Null values are fine — both sides allow that.
+/// Null values are fine ??both sides allow that.
 /// </para>
 /// <para>
 /// <b>Registry back-reference.</b> Same pattern as
 /// <see cref="ListDataConverter"/> / <see cref="HashSetDataConverter"/>
-/// — each key + value re-enters
+/// ??each key + value re-enters
 /// <see cref="SerializationRegistry.WriteObject"/> /
 /// <see cref="SerializationRegistry.ReadObject"/> so nested maps /
 /// lists / arbitrary registered types can occupy slots.
@@ -77,22 +76,22 @@ internal sealed class DictionaryDataConverter : IDataConverter
 
     public byte GetDsCode(object value) => DSCode.CacheableHashMap;
 
-    public void Write(BigEndianBinaryWriter writer, object value, byte dsCode, int depth)
+    public void Write(DataOutput writer, object value, byte dsCode, int depth)
     {
         // Dictionary<K,V> implements non-generic IDictionary (and
-        // therefore non-generic ICollection with Count) — unlike
+        // therefore non-generic ICollection with Count) ??unlike
         // HashSet<T>, no scratch list needed.
         var source = (IDictionary)value;
         if (source.Count > _registry.MaxArrayLength)
         {
             throw new InvalidOperationException(
                 $"DictionaryDataConverter: cannot serialise a map of {source.Count} entries "
-                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+                + $"??exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
         }
         writer.WriteArrayLen(source.Count);
         foreach (DictionaryEntry entry in source)
         {
-            // Key first, value second — interleaved per cppcache's
+            // Key first, value second ??interleaved per cppcache's
             // writeObject(iter.first) / writeObject(iter.second).
             // depth + 1 propagates the recursion budget per slot.
             _registry.WriteObject(writer, entry.Key, depth + 1);
@@ -111,7 +110,7 @@ internal sealed class DictionaryDataConverter : IDataConverter
         {
             throw new GeodeException(
                 $"DictionaryDataConverter: wire map length {length} exceeds "
-                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) — refusing to allocate.");
+                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) ??refusing to allocate.");
         }
 
         var dict = new Dictionary<object, object?>(capacity: length);

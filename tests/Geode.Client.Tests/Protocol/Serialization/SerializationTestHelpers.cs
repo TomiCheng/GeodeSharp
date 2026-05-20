@@ -1,4 +1,3 @@
-using System.Buffers;
 using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
@@ -10,48 +9,17 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Geode.Client.Tests.Protocol.Serialization;
 
 /// <summary>
-/// Wire-level helpers for converter tests. Every assertion goes
-/// through a freshly-constructed <see cref="SerializationRegistry"/>
-/// so the test simultaneously validates the converter's
-/// <c>Write</c>/<c>Read</c> bodies, the registry's
-/// <c>WriteObject</c>/<c>ReadObject</c> dispatch (including the
-/// DSCode byte the registry writes / reads), and the
-/// <c>_byType</c>/<c>_byDsCode</c> registration.
+/// Wire-level helpers for converter tests. Builds a minimal
+/// <see cref="IServiceProvider"/> containing the scoped services
+/// production uses (<see cref="CacheScopeContext"/>,
+/// <see cref="TypeRegistry"/>, <see cref="PdxTypeRegistry"/>,
+/// <see cref="SerializationRegistry"/>) so tests can resolve via
+/// <see cref="ActivatorUtilities"/> the same way as production code.
 /// </summary>
 internal static class SerializationTestHelpers
 {
-    /// <summary>
-    /// Spin up a fresh <see cref="SerializationRegistry"/> wired to a
-    /// freshly-initialised <see cref="CacheScopeContext"/> and a
-    /// minimal <see cref="IServiceProvider"/> that the registry uses
-    /// to <see cref="ActivatorUtilities.CreateInstance{T}(IServiceProvider, object[])"/>
-    /// its length-prefixed converters. Production resolves both via
-    /// DI; tests build them directly so each case gets a clean,
-    /// isolated registry without bootstrapping the whole container.
-    /// </summary>
-    /// <param name="maxDepth">
-    /// Override for <see cref="SerializationOptions.MaxDepth"/>.
-    /// Default matches production (<c>64</c>); depth-enforcement tests
-    /// pass small values like <c>2</c> / <c>3</c> so the limit fires
-    /// on a realistically small nested payload.
-    /// </param>
-    /// <param name="maxArrayLength">
-    /// Override for <see cref="SerializationOptions.MaxArrayLength"/>.
-    /// Default matches production (<c>1_000_000</c>); array-limit
-    /// tests pass small values to exercise the check without building
-    /// gigabyte payloads.
-    /// </param>
-    /// <param name="maxBytesLength">
-    /// Override for <see cref="SerializationOptions.MaxBytesLength"/>.
-    /// Default matches production (<c>10_000_000</c>); covers
-    /// <c>byte[]</c> only.
-    /// </param>
-    /// <param name="maxStringLength">
-    /// Override for <see cref="SerializationOptions.MaxStringLength"/>.
-    /// Same default + same testing rationale as
-    /// <paramref name="maxArrayLength"/>.
-    /// </param>
-    public static SerializationRegistry CreateRegistry(
+    /// <summary>Build the test SP. Tests resolve services via this.</summary>
+    public static IServiceProvider BuildSp(
         int maxDepth = 64,
         int maxArrayLength = 1_000_000,
         int maxBytesLength = 10_000_000,
@@ -65,18 +33,22 @@ internal static class SerializationTestHelpers
         opts.Serialization.MaxStringLength = maxStringLength;
         scope.Initialize(string.Empty, opts);
 
-        // Minimum DI container: just the CacheScopeContext we just
-        // initialised, so ActivatorUtilities-constructed converters
-        // inside the registry resolve the same scoped instance the
-        // registry itself sees.
-        var sp = new ServiceCollection()
+        return new ServiceCollection()
             .AddSingleton(scope)
+            .AddSingleton<TypeRegistry>(_ => new TypeRegistry(NullLogger<TypeRegistry>.Instance))
+            .AddSingleton<PdxTypeRegistry>()
+            .AddSingleton<SerializationRegistry>()
             .BuildServiceProvider();
-
-        var typeRegistry = new TypeRegistry(NullLogger<TypeRegistry>.Instance);
-        var pdxTypeRegistry = new PdxTypeRegistry();
-        return new SerializationRegistry(sp, scope, typeRegistry, pdxTypeRegistry);
     }
+
+    /// <summary>Shorthand: resolve a fresh <see cref="SerializationRegistry"/>.</summary>
+    public static SerializationRegistry CreateRegistry(
+        int maxDepth = 64,
+        int maxArrayLength = 1_000_000,
+        int maxBytesLength = 10_000_000,
+        int maxStringLength = 1_000_000) =>
+        BuildSp(maxDepth, maxArrayLength, maxBytesLength, maxStringLength)
+            .GetRequiredService<SerializationRegistry>();
 
     /// <summary>
     /// Encode <paramref name="value"/> through the registry and
@@ -84,10 +56,10 @@ internal static class SerializationTestHelpers
     /// </summary>
     public static byte[] Encode(object value)
     {
-        var buffer = new ArrayBufferWriter<byte>();
-        var writer = new BigEndianBinaryWriter(buffer);
-        CreateRegistry().WriteObject(writer, value);
-        return buffer.WrittenSpan.ToArray();
+        var sp = BuildSp();
+        using var writer = ActivatorUtilities.CreateInstance<DataOutput>(sp);
+        sp.GetRequiredService<SerializationRegistry>().WriteObject(writer, value);
+        return writer.WrittenSpan.ToArray();
     }
 
     /// <summary>

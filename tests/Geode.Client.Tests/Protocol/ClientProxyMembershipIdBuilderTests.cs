@@ -5,6 +5,7 @@ using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
 using Geode.Client.Services;
+using Geode.Client.Tests.Protocol.Serialization;
 using Xunit;
 
 namespace Geode.Client.Tests.Protocol;
@@ -26,7 +27,8 @@ public class ClientProxyMembershipIdBuilderTests
     {
         var ctx = new CacheScopeContext();
         ctx.Initialize(string.Empty, options ?? new GeodeClientOptions());
-        return new ClientProxyMembershipIdBuilder(ctx);
+        var sp = SerializationTestHelpers.BuildSp();
+        return new ClientProxyMembershipIdBuilder(ctx, sp);
     }
 
     // ====================================================================

@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+
 namespace Geode.Client.Protocol;
 
 partial class TcrMessageBuilder
@@ -110,10 +112,10 @@ partial class TcrMessageBuilder
 
         var parts = new List<TcrPart>(5 + keys.Count)
         {
-            // Part 1 — Region name. Raw ASCII bytes (cppcache writeRegionPart).
+            // Part 1 ??Region name. Raw ASCII bytes (cppcache writeRegionPart).
             partBuilder.RegionName(regionName),
 
-            // Part 2 — EventId. 18 raw bytes:
+            // Part 2 ??EventId. 18 raw bytes:
             //   [u8 longCode=3][i64 threadId BE][u8 longCode=3][i64 baseSeq BE]
             partBuilder.Raw(w =>
             {
@@ -123,32 +125,28 @@ partial class TcrMessageBuilder
                 w.WriteInt64(eventSequenceId);
             }, sizeHint: 18),
 
-            // Part 3 — Flags (cppcache writeIntPart). Phase 1.3 MVP always 0
+            // Part 3 ??Flags (cppcache writeIntPart). Phase 1.3 MVP always 0
             //   (no client-side caching, no concurrency checks).
             partBuilder.Int32(0),
 
-            // Part 4 — Callback argument. cppcache writeObjectPart(nullptr)
+            // Part 4 ??Callback argument. cppcache writeObjectPart(nullptr)
             //   emits DSCode.NullObj rather than skipping the part, so this
             //   slot is unconditional.
             callbackArgument is null
                 ? partBuilder.NullObj()
                 : partBuilder.Object(w => _serializationRegistry.WriteObject(w, callbackArgument)),
 
-            // Part 5 — Number of keys (cppcache writeIntPart).
+            // Part 5 ??Number of keys (cppcache writeIntPart).
             partBuilder.Int32(keys.Count),
         };
 
-        // Parts 6..5+N — Each key (DSCode-tagged via registry).
+        // Parts 6..5+N ??Each key (DSCode-tagged via registry).
         foreach (var key in keys)
         {
             ArgumentNullException.ThrowIfNull(key);
             parts.Add(partBuilder.Object(w => _serializationRegistry.WriteObject(w, key)));
         }
 
-        return new TcrMessage(
-            MessageType: MessageType.RemoveAll,
-            TransactionId: transactionId,
-            EarlyAck: 0,
-            Parts: parts);
+        return ActivatorUtilities.CreateInstance<TcrMessage>(_serviceProvider, MessageType.RemoveAll, transactionId, (byte)0, parts);
     }
 }

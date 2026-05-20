@@ -3,10 +3,9 @@ using System.Collections;
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
-/// <see cref="IDataConverter"/> for <c>LinkedList&lt;T&gt;</c> ↔
-/// <see cref="DSCode.CacheableLinkedList"/> (10). Wire payload is
-/// identical to <see cref="ListDataConverter"/> — VL-encoded length
-/// followed by N fully-serialised elements — because cppcache backs
+/// <see cref="IDataConverter"/> for <c>LinkedList&lt;T&gt;</c> ??/// <see cref="DSCode.CacheableLinkedList"/> (10). Wire payload is
+/// identical to <see cref="ListDataConverter"/> ??VL-encoded length
+/// followed by N fully-serialised elements ??because cppcache backs
 /// both <c>CacheableArrayList</c> and <c>CacheableLinkedList</c> with
 /// the same <c>std::vector&lt;CacheablePtr&gt;</c> (see
 /// <c>cppcache/include/geode/CacheableBuiltins.hpp:348-358</c>). The
@@ -25,7 +24,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// <b>Not <c>IList&lt;T&gt;</c>-compatible.</b> Unlike
 /// <c>List&lt;T&gt;</c>, <c>LinkedList&lt;T&gt;</c> only implements
 /// <see cref="ICollection{T}"/> / <see cref="IReadOnlyCollection{T}"/>
-/// — it deliberately does <i>not</i> implement <see cref="IList{T}"/>
+/// ??it deliberately does <i>not</i> implement <see cref="IList{T}"/>
 /// because indexed access is O(N) on a linked list. Callers wanting a
 /// linked-list-shaped region value must declare
 /// <c>IRegion&lt;K, LinkedList&lt;T&gt;&gt;</c>, not
@@ -56,17 +55,17 @@ internal sealed class LinkedListDataConverter : IDataConverter
 
     public byte GetDsCode(object value) => DSCode.CacheableLinkedList;
 
-    public void Write(BigEndianBinaryWriter writer, object value, byte dsCode, int depth)
+    public void Write(DataOutput writer, object value, byte dsCode, int depth)
     {
-        // LinkedList<T> implements non-generic ICollection — Count
+        // LinkedList<T> implements non-generic ICollection ??Count
         // is O(1), no scratch list needed (unlike HashSet<T>).
-        // foreach yields head→tail, matching the cppcache wire order.
+        // foreach yields head?�tail, matching the cppcache wire order.
         var source = (ICollection)value;
         if (source.Count > _registry.MaxArrayLength)
         {
             throw new InvalidOperationException(
                 $"LinkedListDataConverter: cannot serialise a list of {source.Count} elements "
-                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+                + $"??exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
         }
         writer.WriteArrayLen(source.Count);
         foreach (var item in source)
@@ -87,12 +86,12 @@ internal sealed class LinkedListDataConverter : IDataConverter
         {
             throw new GeodeException(
                 $"LinkedListDataConverter: wire list length {length} exceeds "
-                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) — refusing to allocate.");
+                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) ??refusing to allocate.");
         }
 
         for (var i = 0; i < length; i++)
         {
-            // AddLast preserves wire order — wire element 0 becomes
+            // AddLast preserves wire order ??wire element 0 becomes
             // head, last element becomes tail.
             list.AddLast(_registry.ReadObject(reader, depth + 1));
         }

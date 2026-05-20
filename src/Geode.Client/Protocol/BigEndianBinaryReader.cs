@@ -15,7 +15,7 @@ namespace Geode.Client.Protocol;
 /// the buffer.
 ///
 /// BCL's <c>System.IO.BinaryReader</c> is little-endian, hence the explicit
-/// "BigEndian" prefix on this type — do not confuse the two.
+/// "BigEndian" prefix on this type ??do not confuse the two.
 ///
 /// Methods marked "prototype" throw <see cref="NotImplementedException"/>
 /// and will be filled in as later phases need them.
@@ -34,7 +34,7 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
     public int Remaining => buffer.Length - _position;
 
     // ======================================================================
-    //  Implemented (Phase 1 — frame codec)
+    //  Implemented (Phase 1 ??frame codec)
     // ======================================================================
 
     /// <summary>Read a single unsigned byte (u8).</summary>
@@ -83,13 +83,13 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
     }
 
     // ======================================================================
-    //  Prototype — additional primitives, fill in when first needed
+    //  Prototype ??additional primitives, fill in when first needed
     // ======================================================================
 
     /// <summary>Read a signed 8-bit integer (i8).</summary>
     /// <remarks>
     /// Two's-complement reinterpretation of the next wire byte (e.g. <c>0xFF</c>
-    /// → <c>-1</c>), matching what Java's <c>DataInput::readByte</c> returns.
+    /// ??<c>-1</c>), matching what Java's <c>DataInput::readByte</c> returns.
     /// </remarks>
     public sbyte ReadSByte() => (sbyte)ReadByte();
 
@@ -138,11 +138,11 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
     /// <remarks>
     /// Dispatched DSCodes:
     /// <list type="bullet">
-    ///   <item><see cref="DSCode.CacheableNullString"/> (69) → <see langword="null"/></item>
-    ///   <item><see cref="DSCode.CacheableASCIIString"/> (87) → u16 length + ASCII bytes</item>
-    ///   <item><see cref="DSCode.CacheableString"/> (42) → Java modified UTF-8 (see <see cref="ReadJavaModifiedUtf8"/>)</item>
-    ///   <item><see cref="DSCode.CacheableStringHuge"/> (89) → UTF-16 BE (Phase 4, currently NIE)</item>
-    ///   <item><see cref="DSCode.CacheableASCIIStringHuge"/> (88) → Phase 4 NIE</item>
+    ///   <item><see cref="DSCode.CacheableNullString"/> (69) ??<see langword="null"/></item>
+    ///   <item><see cref="DSCode.CacheableASCIIString"/> (87) ??u16 length + ASCII bytes</item>
+    ///   <item><see cref="DSCode.CacheableString"/> (42) ??Java modified UTF-8 (see <see cref="ReadJavaModifiedUtf8"/>)</item>
+    ///   <item><see cref="DSCode.CacheableStringHuge"/> (89) ??UTF-16 BE (Phase 4, currently NIE)</item>
+    ///   <item><see cref="DSCode.CacheableASCIIStringHuge"/> (88) ??Phase 4 NIE</item>
     /// </list>
     /// </remarks>
     public string? ReadString()
@@ -154,7 +154,7 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
             DSCode.CacheableASCIIString => ReadAsciiString(ReadUInt16()),
             DSCode.CacheableString => ReadJavaModifiedUtf8(),
             DSCode.CacheableASCIIStringHuge => throw new NotImplementedException(
-                "CacheableASCIIStringHuge (DSCode 88) — Phase 4."),
+                "CacheableASCIIStringHuge (DSCode 88) ??Phase 4."),
             DSCode.CacheableStringHuge => ReadUtf16Huge(),
             _ => throw new GeodeException(
                 $"BigEndianBinaryReader.ReadString: unexpected DSCode 0x{dscode:X2}."),
@@ -277,7 +277,7 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
     /// Read a length-prefixed byte sequence: <see cref="ReadArrayLen"/>
     /// length (varint) followed by the bytes, or <c>null</c> if the
     /// sentinel is <c>-1</c>. Inverse of
-    /// <see cref="BigEndianBinaryWriter.WriteBytes"/>; mirrors cppcache
+    /// <see cref="DataOutput.WriteBytes"/>; mirrors cppcache
     /// <c>DataInput::readBytes</c>.
     /// </summary>
     public byte[]? ReadBytes()
@@ -289,19 +289,19 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
 
     /// <summary>
     /// Read Geode's variable-length array length encoding (1, 3, or 5
-    /// bytes). Inverse of <see cref="BigEndianBinaryWriter.WriteArrayLen"/>;
+    /// bytes). Inverse of <see cref="DataOutput.WriteArrayLen"/>;
     /// mirrors cppcache <c>DataInput::readArrayLen</c>.
     /// </summary>
     /// <remarks>
     /// <list type="bullet">
-    ///   <item>First byte = <c>0xFF</c>            → returns <c>-1</c> (null sentinel).</item>
-    ///   <item>First byte = <c>0xFE</c>            → next u16 BE is the length.</item>
-    ///   <item>First byte = <c>0xFD</c>            → next i32 BE is the length.</item>
-    ///   <item>First byte ≤ <c>252</c> (0xFC)      → that byte is the length.</item>
+    ///   <item>First byte = <c>0xFF</c>            ??returns <c>-1</c> (null sentinel).</item>
+    ///   <item>First byte = <c>0xFE</c>            ??next u16 BE is the length.</item>
+    ///   <item>First byte = <c>0xFD</c>            ??next i32 BE is the length.</item>
+    ///   <item>First byte ??<c>252</c> (0xFC)      ??that byte is the length.</item>
     /// </list>
     /// The first byte is read as <b>unsigned</b> (matching
-    /// <see cref="BigEndianBinaryWriter.WriteArrayLen"/>'s
-    /// <c>WriteByte((byte)length)</c> on the inline path) — reading it
+    /// <see cref="DataOutput.WriteArrayLen"/>'s
+    /// <c>WriteByte((byte)length)</c> on the inline path) ??reading it
     /// signed misinterprets lengths 128..252 as negative numbers.
     /// </remarks>
     public int ReadArrayLen()
@@ -312,7 +312,7 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
             0xFF => -1,            // null sentinel
             0xFE => ReadUInt16(),  // u16 follows
             0xFD => ReadInt32(),   // i32 follows
-            _ => first,            // 0..252 — literal length
+            _ => first,            // 0..252 ??literal length
         };
     }
 
@@ -326,7 +326,7 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
     /// to <c>\0</c>, and supplementary codepoints arrive as a surrogate pair
     /// of two 3-byte sequences (6 bytes total) rather than the 4-byte UTF-8
     /// form. We decode per UTF-16 code unit (matching how the writer
-    /// encoded) — unpaired surrogates round-trip intact.
+    /// encoded) ??unpaired surrogates round-trip intact.
     /// </para>
     /// <para>
     /// Empty payload (u16 length = 0) returns <see cref="string.Empty"/>,
@@ -363,12 +363,12 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
             var b1 = span[bytePos++];
             if ((b1 & 0x80) == 0)
             {
-                // 0xxxxxxx — 1-byte ASCII char (excludes 0x00 in modified UTF-8).
+                // 0xxxxxxx ??1-byte ASCII char (excludes 0x00 in modified UTF-8).
                 chars[charPos++] = (char)b1;
             }
             else if ((b1 & 0xE0) == 0xC0)
             {
-                // 110xxxxx 10xxxxxx — 2-byte char (covers 0x0000–0x07FF
+                // 110xxxxx 10xxxxxx ??2-byte char (covers 0x0000??x07FF
                 // including the special 0xC0 0x80 = \0 encoding).
                 if (bytePos >= byteLen) throw MalformedUtf8(bytePos);
                 var b2 = span[bytePos++];
@@ -377,8 +377,8 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
             }
             else if ((b1 & 0xF0) == 0xE0)
             {
-                // 1110xxxx 10xxxxxx 10xxxxxx — 3-byte char (covers
-                // 0x0800–0xFFFF and surrogate halves).
+                // 1110xxxx 10xxxxxx 10xxxxxx ??3-byte char (covers
+                // 0x0800??xFFFF and surrogate halves).
                 if (bytePos + 1 >= byteLen) throw MalformedUtf8(bytePos);
                 var b2 = span[bytePos++];
                 var b3 = span[bytePos++];

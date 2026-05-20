@@ -1,24 +1,23 @@
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
-/// <see cref="IDataConverter"/> for <see cref="string"/><c>[]</c> ↔
-/// <see cref="DSCode.CacheableStringArray"/> (64). Wire payload is a
+/// <see cref="IDataConverter"/> for <see cref="string"/><c>[]</c> ??/// <see cref="DSCode.CacheableStringArray"/> (64). Wire payload is a
 /// VL-encoded length (1 / 3 / 5 bytes) followed by N
-/// <i>fully-serialised objects</i> — each element starts with its
+/// <i>fully-serialised objects</i> ??each element starts with its
 /// own DSCode byte (42 / 87 / 88 / 89 for the four string variants,
 /// or 41 for <c>null</c> elements). Mirrors cppcache
 /// <c>CacheableStringArray</c>
 /// (<c>CacheableArrayPrimitive&lt;shared_ptr&lt;CacheableString&gt;,
 /// CacheableStringArray&gt;</c>) which routes through
-/// <c>serializer::writeArrayObject</c> → <c>writeObject(shared_ptr)</c>
+/// <c>serializer::writeArrayObject</c> ??<c>writeObject(shared_ptr)</c>
 /// per element (the <c>shared_ptr</c> overload writes DSCode +
 /// payload via the registry, NOT a raw string body).
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>Different from the primitive array converters.</b> The
-/// <c>bool[]</c> / <c>int[]</c> / … paths write raw element bytes
-/// with no per-element DSCode (the array's DSCode 26 / 48 / … fully
+/// <c>bool[]</c> / <c>int[]</c> / ??paths write raw element bytes
+/// with no per-element DSCode (the array's DSCode 26 / 48 / ??fully
 /// specifies the element shape). For <see cref="string"/><c>[]</c>
 /// the per-element shape is ambiguous (ASCII short vs modified-UTF-8
 /// vs UTF-16 huge), so cppcache + Java write the full DSCode +
@@ -30,7 +29,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// </para>
 /// <para>
 /// <b>Why the registry reference</b>: writing one element needs the
-/// same encode dispatch that a top-level <c>Put</c> uses — pick a
+/// same encode dispatch that a top-level <c>Put</c> uses ??pick a
 /// DSCode (42 / 87 / 88 / 89), emit it, write the body. Reading
 /// needs the symmetric path. Passing the registry through the
 /// constructor keeps this converter unaware of <c>StringDataConverter</c>
@@ -69,21 +68,21 @@ internal sealed class StringArrayDataConverter : DataConverter<string[]>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, string[] value, byte dsCode, int depth)
+    public override void Write(DataOutput writer, string[] value, byte dsCode, int depth)
     {
         if (value.Length > _registry.MaxArrayLength)
         {
             throw new InvalidOperationException(
                 $"StringArrayDataConverter: cannot serialise an array of {value.Length} elements "
-                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+                + $"??exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
         }
         writer.WriteArrayLen(value.Length);
         foreach (var element in value)
         {
-            // WriteObject handles null → DSCode.NullObj (41) and
+            // WriteObject handles null ??DSCode.NullObj (41) and
             // picks the correct string DSCode (42 / 87 / 88 / 89)
             // for non-null elements. depth + 1 propagates the
-            // recursion budget into the registry — even leaf strings
+            // recursion budget into the registry ??even leaf strings
             // count, keeping the limit symmetric with container
             // elements.
             _registry.WriteObject(writer, element, depth + 1);
@@ -101,10 +100,10 @@ internal sealed class StringArrayDataConverter : DataConverter<string[]>
         {
             throw new GeodeException(
                 $"StringArrayDataConverter: wire array length {length} exceeds "
-                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) — refusing to allocate.");
+                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) ??refusing to allocate.");
         }
         // Element type is string?[] in spirit (nulls survive), but the
-        // CLR Type is the same string[] either way — nullable
+        // CLR Type is the same string[] either way ??nullable
         // annotations aren't part of runtime type identity, so the
         // registry's _byType lookup hits this converter for both
         // string[] and string?[] uses on the consumer side.
@@ -114,7 +113,7 @@ internal sealed class StringArrayDataConverter : DataConverter<string[]>
             // Cast is safe: the wire DSCode dispatch on the read
             // side will either return a string (from StringDataConverter)
             // or null (NullObj=41 handled by the registry). Anything
-            // else means corrupt wire — let InvalidCastException
+            // else means corrupt wire ??let InvalidCastException
             // surface that as a hard fault rather than silently
             // produce wrong data.
             array[i] = (string)_registry.ReadObject(reader, depth + 1)!;

@@ -5,12 +5,13 @@ using System.Text;
 using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Services;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol;
 
 /// <summary>
 /// Generates the inner identity blob of a Geode <c>ClientProxyMembershipID</c>
-/// — i.e. the bytes carried in step 6c of the handshake. Mirrors cppcache
+/// ??i.e. the bytes carried in step 6c of the handshake. Mirrors cppcache
 /// <c>ClientProxyMembershipIDFactory::create</c> +
 /// <c>ClientProxyMembershipID::initObjectVars</c>.
 /// </summary>
@@ -20,11 +21,11 @@ namespace Geode.Client.Protocol;
 /// (DataSerializableFixedID = 92), <b>not</b> a serialised
 /// <c>ClientProxyMembershipID</c>. The outer ClientProxyMembershipID
 /// framing (FixedIDByte + DSFid 38 + identity blob + i32 uniqueId) is
-/// added by <c>TcrConnection.HandshakeAsync</c> step 6 — this builder only
+/// added by <c>TcrConnection.HandshakeAsync</c> step 6 ??this builder only
 /// emits the identity bytes.
 /// </para>
 /// <para>
-/// Registered as <b>scoped</b> in <c>AddCore</c> — one builder per
+/// Registered as <b>scoped</b> in <c>AddCore</c> ??one builder per
 /// cache. Identity is cache-scoped because <see cref="GeodeClientOptions.Name"/>
 /// (cluster name) participates in the blob; two caches with different
 /// configured names must yield different identity bytes. Reads
@@ -35,7 +36,7 @@ namespace Geode.Client.Protocol;
 /// call since inputs (hostname, IP, PID, options) are immutable per cache.
 /// </para>
 /// </remarks>
-internal sealed class ClientProxyMembershipIdBuilder(CacheScopeContext scopeContext)
+internal sealed class ClientProxyMembershipIdBuilder(CacheScopeContext scopeContext, IServiceProvider serviceProvider)
 {
     // === cppcache hardcoded values (ClientProxyMembershipID.cpp:31-33) ======
     private const byte InternalDistributedMemberDsfid = 92;
@@ -43,7 +44,7 @@ internal sealed class ClientProxyMembershipIdBuilder(CacheScopeContext scopeCont
     private const int DcPort = 12334;
 
     /// <summary>
-    /// Per-cache unique tag — generated once in this builder's ctor.
+    /// Per-cache unique tag ??generated once in this builder's ctor.
     /// Mirrors cppcache <c>ClientProxyMembershipIDFactory::randString_</c>
     /// (<c>ClientProxyMembershipIDFactory.cpp:35-56</c>), which is an
     /// instance member built afresh inside each
@@ -60,7 +61,7 @@ internal sealed class ClientProxyMembershipIdBuilder(CacheScopeContext scopeCont
     /// share one client identity from the server's perspective, and
     /// each cache's seq-counter (which resets to 0 on cache build)
     /// will collide with the previous cache's events on the
-    /// <c>seq=1, 2, 3...</c> values — server silently drops the
+    /// <c>seq=1, 2, 3...</c> values ??server silently drops the
     /// "duplicates". cppcache parity (instance member) sidesteps the
     /// whole issue: each cache has its own random tag, so clientIds
     /// differ and the dedup triple is naturally unique per cache.
@@ -77,7 +78,7 @@ internal sealed class ClientProxyMembershipIdBuilder(CacheScopeContext scopeCont
     private byte[]? _identity;
 
     /// <summary>
-    /// Build the identity blob. Idempotent — repeated calls return the same
+    /// Build the identity blob. Idempotent ??repeated calls return the same
     /// byte array reference.
     /// </summary>
     public byte[] Build()
@@ -87,8 +88,7 @@ internal sealed class ClientProxyMembershipIdBuilder(CacheScopeContext scopeCont
             return _identity;
         }
 
-        var buffer = new ArrayBufferWriter<byte>();
-        var w = new BigEndianBinaryWriter(buffer);
+        using var w = ActivatorUtilities.CreateInstance<DataOutput>(serviceProvider);
 
         // Outer framing: this is a serialised InternalDistributedMember.
         w.WriteByte(DSCode.FixedIDByte);
@@ -98,33 +98,33 @@ internal sealed class ClientProxyMembershipIdBuilder(CacheScopeContext scopeCont
         // with varint length via WriteBytes.
         w.WriteBytes(ResolveHostAddress());
 
-        // SyncCounter — reconnect counter; fresh process = 0.
+        // SyncCounter ??reconnect counter; fresh process = 0.
         w.WriteInt32(0);
 
-        // Hostname — DSCode-tagged string (server reads via
+        // Hostname ??DSCode-tagged string (server reads via
         // StaticSerialization.readString).
         w.WriteString(Dns.GetHostName());
 
-        // SplitBrainFlag — false. cppcache hardcodes 0 in the relevant ctor.
+        // SplitBrainFlag ??false. cppcache hardcodes 0 in the relevant ctor.
         w.WriteSByte(0);
 
-        // DcPort — distributed-cache port; cppcache hardcodes 12334.
+        // DcPort ??distributed-cache port; cppcache hardcodes 12334.
         w.WriteInt32(DcPort);
 
-        // vPID — process ID, lets the server distinguish co-tenant clients.
+        // vPID ??process ID, lets the server distinguish co-tenant clients.
         w.WriteInt32(Environment.ProcessId);
 
-        // vmKind = LONER (13) — we are not a Geode peer / locator / admin.
+        // vmKind = LONER (13) ??we are not a Geode peer / locator / admin.
         w.WriteSByte(VmKindLoner);
 
-        // RoleArrayLength — no roles. Varint encoding (matches server's
+        // RoleArrayLength ??no roles. Varint encoding (matches server's
         // StaticSerialization.readStringArray length sentinel for empty/null).
         w.WriteArrayLen(0);
 
-        // dsName — distributed system name; usually "" for clients.
+        // dsName ??distributed system name; usually "" for clients.
         w.WriteString(_options.Name);
 
-        // uniqueTag — randomly generated per cache (see _uniqueTag doc).
+        // uniqueTag ??randomly generated per cache (see _uniqueTag doc).
         w.WriteString(_uniqueTag);
 
         // Durable subscription metadata. Server's MemberIdentifierImpl.toData
@@ -142,7 +142,7 @@ internal sealed class ClientProxyMembershipIdBuilder(CacheScopeContext scopeCont
         // Trailing protocol-version stamp (compressed ordinal).
         ProtocolVersion.Current.WriteTo(w);
 
-        _identity = buffer.WrittenSpan.ToArray();
+        _identity = w.WrittenSpan.ToArray();
         return _identity;
     }
 
@@ -150,7 +150,7 @@ internal sealed class ClientProxyMembershipIdBuilder(CacheScopeContext scopeCont
     /// Resolve the local hostname's first IP and return its raw bytes
     /// (4 for IPv4, 16 for IPv6). Mirrors cppcache's
     /// <c>resolver.resolve(hostname, "0")</c> followed by taking the first
-    /// endpoint's address — no filtering by family.
+    /// endpoint's address ??no filtering by family.
     /// </summary>
     private static byte[] ResolveHostAddress()
     {

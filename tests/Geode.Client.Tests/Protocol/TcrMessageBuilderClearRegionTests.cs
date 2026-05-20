@@ -1,6 +1,7 @@
 using Geode.Client.Protocol;
 using Geode.Client.Protocol.Serialization;
 using Geode.Client.Tests.Protocol.Serialization;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Geode.Client.Tests.Protocol;
@@ -18,8 +19,11 @@ public class TcrMessageBuilderClearRegionTests
     private const long ThreadId = 1L;
     private const long SeqId = 1L;
 
-    private static TcrMessageBuilder NewBuilder() =>
-        new(new TcrPartBuilder(), SerializationTestHelpers.CreateRegistry());
+    private static TcrMessageBuilder NewBuilder()
+    {
+        var sp = SerializationTestHelpers.BuildSp();
+        return new(new TcrPartBuilder(sp), sp.GetRequiredService<SerializationRegistry>(), sp);
+    }
 
     private static byte[] EncodedInt32(int v) =>
     [
@@ -160,7 +164,7 @@ public class TcrMessageBuilderClearRegionTests
     public void ClearRegion_roundtrips_through_encode_decode()
     {
         var original = NewBuilder().ClearRegion("/test", ThreadId, SeqId);
-        var decoded = TcrMessage.Decode(original.Encode());
+        var decoded = TcrMessage.Decode(original.Encode(), SerializationTestHelpers.BuildSp());
         Assert.Equal(original, decoded);
     }
 
@@ -174,7 +178,7 @@ public class TcrMessageBuilderClearRegionTests
             callbackArgument: 7,
             transactionId: 42);
 
-        var decoded = TcrMessage.Decode(original.Encode());
+        var decoded = TcrMessage.Decode(original.Encode(), SerializationTestHelpers.BuildSp());
         Assert.Equal(original, decoded);
     }
 }

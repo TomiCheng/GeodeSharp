@@ -1,6 +1,7 @@
 using System.Buffers;
 using Geode.Client.Internal;
 using Geode.Client.Protocol;
+using Geode.Client.Tests.Protocol.Serialization;
 using Xunit;
 
 namespace Geode.Client.Tests.Internal;
@@ -8,7 +9,7 @@ namespace Geode.Client.Tests.Internal;
 /// <summary>
 /// Byte-fixture tests for the locator wire codec. Each test pins the
 /// exact bytes a cppcache locator would produce / consume so a future
-/// edit to <see cref="BigEndianBinaryWriter.WriteString"/> or the
+/// edit to <see cref="DataOutput.WriteString"/> or the
 /// DSCode constants doesn't silently break locator interop.
 /// </summary>
 public class LocatorWireCodecTests
@@ -17,12 +18,11 @@ public class LocatorWireCodecTests
     //  Helpers
     // ─────────────────────────────────────────────────────────────
 
-    private static byte[] Write(Action<BigEndianBinaryWriter> body)
+    private static byte[] Write(Action<DataOutput> body)
     {
-        var buffer = new ArrayBufferWriter<byte>(64);
-        var writer = new BigEndianBinaryWriter(buffer);
+        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
         body(writer);
-        return buffer.WrittenSpan.ToArray();
+        return writer.WrittenSpan.ToArray();
     }
 
     /// <summary>Encode <paramref name="s"/> the way cppcache <c>writeString</c> does for ASCII input: <c>[CacheableASCIIString=87][u16 length][bytes]</c>.</summary>

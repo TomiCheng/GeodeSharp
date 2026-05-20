@@ -8,8 +8,8 @@ namespace Geode.Client.Protocol.Serialization;
 /// <summary>
 /// Per-cache codec registry. Mirrors cppcache
 /// <c>SerializationRegistry</c>
-/// (<c>cppcache/src/SerializationRegistry.hpp/.cpp</c>) — owns the
-/// DSCode ↔ <see cref="IDataConverter"/> mapping and provides the
+/// (<c>cppcache/src/SerializationRegistry.hpp/.cpp</c>) ??owns the
+/// DSCode ??<see cref="IDataConverter"/> mapping and provides the
 /// central <see cref="WriteObject"/> / <see cref="ReadObject"/>
 /// dispatch every wire op routes through for key / value
 /// serialisation.
@@ -20,12 +20,12 @@ namespace Geode.Client.Protocol.Serialization;
 /// <see cref="IDataConverter"/> goes into both
 /// <see cref="_byDsCode"/> (decode key = wire byte) and
 /// <see cref="_byType"/> (encode key = runtime CLR type). The two
-/// dicts are intentionally not merged into one — decode and encode
+/// dicts are intentionally not merged into one ??decode and encode
 /// dispatch by different keys.
 /// </para>
 /// <para>
 /// <b>Multi-DSCode converters.</b> A single converter can register
-/// against multiple DSCodes (one CLR type, many wire forms — see
+/// against multiple DSCodes (one CLR type, many wire forms ??see
 /// <c>StringDataConverter</c>). <see cref="Register"/> iterates
 /// <see cref="IDataConverter.DsCodes"/> and points each entry at the
 /// same instance.
@@ -95,56 +95,56 @@ internal sealed class SerializationRegistry
     {
         // Order: scalar (sorted by DSCode), then bytes, then string,
         // then arrays (sorted by DSCode).
-        // Scalars: no length-prefix on wire → no allocation DoS
-        // surface → no CacheScopeContext injection needed. Plain
-        // `new …()` keeps these construction sites cheap.
-        Register(new BooleanDataConverter());      // 53  CacheableBoolean   → bool
-        Register(new CharacterDataConverter());    // 54  CacheableCharacter → char
-        Register(new ByteDataConverter());         // 55  CacheableByte      → byte (unsigned, .NET convention)
-        Register(new Int16DataConverter());        // 56  CacheableInt16     → short
-        Register(new Int32DataConverter());        // 57  CacheableInt32     → int
-        Register(new Int64DataConverter());        // 58  CacheableInt64     → long
-        Register(new SingleDataConverter());       // 59  CacheableFloat     → float
-        Register(new DoubleDataConverter());       // 60  CacheableDouble    → double
-        Register(new DateTimeDataConverter());     // 61  CacheableDate      → DateTime
+        // Scalars: no length-prefix on wire ??no allocation DoS
+        // surface ??no CacheScopeContext injection needed. Plain
+        // `new ??)` keeps these construction sites cheap.
+        Register(new BooleanDataConverter());      // 53  CacheableBoolean   ??bool
+        Register(new CharacterDataConverter());    // 54  CacheableCharacter ??char
+        Register(new ByteDataConverter());         // 55  CacheableByte      ??byte (unsigned, .NET convention)
+        Register(new Int16DataConverter());        // 56  CacheableInt16     ??short
+        Register(new Int32DataConverter());        // 57  CacheableInt32     ??int
+        Register(new Int64DataConverter());        // 58  CacheableInt64     ??long
+        Register(new SingleDataConverter());       // 59  CacheableFloat     ??float
+        Register(new DoubleDataConverter());       // 60  CacheableDouble    ??double
+        Register(new DateTimeDataConverter());     // 61  CacheableDate      ??DateTime
 
         // Length-prefixed converters: read CacheScopeContext via DI to
         // snapshot Serialization.MaxArrayLength / MaxStringLength at
         // construction. ActivatorUtilities resolves the scoped
-        // CacheScopeContext from _serviceProvider — same instance the
+        // CacheScopeContext from _serviceProvider ??same instance the
         // registry itself sees.
-        Register(ActivatorUtilities.CreateInstance<BytesDataConverter>(_serviceProvider));        // 46  CacheableBytes     → byte[]
+        Register(ActivatorUtilities.CreateInstance<BytesDataConverter>(_serviceProvider));        // 46  CacheableBytes     ??byte[]
         _stringConverter = ActivatorUtilities.CreateInstance<StringDataConverter>(_serviceProvider);
-        Register(_stringConverter);                                                                // 42/87/88/89 (+69 read-only) → string
+        Register(_stringConverter);                                                                // 42/87/88/89 (+69 read-only) ??string
 
-        Register(ActivatorUtilities.CreateInstance<BooleanArrayDataConverter>(_serviceProvider)); // 26  BooleanArray       → bool[]
-        Register(ActivatorUtilities.CreateInstance<CharArrayDataConverter>(_serviceProvider));    // 27  CharArray          → char[]
-        Register(ActivatorUtilities.CreateInstance<Int16ArrayDataConverter>(_serviceProvider));   // 47  CacheableInt16Array → short[]
-        Register(ActivatorUtilities.CreateInstance<Int32ArrayDataConverter>(_serviceProvider));   // 48  CacheableInt32Array → int[]
-        Register(ActivatorUtilities.CreateInstance<Int64ArrayDataConverter>(_serviceProvider));   // 49  CacheableInt64Array → long[]
-        Register(ActivatorUtilities.CreateInstance<SingleArrayDataConverter>(_serviceProvider));  // 50  CacheableFloatArray → float[]
-        Register(ActivatorUtilities.CreateInstance<DoubleArrayDataConverter>(_serviceProvider));  // 51  CacheableDoubleArray → double[]
+        Register(ActivatorUtilities.CreateInstance<BooleanArrayDataConverter>(_serviceProvider)); // 26  BooleanArray       ??bool[]
+        Register(ActivatorUtilities.CreateInstance<CharArrayDataConverter>(_serviceProvider));    // 27  CharArray          ??char[]
+        Register(ActivatorUtilities.CreateInstance<Int16ArrayDataConverter>(_serviceProvider));   // 47  CacheableInt16Array ??short[]
+        Register(ActivatorUtilities.CreateInstance<Int32ArrayDataConverter>(_serviceProvider));   // 48  CacheableInt32Array ??int[]
+        Register(ActivatorUtilities.CreateInstance<Int64ArrayDataConverter>(_serviceProvider));   // 49  CacheableInt64Array ??long[]
+        Register(ActivatorUtilities.CreateInstance<SingleArrayDataConverter>(_serviceProvider));  // 50  CacheableFloatArray ??float[]
+        Register(ActivatorUtilities.CreateInstance<DoubleArrayDataConverter>(_serviceProvider));  // 51  CacheableDoubleArray ??double[]
         // string[] and object[] both take a registry reference so
         // each element can re-enter WriteObject / ReadObject with
-        // its own DSCode. Safe `this` pass — converter stores the
+        // its own DSCode. Safe `this` pass ??converter stores the
         // reference but doesn't invoke anything on us until Write /
         // Read fires post-construction.
-        Register(new StringArrayDataConverter(this)); // 64  CacheableStringArray → string[]
-        Register(new ObjectArrayDataConverter(this)); // 52  CacheableObjectArray → object[]
+        Register(new StringArrayDataConverter(this)); // 64  CacheableStringArray ??string[]
+        Register(new ObjectArrayDataConverter(this)); // 52  CacheableObjectArray ??object[]
 
-        // Tier B-2 collections — open-generic. Each ManagedType is
+        // Tier B-2 collections ??open-generic. Each ManagedType is
         // typeof(List<>) / typeof(HashSet<>) / typeof(Dictionary<,>);
         // WriteObject's dispatch falls back to
         // GetGenericTypeDefinition() so one converter instance handles
         // every closed instantiation. Target-shape conversion
-        // (List<object?> → IList<int>, HashSet<object?> → ISet<int>,
-        // Dictionary<object,object?> → Dictionary<K,V>, …) happens
+        // (List<object?> ??IList<int>, HashSet<object?> ??ISet<int>,
+        // Dictionary<object,object?> ??Dictionary<K,V>, ?? happens
         // post-decode at TypedResultAdapter, not here.
-        Register(new LinkedListDataConverter(this));  // 10  CacheableLinkedList → LinkedList<T>
-        Register(new ListDataConverter(this));        // 65  CacheableArrayList  → List<T>
-        Register(new HashSetDataConverter(this));     // 66  CacheableHashSet    → HashSet<T>
-        Register(new DictionaryDataConverter(this));  // 67  CacheableHashMap    → Dictionary<K,V>
-        Register(new StackDataConverter(this));       // 74  CacheableStack      → Stack<T>
+        Register(new LinkedListDataConverter(this));  // 10  CacheableLinkedList ??LinkedList<T>
+        Register(new ListDataConverter(this));        // 65  CacheableArrayList  ??List<T>
+        Register(new HashSetDataConverter(this));     // 66  CacheableHashSet    ??HashSet<T>
+        Register(new DictionaryDataConverter(this));  // 67  CacheableHashMap    ??Dictionary<K,V>
+        Register(new StackDataConverter(this));       // 74  CacheableStack      ??Stack<T>
     }
 
     /// <summary>
@@ -154,8 +154,7 @@ internal sealed class SerializationRegistry
     /// </summary>
     /// <remarks>
     /// Loops <paramref name="converter"/>'s <see cref="IDataConverter.DsCodes"/>
-    /// to mount every wire-form entry against the same instance —
-    /// multi-DSCode converters like <c>StringDataConverter</c> need
+    /// to mount every wire-form entry against the same instance ??    /// multi-DSCode converters like <c>StringDataConverter</c> need
     /// this. <see cref="_byType"/> still gets one entry per converter
     /// because the encode side keys by CLR type.
     /// </remarks>
@@ -179,8 +178,7 @@ internal sealed class SerializationRegistry
     /// </summary>
     internal int MaxArrayLength { get; }
 
-    // TODO Phase 2+: PDX path —
-    //   private readonly Dictionary<string, IPdxConverter> _pdxByName = new();
+    // TODO Phase 2+: PDX path ??    //   private readonly Dictionary<string, IPdxConverter> _pdxByName = new();
     //   private readonly Dictionary<Type, IPdxConverter> _pdxByType = new();
 
     /// <summary>
@@ -188,7 +186,7 @@ internal sealed class SerializationRegistry
     /// at scope-build time. Read once and cached because the per-cache
     /// options bag is one-shot (<see cref="CacheScopeContext.Initialize"/>
     /// runs before any consumer resolves) and the depth check fires on
-    /// every recursive write/read step — no point chasing the property
+    /// every recursive write/read step ??no point chasing the property
     /// chain each time.
     /// </summary>
     internal int MaxDepth { get; }
@@ -208,7 +206,7 @@ internal sealed class SerializationRegistry
     /// (direct match or open-generic match for closed generics).
     /// Used by callers that need an early "is T a wire-supported
     /// type?" check before scheduling work that depends on the
-    /// registry — e.g. <c>RemoteQueryService.NewQuery&lt;T&gt;</c>'s
+    /// registry ??e.g. <c>RemoteQueryService.NewQuery&lt;T&gt;</c>'s
     /// Phase 1.4 guard against unsupported row types.
     /// </summary>
     public bool IsRegistered(Type type)
@@ -226,16 +224,16 @@ internal sealed class SerializationRegistry
     /// <c>DataInput::readObject()</c>.
     /// </summary>
     /// <param name="depth">
-    /// Nesting level — <c>0</c> at the top-level call. Container
+    /// Nesting level ??<c>0</c> at the top-level call. Container
     /// converters re-enter with <c>depth + 1</c>; scalars don't
     /// recurse. The registry refuses payloads at
-    /// <see cref="MaxDepth"/> or beyond — defends the read path
+    /// <see cref="MaxDepth"/> or beyond ??defends the read path
     /// against stack-overflow DoS from a malicious server payload.
     /// </param>
     /// <exception cref="GeodeException">
     /// The DSCode is not a built-in we recognise (and in Phase 2+
     /// not the PDX marker), OR <paramref name="depth"/> reached
-    /// <see cref="MaxDepth"/> — wire stream more deeply nested than
+    /// <see cref="MaxDepth"/> ??wire stream more deeply nested than
     /// the client permits.
     /// </exception>
     public object? ReadObject(BigEndianBinaryReader reader, int depth = 0)
@@ -247,7 +245,7 @@ internal sealed class SerializationRegistry
             throw new GeodeException(
                 $"SerializationRegistry: read exceeded MaxDepth ({MaxDepth}). "
                 + "The server payload is more deeply nested than the client "
-                + "permits — treat as hostile or buggy unless a legitimate "
+                + "permits ??treat as hostile or buggy unless a legitimate "
                 + "workload warrants it, in which case tune "
                 + "GeodeClientOptions.Serialization.MaxDepth.");
         }
@@ -259,8 +257,7 @@ internal sealed class SerializationRegistry
             return null;
         }
 
-        // TODO Phase 2+: PDX fall-through —
-        //   if (dsCode == DSCode.PDX) return ReadPdx(reader);
+        // TODO Phase 2+: PDX fall-through ??        //   if (dsCode == DSCode.PDX) return ReadPdx(reader);
 
         if (_byDsCode.TryGetValue(dsCode, out var converter))
         {
@@ -278,7 +275,7 @@ internal sealed class SerializationRegistry
     /// <c>DataOutput::writeObject(shared_ptr&lt;Serializable&gt;)</c>.
     /// </summary>
     /// <param name="depth">
-    /// Nesting level — <c>0</c> at the top-level call. Container
+    /// Nesting level ??<c>0</c> at the top-level call. Container
     /// converters re-enter with <c>depth + 1</c>; scalars don't
     /// recurse. The registry refuses payloads at
     /// <see cref="MaxDepth"/> or beyond.
@@ -288,13 +285,12 @@ internal sealed class SerializationRegistry
     /// converter. Becomes a PDX fall-through in Phase 2+.
     /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// <paramref name="depth"/> reached <see cref="MaxDepth"/> —
-    /// likely a cycle or pathologically nested in-memory graph from
+    /// <paramref name="depth"/> reached <see cref="MaxDepth"/> ??    /// likely a cycle or pathologically nested in-memory graph from
     /// the caller. Tune via
     /// <c>GeodeClientOptions.Serialization.MaxDepth</c> if the
     /// workload genuinely warrants deeper nesting.
     /// </exception>
-    public void WriteObject(BigEndianBinaryWriter writer, object? value, int depth = 0)
+    public void WriteObject(DataOutput writer, object? value, int depth = 0)
     {
         ArgumentNullException.ThrowIfNull(writer);
 
@@ -309,7 +305,7 @@ internal sealed class SerializationRegistry
 
         if (value is null)
         {
-            // cppcache writeObject(nullptr) → writeByte(DSCode.NullObj).
+            // cppcache writeObject(nullptr) ??writeByte(DSCode.NullObj).
             // No payload follows.
             writer.WriteByte(DSCode.NullObj);
             return;
@@ -324,21 +320,20 @@ internal sealed class SerializationRegistry
     }
 
     /// <summary>
-    /// Built-in <see cref="IDataConverter"/> dispatch — closed-generic
+    /// Built-in <see cref="IDataConverter"/> dispatch ??closed-generic
     /// hit first, open-generic fallback (e.g. <c>List&lt;int&gt;</c>
-    /// → <c>List&lt;&gt;</c>). Returns <see langword="false"/> when no
+    /// ??<c>List&lt;&gt;</c>). Returns <see langword="false"/> when no
     /// built-in converter is registered for <paramref name="type"/>.
     /// </summary>
-    private bool TryWriteBuiltIn(BigEndianBinaryWriter writer, object value, Type type, int depth)
+    private bool TryWriteBuiltIn(DataOutput writer, object value, Type type, int depth)
     {
         if (!_byType.TryGetValue(type, out var converter)
             && type.IsGenericType)
         {
             // Open-generic fallback. Collection converters register
-            // their open generic (List<>, Dictionary<,>, …) in
+            // their open generic (List<>, Dictionary<,>, ?? in
             // _byType; concrete instances (List<int>, List<string>,
-            // …) only hit on this second lookup. Single dictionary —
-            // no extra index, just a smarter probe.
+            // ?? only hit on this second lookup. Single dictionary ??            // no extra index, just a smarter probe.
             _byType.TryGetValue(type.GetGenericTypeDefinition(), out converter);
         }
 
@@ -351,7 +346,7 @@ internal sealed class SerializationRegistry
     }
 
     /// <summary>
-    /// PDX dispatch — encode <paramref name="value"/> when its CLR type is
+    /// PDX dispatch ??encode <paramref name="value"/> when its CLR type is
     /// PDX-registered. Returns <see langword="false"/> when not registered
     /// (caller falls through to the unknown-type throw).
     /// </summary>
@@ -366,13 +361,17 @@ internal sealed class SerializationRegistry
     /// <c>SendGetPdxIdForType</c> still <c>NotImplementedException</c>
     /// (Phase 2.1 step 3b).</para>
     /// </remarks>
-    private bool TryWritePdx(BigEndianBinaryWriter writer, object value, Type type, int depth)
+    private bool TryWritePdx(DataOutput writer, object value, Type type, int depth)
     {
         if (!_typeRegistry.TryGetEntry(type, out var entry)) return false;
 
-        var localWriter = new PdxLocalWriter(_stringConverter);
-        entry.Write(value, localWriter);
-        var (schema, payload) = localWriter.Build(entry.ClassName);
+        byte[] payload;
+        PdxType schema;
+        using (var localWriter = new PdxLocalWriter(_serviceProvider, _stringConverter))
+        {
+            entry.Write(value, localWriter);
+            (schema, payload) = localWriter.Build(entry.ClassName);
+        }
 
         var typeId = _pdxTypeRegistry.ResolveTypeId(schema);
 

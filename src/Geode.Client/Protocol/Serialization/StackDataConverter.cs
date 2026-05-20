@@ -3,9 +3,8 @@ using System.Collections;
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
-/// <see cref="IDataConverter"/> for <c>Stack&lt;T&gt;</c> ↔
-/// <see cref="DSCode.CacheableStack"/> (74). Wire payload is the
-/// standard collection shape — VL-encoded length followed by N
+/// <see cref="IDataConverter"/> for <c>Stack&lt;T&gt;</c> ??/// <see cref="DSCode.CacheableStack"/> (74). Wire payload is the
+/// standard collection shape ??VL-encoded length followed by N
 /// fully-serialised elements in <b>bottom-to-top</b> order (matching
 /// Java <c>Stack</c>/<c>Vector</c>'s <c>elementData[0..N-1]</c> /
 /// cppcache's <c>std::vector</c> backing). Mirrors
@@ -15,9 +14,9 @@ namespace Geode.Client.Protocol.Serialization;
 /// <remarks>
 /// <para>
 /// <b>The order footgun.</b> <c>Stack&lt;T&gt;</c> in .NET enumerates
-/// <i>top→bottom</i> (most recently pushed first); the wire expects
-/// <i>bottom→top</i>. Write reverses, read does not. Symmetric.
-/// Round-trip preserves the original push order — <c>Push(A); Push(B);
+/// <i>top?�bottom</i> (most recently pushed first); the wire expects
+/// <i>bottom?�top</i>. Write reverses, read does not. Symmetric.
+/// Round-trip preserves the original push order ??<c>Push(A); Push(B);
 /// Push(C)</c> writes wire <c>[A, B, C]</c>, read pushes in wire order
 /// so the rebuilt stack has <c>C</c> on top exactly as the original.
 /// </para>
@@ -32,7 +31,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// <b>Read returns canonical <c>Stack&lt;object?&gt;</c>.</b>
 /// Target-shape conversion (to <c>Stack&lt;int&gt;</c>) happens at
 /// <see cref="TypedResultAdapter"/>'s <c>Stack&lt;&gt;</c> branch,
-/// which has to re-reverse the canonical's <i>top→bottom</i>
+/// which has to re-reverse the canonical's <i>top?�bottom</i>
 /// iteration before constructing the typed <c>Stack&lt;T&gt;</c>
 /// via its <c>IEnumerable&lt;T&gt;</c> ctor (push-in-iteration-order
 /// semantics).
@@ -56,22 +55,22 @@ internal sealed class StackDataConverter : IDataConverter
 
     public byte GetDsCode(object value) => DSCode.CacheableStack;
 
-    public void Write(BigEndianBinaryWriter writer, object value, byte dsCode, int depth)
+    public void Write(DataOutput writer, object value, byte dsCode, int depth)
     {
-        // Stack<T> implements non-generic ICollection — Count is
+        // Stack<T> implements non-generic ICollection ??Count is
         // O(1), no scratch list needed.
         var source = (ICollection)value;
         if (source.Count > _registry.MaxArrayLength)
         {
             throw new InvalidOperationException(
                 $"StackDataConverter: cannot serialise a stack of {source.Count} elements "
-                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+                + $"??exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
         }
         writer.WriteArrayLen(source.Count);
 
-        // Reverse the foreach output (top→bottom) into bottom→top for
+        // Reverse the foreach output (top?�bottom) into bottom?�top for
         // wire. Single-pass copy into a scratch buffer descending,
-        // then write the buffer ascending — same shape as clicache
+        // then write the buffer ascending ??same shape as clicache
         // CacheableStack::ToData's Linq Reverse but without the LINQ
         // chain.
         var buffer = new object?[source.Count];
@@ -98,11 +97,11 @@ internal sealed class StackDataConverter : IDataConverter
         {
             throw new GeodeException(
                 $"StackDataConverter: wire stack length {length} exceeds "
-                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) — refusing to allocate.");
+                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) ??refusing to allocate.");
         }
 
-        // Wire is bottom→top order; pushing in wire order places
-        // wire[0] at the bottom and wire[N-1] on top — original
+        // Wire is bottom?�top order; pushing in wire order places
+        // wire[0] at the bottom and wire[N-1] on top ??original
         // push sequence preserved.
         for (var i = 0; i < length; i++)
         {

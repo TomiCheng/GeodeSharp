@@ -1,5 +1,7 @@
 using Geode.Client.Protocol;
 using Geode.Client.Tests.Protocol.Serialization;
+using Microsoft.Extensions.DependencyInjection;
+using Geode.Client.Protocol.Serialization;
 using Xunit;
 
 namespace Geode.Client.Tests.Protocol;
@@ -20,8 +22,11 @@ namespace Geode.Client.Tests.Protocol;
 /// </remarks>
 public class TcrMessageBuilderGetAllTests
 {
-    private static TcrMessageBuilder NewBuilder() =>
-        new(new TcrPartBuilder(), SerializationTestHelpers.CreateRegistry());
+    private static TcrMessageBuilder NewBuilder()
+    {
+        var sp = SerializationTestHelpers.BuildSp();
+        return new(new TcrPartBuilder(sp), sp.GetRequiredService<SerializationRegistry>(), sp);
+    }
 
     private static byte[] EncodedInt32(int v) =>
     [

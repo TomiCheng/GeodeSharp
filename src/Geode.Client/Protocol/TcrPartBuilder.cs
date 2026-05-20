@@ -1,4 +1,4 @@
-using System.Buffers;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol;
 
@@ -10,29 +10,29 @@ namespace Geode.Client.Protocol;
 /// <para>
 /// A Part is <c>i32 length</c> + <c>u8 IsObject</c> + payload bytes
 /// (see <see cref="TcrPart"/>). Building one usually means: allocate a
-/// buffer, wrap a <see cref="BigEndianBinaryWriter"/>, write the
+/// buffer, wrap a <see cref="DataOutput"/>, write the
 /// payload, then snapshot the bytes. The handful of methods here cover
 /// the common shapes that show up across cppcache's <c>writeXxxPart</c>
 /// helpers in <c>cppcache/src/TcrMessage.cpp</c>:
 /// </para>
 /// <list type="bullet">
-///   <item><see cref="RawBytes"/> — a verbatim byte buffer with
+///   <item><see cref="RawBytes"/> ??a verbatim byte buffer with
 ///         <c>IsObject=0</c> (region name, byte[] CacheableBytes shortcut).</item>
-///   <item><see cref="Int32"/> — single i32 BE payload, <c>IsObject=0</c>
+///   <item><see cref="Int32"/> ??single i32 BE payload, <c>IsObject=0</c>
 ///         (flags). Mirrors <c>writeIntPart</c>.</item>
-///   <item><see cref="NullObj"/> — single DSCode-41 byte (operation
+///   <item><see cref="NullObj"/> ??single DSCode-41 byte (operation
 ///         placeholder, missing value sentinel).</item>
-///   <item><see cref="CacheableBoolean"/> — DSCode-53 + 1 byte
+///   <item><see cref="CacheableBoolean"/> ??DSCode-53 + 1 byte
 ///         (isDelta, optional flags).</item>
-///   <item><see cref="EmptyCacheableBytes"/> — special <c>IsObject=2</c>
+///   <item><see cref="EmptyCacheableBytes"/> ??special <c>IsObject=2</c>
 ///         empty-payload sentinel for empty <c>byte[]</c> values.</item>
-///   <item><see cref="Object"/> — payload begins with a DSCode and the
+///   <item><see cref="Object"/> ??payload begins with a DSCode and the
 ///         caller writes the body via the writer.</item>
-///   <item><see cref="Raw"/> — like <see cref="Object"/> but
+///   <item><see cref="Raw"/> ??like <see cref="Object"/> but
 ///         <c>IsObject=0</c> (EventId, raw blobs).</item>
 /// </list>
 /// </remarks>
-internal sealed class TcrPartBuilder
+internal sealed class TcrPartBuilder(IServiceProvider serviceProvider)
 {
 
     /// <summary>
@@ -61,7 +61,7 @@ internal sealed class TcrPartBuilder
     /// <c>CacheServerHelper.fromUTF(byte[])</c>
     /// (<c>geode-core/.../Part.java:174</c> +
     /// <c>CacheServerHelper.java:116</c>), the standard Java
-    /// <c>DataInput.readUTF</c> decoder. Bytes hit the wire raw — the
+    /// <c>DataInput.readUTF</c> decoder. Bytes hit the wire raw ??the
     /// u16 length prefix that <c>readUTF</c> would normally consume is
     /// absent because the surrounding Part header already supplies the
     /// length.
@@ -78,7 +78,7 @@ internal sealed class TcrPartBuilder
     /// </para>
     /// <para>
     /// Encoding logic duplicates the body pass of
-    /// <see cref="BigEndianBinaryWriter.WriteJavaModifiedUtf8"/> (which
+    /// <see cref="DataOutput.WriteJavaModifiedUtf8"/> (which
     /// also emits a u16 prefix we do not want for raw Parts). If a
     /// third caller materialises, extract a shared body writer.
     /// </para>
@@ -90,7 +90,7 @@ internal sealed class TcrPartBuilder
     {
         ArgumentNullException.ThrowIfNull(value);
 
-        // Pass 1 — pre-compute the byte length so the Part buffer is
+        // Pass 1 ??pre-compute the byte length so the Part buffer is
         // sized exactly (no dynamic growth, no oversize allocation).
         var byteLen = 0;
         foreach (var c in value)
@@ -100,11 +100,11 @@ internal sealed class TcrPartBuilder
             else byteLen += 3;
         }
 
-        // Pass 2 — emit the bytes through the standard Raw(IsObject=0)
+        // Pass 2 ??emit the bytes through the standard Raw(IsObject=0)
         // path. Per-char branch matches Java DataOutput.writeUTF body
         // exactly (BMP only; supplementary chars arrive here as two
         // UTF-16 surrogate halves, each emitted as 3 bytes = 6 bytes
-        // total — same as Java).
+        // total ??same as Java).
         return Raw(w =>
         {
             foreach (var c in value)
@@ -129,7 +129,7 @@ internal sealed class TcrPartBuilder
     }
     /// <summary>
     /// Wrap raw bytes as a Part with <c>IsObject=0</c>. No DSCode, no
-    /// length prefix in the payload — Part header alone supplies the
+    /// length prefix in the payload ??Part header alone supplies the
     /// length. Mirrors cppcache <c>writeRegionPart</c> and the
     /// CacheableBytes branch of <c>writeObjectPart</c>.
     /// </summary>
@@ -160,7 +160,7 @@ internal sealed class TcrPartBuilder
             Payload: new byte[] { DSCode.CacheableBoolean, value ? (byte)1 : (byte)0 });
 
     /// <summary>
-    /// Empty CacheableBytes sentinel — <c>IsObject=2</c>, zero-length
+    /// Empty CacheableBytes sentinel ??<c>IsObject=2</c>, zero-length
     /// payload. Mirrors the empty branch of cppcache
     /// <c>writeObjectPart</c>'s CacheableBytes path.
     /// </summary>
@@ -169,14 +169,14 @@ internal sealed class TcrPartBuilder
 
     /// <summary>
     /// Build a Part whose payload starts with a DSCode (<c>IsObject=1</c>).
-    /// Caller writes the entire body — including the leading DSCode byte
-    /// — via <paramref name="write"/>.
+    /// Caller writes the entire body ??including the leading DSCode byte
+    /// ??via <paramref name="write"/>.
     /// </summary>
     /// <param name="write">Body writer; typically calls one of
-    /// <see cref="BigEndianBinaryWriter.WriteString"/>,
+    /// <see cref="DataOutput.WriteString"/>,
     /// <c>WriteByte(DSCode.X) + WriteInt32(...)</c>, etc.</param>
     /// <param name="sizeHint">Optional initial buffer size hint.</param>
-    public TcrPart Object(Action<BigEndianBinaryWriter> write, int sizeHint = 0) =>
+    public TcrPart Object(Action<DataOutput> write, int sizeHint = 0) =>
         Build(isObject: 1, sizeHint, write);
 
     /// <summary>
@@ -186,15 +186,18 @@ internal sealed class TcrPartBuilder
     /// </summary>
     /// <param name="write">Body writer.</param>
     /// <param name="sizeHint">Optional initial buffer size hint.</param>
-    public TcrPart Raw(Action<BigEndianBinaryWriter> write, int sizeHint = 0) =>
+    public TcrPart Raw(Action<DataOutput> write, int sizeHint = 0) =>
         Build(isObject: 0, sizeHint, write);
 
-    private TcrPart Build(byte isObject, int sizeHint, Action<BigEndianBinaryWriter> write)
+    private TcrPart Build(byte isObject, int sizeHint, Action<DataOutput> write)
     {
-        var buffer = sizeHint > 0
-            ? new ArrayBufferWriter<byte>(sizeHint)
-            : new ArrayBufferWriter<byte>();
-        write(new BigEndianBinaryWriter(buffer));
-        return new TcrPart(isObject, buffer.WrittenMemory);
+        // sizeHint hint is no longer plumbed (DataOutput starts at 8 KB
+        // and grows). Re-add if a workload shows up needing tight control.
+        _ = sizeHint;
+
+        using var output = ActivatorUtilities.CreateInstance<DataOutput>(serviceProvider);
+        write(output);
+        // Copy out — output's buffer returns to ArrayPool on Dispose.
+        return new TcrPart(isObject, output.WrittenSpan.ToArray());
     }
 }

@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+
 namespace Geode.Client.Protocol;
 
 partial class TcrMessageBuilder
@@ -12,7 +14,7 @@ partial class TcrMessageBuilder
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Wire layout — Header (<see cref="MessageType.ContainsKey"/>=38,
+    /// Wire layout ??Header (<see cref="MessageType.ContainsKey"/>=38,
     /// NumParts=3 or 4, TransactionId=-1, EarlyAck=0) followed by:
     /// </para>
     /// <code>
@@ -51,30 +53,25 @@ partial class TcrMessageBuilder
 
         var parts = new List<TcrPart>(4)
         {
-            // Part 1 — Region name. Raw ASCII bytes (cppcache writeRegionPart).
+            // Part 1 ??Region name. Raw ASCII bytes (cppcache writeRegionPart).
             partBuilder.RegionName(regionName),
 
-            // Part 2 — Key (DSCode-tagged). Registry writes DSCode byte
+            // Part 2 ??Key (DSCode-tagged). Registry writes DSCode byte
             // + payload via the converter for key's runtime type.
             partBuilder.Object(w => _serializationRegistry.WriteObject(w, key)),
 
-            // Part 3 — Op-flag i32 (0 = containsKey, 1 = containsValueForKey).
+            // Part 3 ??Op-flag i32 (0 = containsKey, 1 = containsValueForKey).
             // cppcache writeIntPart(isContainsKey ? 0 : 1).
             partBuilder.Int32(isContainsKey ? 0 : 1),
         };
 
-        // Part 4 — Optional callback argument. Same registry path —
-        // any type with a registered converter works; otherwise the
+        // Part 4 ??Optional callback argument. Same registry path ??        // any type with a registered converter works; otherwise the
         // registry throws NotSupportedException.
         if (callbackArgument is not null)
         {
             parts.Add(partBuilder.Object(w => _serializationRegistry.WriteObject(w, callbackArgument)));
         }
 
-        return new TcrMessage(
-            MessageType: MessageType.ContainsKey,
-            TransactionId: transactionId,
-            EarlyAck: 0,
-            Parts: parts);
+        return ActivatorUtilities.CreateInstance<TcrMessage>(_serviceProvider, MessageType.ContainsKey, transactionId, (byte)0, parts);
     }
 }

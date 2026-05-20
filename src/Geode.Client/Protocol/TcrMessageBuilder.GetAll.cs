@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+
 namespace Geode.Client.Protocol;
 
 partial class TcrMessageBuilder
@@ -23,7 +25,7 @@ partial class TcrMessageBuilder
     ///                          + ArrayLen (1/3/5-byte VL)
     ///                          + DSCode.Class=43
     ///                          + writeString("java.lang.Object")
-    ///                          + N × writeObject(key)  (each DSCode-tagged)
+    ///                          + N ? writeObject(key)  (each DSCode-tagged)
     /// 3 Callback     1 or 0    DSCode-tagged callback object (IsObject=1),
     ///                          OR i32 BE = 0 (IsObject=0) when no callback
     /// </code>
@@ -77,7 +79,7 @@ partial class TcrMessageBuilder
     /// handler reuses the same list reference for that lookup.</param>
     /// <param name="callbackArgument">Reserved for a future callback
     /// overload on <see cref="IRegion"/>; Phase 1.3 always
-    /// <c>null</c>. Non-null throws — see remarks.</param>
+    /// <c>null</c>. Non-null throws ??see remarks.</param>
     /// <param name="transactionId">Geode txn id;
     /// <see cref="MetaTransactionId"/> for non-transactional ops.</param>
     public TcrMessage GetAll(
@@ -106,7 +108,7 @@ partial class TcrMessageBuilder
         }
 
         // Snapshot the key list into a local so the lambdas below capture
-        // a stable reference (defensive — caller could in theory mutate
+        // a stable reference (defensive ??caller could in theory mutate
         // IReadOnlyList<object> if the underlying is a List<object>).
         // Per-key null check up front so the wire writer doesn't blow up
         // half-way through serialisation.
@@ -122,10 +124,10 @@ partial class TcrMessageBuilder
 
         var parts = new List<TcrPart>(3)
         {
-            // Part 1 — Region name. Raw ASCII (cppcache writeRegionPart).
+            // Part 1 ??Region name. Raw ASCII (cppcache writeRegionPart).
             partBuilder.RegionName(regionName),
 
-            // Part 2 — Keys, as the in-band wire shape of a
+            // Part 2 ??Keys, as the in-band wire shape of a
             // CacheableObjectArray. Mirrors cppcache's manual write
             // (TcrMessage.cpp:702-710) byte-for-byte; we keep it inline
             // here rather than routing through SerializationRegistry +
@@ -142,18 +144,13 @@ partial class TcrMessageBuilder
                 }
             }),
 
-            // Part 3 — Callback or int(0). cppcache InitializeGetallMsg
-            // (TcrMessage.cpp:2517-2521) dispatches: callback != null →
-            // writeObjectPart; null → writeIntPart(0). Phase 1.3 always
+            // Part 3 ??Callback or int(0). cppcache InitializeGetallMsg
+            // (TcrMessage.cpp:2517-2521) dispatches: callback != null ??            // writeObjectPart; null ??writeIntPart(0). Phase 1.3 always
             // hits the int(0) branch because we refuse callback above.
             partBuilder.Int32(0),
         };
 
-        return new TcrMessage(
-            MessageType: MessageType.GetAll70,
-            TransactionId: transactionId,
-            EarlyAck: 0,
-            Parts: parts);
+        return ActivatorUtilities.CreateInstance<TcrMessage>(_serviceProvider, MessageType.GetAll70, transactionId, (byte)0, parts);
     }
 
     /// <summary>

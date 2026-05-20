@@ -3,21 +3,19 @@ using Geode.Client.Services;
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
-/// <see cref="IDataConverter"/> for <see cref="byte"/><c>[]</c> ↔
-/// <see cref="DSCode.CacheableBytes"/> (46). Wire payload is a
+/// <see cref="IDataConverter"/> for <see cref="byte"/><c>[]</c> ??/// <see cref="DSCode.CacheableBytes"/> (46). Wire payload is a
 /// VL-encoded length (1 / 3 / 5 bytes, see
-/// <see cref="BigEndianBinaryWriter.WriteArrayLen"/>) followed by
+/// <see cref="DataOutput.WriteArrayLen"/>) followed by
 /// the raw bytes. Mirrors cppcache <c>CacheableBytes</c>
 /// (<c>cppcache/include/geode/internal/CacheableBuiltinTemplates.hpp</c>
 /// <c>CacheableArrayPrimitive&lt;int8_t, CacheableBytes&gt;</c>) which
-/// routes through <c>serializer::writeArrayObject</c> →
-/// <c>writeArrayLen(size) + per-byte writeObject(int8_t)</c>.
+/// routes through <c>serializer::writeArrayObject</c> ??/// <c>writeArrayLen(size) + per-byte writeObject(int8_t)</c>.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>Not a Key.</b> cppcache's <c>CacheableArrayPrimitive</c> derives
 /// from <c>DataSerializablePrimitive</c> only, NOT
-/// <c>CacheableKey</c> — Java <c>Arrays.equals</c> / <c>Arrays.hashCode</c>
+/// <c>CacheableKey</c> ??Java <c>Arrays.equals</c> / <c>Arrays.hashCode</c>
 /// are array-content semantics that don't match the per-class
 /// <c>operator==</c> / <c>hashcode()</c> contract <c>CacheableKey</c>
 /// requires. .NET enforces the same exclusion at compile time: the
@@ -39,7 +37,7 @@ namespace Geode.Client.Protocol.Serialization;
 ///   </item>
 ///   <item>
 ///     <see cref="Array.Empty{T}"/>() writes
-///     <c>[46, 0x00]</c> — DSCode + VL-encoded length 0, no payload.
+///     <c>[46, 0x00]</c> ??DSCode + VL-encoded length 0, no payload.
 ///     Read returns a (possibly fresh) zero-length array, not null.
 ///   </item>
 /// </list>
@@ -54,13 +52,13 @@ internal sealed class BytesDataConverter(CacheScopeContext cacheScopeContext)
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, byte[] value, byte dsCode, int depth)
+    public override void Write(DataOutput writer, byte[] value, byte dsCode, int depth)
     {
         if (value.Length > _maxBytesLength)
         {
             throw new InvalidOperationException(
                 $"BytesDataConverter: cannot serialise a byte[] of {value.Length} bytes "
-                + $"— exceeds Serialization.MaxBytesLength ({_maxBytesLength}).");
+                + $"??exceeds Serialization.MaxBytesLength ({_maxBytesLength}).");
         }
         writer.WriteBytes(value);
     }
@@ -76,7 +74,7 @@ internal sealed class BytesDataConverter(CacheScopeContext cacheScopeContext)
         {
             throw new GeodeException(
                 $"BytesDataConverter: wire byte[] length {length} exceeds "
-                + $"Serialization.MaxBytesLength ({_maxBytesLength}) — refusing to allocate.");
+                + $"Serialization.MaxBytesLength ({_maxBytesLength}) ??refusing to allocate.");
         }
         return reader.ReadBytesOnly(length).ToArray();
     }

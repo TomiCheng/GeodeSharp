@@ -1,6 +1,6 @@
-using System.Buffers;
 using System.Buffers.Binary;
 using Geode.Client.Pdx;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol.Serialization;
 
@@ -9,7 +9,8 @@ namespace Geode.Client.Protocol.Serialization;
 /// <see cref="IPdxSerializable{TSelf}.ToData"/>. Mirror of cppcache
 /// <c>PdxLocalWriter</c> (<c>cppcache/src/PdxLocalWriter.hpp</c>).
 /// </summary>
-internal sealed class PdxLocalWriter(StringDataConverter stringConverter) : IPdxWriter
+internal sealed class PdxLocalWriter(IServiceProvider serviceProvider, StringDataConverter stringConverter)
+    : IPdxWriter, IDisposable
 {
     // Wire layout (excluding leading DSCode.PDX byte written by
     // SerializationRegistry.TryWritePdx):
@@ -20,67 +21,67 @@ internal sealed class PdxLocalWriter(StringDataConverter stringConverter) : IPdx
     //    1 / 2 / 4 bytes per entry depending on payload length —
     //    cppcache PdxLocalWriter::writeOffsets>
 
-    private readonly ArrayBufferWriter<byte> _buffer = new();
+    // Internal scratch DataOutput resolved via DI (consistency with the
+    // rest of the wire codec). PDX field writes never recurse into
+    // SerializationRegistry — DI hands us one but it sits unused; the
+    // overhead is one field, accepted for uniform construction style.
+    private readonly DataOutput _output = ActivatorUtilities.CreateInstance<DataOutput>(serviceProvider);
     private readonly List<PdxField> _fields = [];
     private readonly List<int> _varLenOffsets = [];
-
-    private BigEndianBinaryWriter Writer => new(_buffer);
-    // (re-created per write — BigEndianBinaryWriter is a thin wrapper
-    // over IBufferWriter<byte>, allocation-free.)
 
     public IPdxWriter WriteBoolean(string fieldName, bool value)
     {
         AddFixedField(fieldName, PdxFieldType.Boolean);
-        Writer.WriteBool(value);
+        _output.WriteBool(value);
         return this;
     }
 
     public IPdxWriter WriteByte(string fieldName, sbyte value)
     {
         AddFixedField(fieldName, PdxFieldType.Byte);
-        Writer.WriteSByte(value);
+        _output.WriteSByte(value);
         return this;
     }
 
     public IPdxWriter WriteChar(string fieldName, char value)
     {
         AddFixedField(fieldName, PdxFieldType.Char);
-        Writer.WriteUInt16(value);
+        _output.WriteUInt16(value);
         return this;
     }
 
     public IPdxWriter WriteShort(string fieldName, short value)
     {
         AddFixedField(fieldName, PdxFieldType.Short);
-        Writer.WriteInt16(value);
+        _output.WriteInt16(value);
         return this;
     }
 
     public IPdxWriter WriteInt(string fieldName, int value)
     {
         AddFixedField(fieldName, PdxFieldType.Int);
-        Writer.WriteInt32(value);
+        _output.WriteInt32(value);
         return this;
     }
 
     public IPdxWriter WriteLong(string fieldName, long value)
     {
         AddFixedField(fieldName, PdxFieldType.Long);
-        Writer.WriteInt64(value);
+        _output.WriteInt64(value);
         return this;
     }
 
     public IPdxWriter WriteFloat(string fieldName, float value)
     {
         AddFixedField(fieldName, PdxFieldType.Float);
-        Writer.WriteFloat(value);
+        _output.WriteFloat(value);
         return this;
     }
 
     public IPdxWriter WriteDouble(string fieldName, double value)
     {
         AddFixedField(fieldName, PdxFieldType.Double);
-        Writer.WriteDouble(value);
+        _output.WriteDouble(value);
         return this;
     }
 
@@ -103,7 +104,7 @@ internal sealed class PdxLocalWriter(StringDataConverter stringConverter) : IPdx
         var ms = (utc - DateTime.UnixEpoch).Ticks / TimeSpan.TicksPerMillisecond;
 
         AddFixedField(fieldName, PdxFieldType.Date);
-        Writer.WriteInt64(ms);
+        _output.WriteInt64(ms);
         return this;
     }
 
@@ -112,24 +113,23 @@ internal sealed class PdxLocalWriter(StringDataConverter stringConverter) : IPdx
         // Push offset BEFORE writing so reader knows where this var-len
         // field starts. cppcache PdxLocalWriter::writeString calls
         // addOffset() before m_dataOutput->writeString.
-        _varLenOffsets.Add(_buffer.WrittenCount);
+        _varLenOffsets.Add(_output.WrittenCount);
         AddVarLenField(fieldName, PdxFieldType.String);
 
         if (value is null)
         {
             // cppcache writeString(nullptr) → DSCode.CacheableNullString (69).
             // Distinct from generic DSCode.NullObj (41) used by WriteObject(null).
-            Writer.WriteByte(DSCode.CacheableNullString);
+            _output.WriteByte(DSCode.CacheableNullString);
             return this;
         }
 
         // Reuse Phase 1's StringDataConverter so max-length, DSCode
         // selection (ASCII / huge / mod UTF-8 / UTF-16) and payload
         // encoding stay symmetric with non-PDX strings.
-        var w = Writer;
         var dsCode = stringConverter.GetDsCode(value);
-        w.WriteByte(dsCode);
-        stringConverter.Write(w, value, dsCode, depth: 0);
+        _output.WriteByte(dsCode);
+        stringConverter.Write(_output, value, dsCode, depth: 0);
         return this;
     }
 
@@ -143,7 +143,7 @@ internal sealed class PdxLocalWriter(StringDataConverter stringConverter) : IPdx
     public (PdxType Schema, byte[] Payload) Build(string className)
     {
         var schema = new PdxType(className, _fields);
-        var fieldData = _buffer.WrittenSpan;
+        var fieldData = _output.WrittenSpan;
 
         // Offset table: numVarLen - 1 entries (first var-len's offset is
         // implicit at 0, so it's elided). cppcache PdxLocalWriter::
@@ -182,6 +182,8 @@ internal sealed class PdxLocalWriter(StringDataConverter stringConverter) : IPdx
 
         return (schema, payload);
     }
+
+    public void Dispose() => _output.Dispose();
 
     /// <summary>
     /// Pick the smallest offset-entry width that keeps the total payload

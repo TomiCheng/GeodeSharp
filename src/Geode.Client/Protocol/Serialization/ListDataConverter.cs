@@ -4,9 +4,9 @@ namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
 /// <see cref="IDataConverter"/> for <c>List&lt;T&gt;</c> /
-/// <c>IList&lt;T&gt;</c> ↔ <see cref="DSCode.CacheableArrayList"/> (65).
+/// <c>IList&lt;T&gt;</c> ??<see cref="DSCode.CacheableArrayList"/> (65).
 /// Wire payload is a VL-encoded length followed by N fully-serialised
-/// objects — each element starts with its own DSCode byte (including
+/// objects ??each element starts with its own DSCode byte (including
 /// <see cref="DSCode.NullObj"/> for nulls). Mirrors cppcache
 /// <c>CacheableArrayList</c>
 /// (<c>cppcache/src/CacheableArrayList.cpp</c>).
@@ -22,8 +22,8 @@ namespace Geode.Client.Protocol.Serialization;
 /// </para>
 /// <para>
 /// <b>Read returns canonical <c>List&lt;object?&gt;</c>.</b> Java's
-/// wire format does not encode the container element type — each slot
-/// carries its own DSCode — so target-shape conversion happens later
+/// wire format does not encode the container element type ??each slot
+/// carries its own DSCode ??so target-shape conversion happens later
 /// at <see cref="TypedResultAdapter"/> in
 /// <see cref="Regions.RegionView{TKey,TValue}"/>, not here.
 /// </para>
@@ -42,7 +42,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// <see cref="SerializationRegistry.WriteObject"/> /
 /// <see cref="SerializationRegistry.ReadObject"/> so any registered
 /// type (including nested lists / arrays) can occupy a slot. Safe
-/// <c>this</c> pass at registry construction — we store the reference
+/// <c>this</c> pass at registry construction ??we store the reference
 /// but only invoke through it later, by which point the registry is
 /// fully populated.
 /// </para>
@@ -71,9 +71,9 @@ internal sealed class ListDataConverter : IDataConverter
 
     public byte GetDsCode(object value) => DSCode.CacheableArrayList;
 
-    public void Write(BigEndianBinaryWriter writer, object value, byte dsCode, int depth)
+    public void Write(DataOutput writer, object value, byte dsCode, int depth)
     {
-        // Any IList works at the type-erased layer — we accept the
+        // Any IList works at the type-erased layer ??we accept the
         // value as IList (non-generic) so List<int>, List<string>,
         // and IList<T> implementations all flow through the same
         // path. The registry has already established that the value's
@@ -84,12 +84,12 @@ internal sealed class ListDataConverter : IDataConverter
         {
             throw new InvalidOperationException(
                 $"ListDataConverter: cannot serialise a list of {source.Count} elements "
-                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+                + $"??exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
         }
         writer.WriteArrayLen(source.Count);
         foreach (var item in source)
         {
-            // WriteObject handles null → DSCode.NullObj (41) and
+            // WriteObject handles null ??DSCode.NullObj (41) and
             // dispatches to the appropriate converter per element
             // runtime type. Nested lists work because List<List<T>>'s
             // outer iteration yields inner List instances which
@@ -110,7 +110,7 @@ internal sealed class ListDataConverter : IDataConverter
         {
             throw new GeodeException(
                 $"ListDataConverter: wire list length {length} exceeds "
-                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) — refusing to allocate.");
+                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) ??refusing to allocate.");
         }
 
         var list = new List<object?>(length);

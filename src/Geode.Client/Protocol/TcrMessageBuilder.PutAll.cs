@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+
 namespace Geode.Client.Protocol;
 
 partial class TcrMessageBuilder
@@ -118,10 +120,10 @@ partial class TcrMessageBuilder
 
         var parts = new List<TcrPart>(5 + map.Count * 2)
         {
-            // Part 1 — Region name. Raw ASCII (cppcache writeRegionPart).
+            // Part 1 ??Region name. Raw ASCII (cppcache writeRegionPart).
             partBuilder.RegionName(regionName),
 
-            // Part 2 — EventId. 18 raw bytes:
+            // Part 2 ??EventId. 18 raw bytes:
             //   [u8 longCode=3][i64 threadId BE][u8 longCode=3][i64 baseSeq BE]
             partBuilder.Raw(w =>
             {
@@ -131,22 +133,22 @@ partial class TcrMessageBuilder
                 w.WriteInt64(eventSequenceId);
             }, sizeHint: 18),
 
-            // Part 3 — SkipCallbacks placeholder. cppcache hard-codes 0
+            // Part 3 ??SkipCallbacks placeholder. cppcache hard-codes 0
             //   (the commented-out line reveals the original design
             //   intended `skipCallBacks ? 0 : 1`, but it was inlined as
             //   a constant). We mirror the constant byte-for-byte.
             partBuilder.Int32(0),
 
-            // Part 4 — Flags (cppcache writeIntPart). Phase 1.3 MVP
+            // Part 4 ??Flags (cppcache writeIntPart). Phase 1.3 MVP
             //   always 0 (no client-side caching, no concurrency checks).
             //   Same decision as RemoveAll; revisit Phase 4+.
             partBuilder.Int32(0),
 
-            // Part 5 — Number of entries (cppcache writeIntPart).
+            // Part 5 ??Number of entries (cppcache writeIntPart).
             partBuilder.Int32(map.Count),
         };
 
-        // Parts 6..5+2N — Each (key, value) pair, each DSCode-tagged
+        // Parts 6..5+2N ??Each (key, value) pair, each DSCode-tagged
         // via the registry. cppcache iterates the HashMapOfCacheable
         // and writes the two object parts in iteration order; the
         // server reconstructs the map by pairing consecutive entries.
@@ -160,10 +162,6 @@ partial class TcrMessageBuilder
             parts.Add(partBuilder.Object(w => _serializationRegistry.WriteObject(w, value)));
         }
 
-        return new TcrMessage(
-            MessageType: MessageType.PutAll,
-            TransactionId: transactionId,
-            EarlyAck: 0,
-            Parts: parts);
+        return ActivatorUtilities.CreateInstance<TcrMessage>(_serviceProvider, MessageType.PutAll, transactionId, (byte)0, parts);
     }
 }

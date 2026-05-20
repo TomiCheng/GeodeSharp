@@ -3,7 +3,7 @@ using Geode.Client.Services;
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
-/// <see cref="IDataConverter"/> for <see cref="string"/> ↔ four
+/// <see cref="IDataConverter"/> for <see cref="string"/> ??four
 /// wire DSCodes plus the null-string sentinel. Mirrors cppcache
 /// <c>CacheableString</c> (<c>cppcache/src/CacheableString.cpp</c>)
 /// and the dispatch logic in
@@ -11,7 +11,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Four encode forms, one converter</b> — the only Tier A
+/// <b>Four encode forms, one converter</b> ??the only Tier A
 /// converter that returns different DSCodes for different values.
 /// The choice is made by <see cref="GetDsCode"/> after a single
 /// content scan; <see cref="Write"/> branches on the chosen DSCode
@@ -24,7 +24,7 @@ namespace Geode.Client.Protocol.Serialization;
 ///   <item>
 ///     <term>87 <c>CacheableASCIIString</c></term>
 ///     <description>u16 char-count + ASCII bytes. Picked when every
-///     char is in 0x01..0x7F and char count ≤ 65535.</description>
+///     char is in 0x01..0x7F and char count ??65535.</description>
 ///   </item>
 ///   <item>
 ///     <term>88 <c>CacheableASCIIStringHuge</c></term>
@@ -42,7 +42,7 @@ namespace Geode.Client.Protocol.Serialization;
 ///     <description>u32 char-count + UTF-16 BE chars. Picked when
 ///     content has non-ASCII and modified-UTF-8 byte length would
 ///     exceed 65535. <b>This DSCode does NOT use modified UTF-8</b>
-///     — it switches to UTF-16 BE because the length prefix unit
+///     ??it switches to UTF-16 BE because the length prefix unit
 ///     also changes from "bytes" to "chars". Matches cppcache
 ///     <c>writeUtf16Huge</c>.</description>
 ///   </item>
@@ -60,8 +60,8 @@ namespace Geode.Client.Protocol.Serialization;
 /// <c>0xC0 0x80</c> (2 bytes, not 1); supplementary code points
 /// arrive as a surrogate pair of two 3-byte sequences (6 bytes
 /// total) rather than the 4-byte UTF-8 form. We cannot reuse
-/// <see cref="System.Text.Encoding.UTF8"/> — hand-rolled in
-/// <see cref="BigEndianBinaryWriter.WriteJavaModifiedUtf8"/> /
+/// <see cref="System.Text.Encoding.UTF8"/> ??hand-rolled in
+/// <see cref="DataOutput.WriteJavaModifiedUtf8"/> /
 /// <see cref="BigEndianBinaryReader.ReadJavaModifiedUtf8"/>.
 /// </para>
 /// </remarks>
@@ -76,7 +76,7 @@ internal sealed class StringDataConverter(CacheScopeContext cacheScopeContext)
         DSCode.CacheableASCIIStringHuge,    // 88
         DSCode.CacheableString,             // 42
         DSCode.CacheableStringHuge,         // 89
-        DSCode.CacheableNullString,         // 69 — decode-only
+        DSCode.CacheableNullString,         // 69 ??decode-only
     };
 
     /// <summary>
@@ -95,7 +95,7 @@ internal sealed class StringDataConverter(CacheScopeContext cacheScopeContext)
     /// Pick which of the four encode DSCodes to emit for
     /// <paramref name="value"/>. Algorithm matches cppcache
     /// <c>DataOutput::writeString</c>: count chars, add per-char
-    /// extra bytes for non-ASCII, then dispatch on (isAscii × isHuge).
+    /// extra bytes for non-ASCII, then dispatch on (isAscii ? isHuge).
     /// </summary>
     public override byte GetDsCode(string value)
     {
@@ -105,7 +105,7 @@ internal sealed class StringDataConverter(CacheScopeContext cacheScopeContext)
         {
             if (c >= 0x0001 && c <= 0x007F)
             {
-                // 1-byte ASCII path — already counted by charLen.
+                // 1-byte ASCII path ??already counted by charLen.
             }
             else if (c > 0x07FF)
             {
@@ -124,25 +124,25 @@ internal sealed class StringDataConverter(CacheScopeContext cacheScopeContext)
         if (!isAscii)
         {
             return utfLen > 0xFFFF
-                ? DSCode.CacheableStringHuge        // 89 — UTF-16 BE
-                : DSCode.CacheableString;           // 42 — mod UTF-8
+                ? DSCode.CacheableStringHuge        // 89 ??UTF-16 BE
+                : DSCode.CacheableString;           // 42 ??mod UTF-8
         }
         return charLen > 0xFFFF
-            ? DSCode.CacheableASCIIStringHuge       // 88 — ASCII huge
-            : DSCode.CacheableASCIIString;          // 87 — ASCII short
+            ? DSCode.CacheableASCIIStringHuge       // 88 ??ASCII huge
+            : DSCode.CacheableASCIIString;          // 87 ??ASCII short
     }
 
-    public override void Write(BigEndianBinaryWriter writer, string value, byte dsCode, int depth)
+    public override void Write(DataOutput writer, string value, byte dsCode, int depth)
     {
         // Top-level cap covers all four DSCode branches. Unit differs
         // (chars for 87/88/89, modified-UTF-8 bytes for 42), but the
-        // configured limit is one number applied uniformly — caller
+        // configured limit is one number applied uniformly ??caller
         // can tune up if a legitimate workload needs longer payloads.
         if (value.Length > _maxStringLength)
         {
             throw new InvalidOperationException(
                 $"StringDataConverter: cannot serialise a string of {value.Length} chars "
-                + $"— exceeds Serialization.MaxStringLength ({_maxStringLength}).");
+                + $"??exceeds Serialization.MaxStringLength ({_maxStringLength}).");
         }
         switch (dsCode)
         {
@@ -196,7 +196,7 @@ internal sealed class StringDataConverter(CacheScopeContext cacheScopeContext)
 
             case DSCode.CacheableASCIIStringHuge:
                 {
-                    // i32 length is the primary attack surface — can be
+                    // i32 length is the primary attack surface ??can be
                     // pinned at int.MaxValue by a hostile server.
                     int length = reader.ReadInt32();
                     EnsureStringLength(length);
@@ -204,7 +204,7 @@ internal sealed class StringDataConverter(CacheScopeContext cacheScopeContext)
                 }
 
             case DSCode.CacheableString:
-                // u16 byte-length is wire-bounded to 65535 → at most
+                // u16 byte-length is wire-bounded to 65535 ??at most
                 // a ~130KB char[] inside ReadJavaModifiedUtf8. Below
                 // any reasonable MaxStringLength so we skip the check
                 // here rather than refactor ReadJavaModifiedUtf8 to
@@ -244,20 +244,20 @@ internal sealed class StringDataConverter(CacheScopeContext cacheScopeContext)
         {
             throw new GeodeException(
                 $"StringDataConverter: wire string length {length} exceeds "
-                + $"Serialization.MaxStringLength ({_maxStringLength}) — refusing to allocate.");
+                + $"Serialization.MaxStringLength ({_maxStringLength}) ??refusing to allocate.");
         }
     }
 
     /// <summary>
-    /// Write the body of an ASCII-encoded string — one byte per
+    /// Write the body of an ASCII-encoded string ??one byte per
     /// char, no length prefix (caller has already written it).
     /// </summary>
-    private static void WriteAsciiBytes(BigEndianBinaryWriter writer, string value)
+    private static void WriteAsciiBytes(DataOutput writer, string value)
     {
         // The cppcache path masks each char with 0x7F ("blindly assumes
         // ASCII"); GetDsCode already verified every char is in
         // 0x01..0x7F before picking an ASCII DSCode, so no masking is
-        // needed — the cast is exact.
+        // needed ??the cast is exact.
         foreach (var c in value)
         {
             writer.WriteByte((byte)c);

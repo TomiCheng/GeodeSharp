@@ -1,5 +1,6 @@
 using System.Buffers;
 using Geode.Client.Protocol;
+using Geode.Client.Tests.Protocol.Serialization;
 using Xunit;
 
 namespace Geode.Client.Tests.Protocol;
@@ -11,10 +12,9 @@ public class TcrPartTests
     {
         var original = new TcrPart(IsObject: 0, Payload: new byte[] { 0xDE, 0xAD });
 
-        var buffer = new ArrayBufferWriter<byte>();
-        var w = new BigEndianBinaryWriter(buffer);
+        using var w = new DataOutput(SerializationTestHelpers.CreateRegistry());
         original.Encode(w);
-        var decoded = TcrPart.Decode(new BigEndianBinaryReader(buffer.WrittenSpan.ToArray()));
+        var decoded = TcrPart.Decode(new BigEndianBinaryReader(w.WrittenSpan.ToArray()));
 
         Assert.Equal(original, decoded);
     }
@@ -24,13 +24,12 @@ public class TcrPartTests
     {
         var original = new TcrPart(IsObject: 0, Payload: ReadOnlyMemory<byte>.Empty);
 
-        var buffer = new ArrayBufferWriter<byte>();
-        var w = new BigEndianBinaryWriter(buffer);
+        using var w = new DataOutput(SerializationTestHelpers.CreateRegistry());
         original.Encode(w);
         // Encoded bytes: 4 (length=0) + 1 (isObject=0) = 5 bytes.
-        Assert.Equal(5, buffer.WrittenSpan.ToArray().Length);
+        Assert.Equal(5, w.WrittenSpan.ToArray().Length);
 
-        var decoded = TcrPart.Decode(new BigEndianBinaryReader(buffer.WrittenSpan.ToArray()));
+        var decoded = TcrPart.Decode(new BigEndianBinaryReader(w.WrittenSpan.ToArray()));
         Assert.Equal(original, decoded);
     }
 
@@ -39,10 +38,9 @@ public class TcrPartTests
     {
         var original = new TcrPart(IsObject: 1, Payload: new byte[] { 0x57 /* DSCode for String */, 0x42 });
 
-        var buffer = new ArrayBufferWriter<byte>();
-        var w = new BigEndianBinaryWriter(buffer);
+        using var w = new DataOutput(SerializationTestHelpers.CreateRegistry());
         original.Encode(w);
-        var decoded = TcrPart.Decode(new BigEndianBinaryReader(buffer.WrittenSpan.ToArray()));
+        var decoded = TcrPart.Decode(new BigEndianBinaryReader(w.WrittenSpan.ToArray()));
 
         Assert.Equal((byte)1, decoded.IsObject);
         Assert.Equal(original, decoded);

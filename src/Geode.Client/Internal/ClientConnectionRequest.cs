@@ -3,8 +3,7 @@ using Geode.Client.Protocol;
 namespace Geode.Client.Internal;
 
 /// <summary>
-/// Locator wire request: "give me a server for a new forward (client →
-/// server) connection". Mirrors cppcache
+/// Locator wire request: "give me a server for a new forward (client ??/// server) connection". Mirrors cppcache
 /// <c>ClientConnectionRequest</c>
 /// (<c>cppcache/src/ClientConnectionRequest.hpp/.cpp</c>).
 /// </summary>
@@ -22,7 +21,7 @@ internal sealed record ClientConnectionRequest(
     IReadOnlyCollection<ServerLocation> ExcludedServers)
 {
     /// <summary>Mirrors cppcache <c>ClientConnectionRequest::toData</c> (<c>ClientConnectionRequest.cpp:27-30</c>) + <c>writeSetOfServerLocation</c> (<c>:36-46</c>).</summary>
-    public void WriteTo(BigEndianBinaryWriter writer)
+    public void WriteTo(DataOutput writer)
     {
         ArgumentNullException.ThrowIfNull(writer);
         writer.WriteString(ServerGroup);

@@ -1,6 +1,7 @@
 using Geode.Client.Protocol;
 using Geode.Client.Protocol.Serialization;
 using Geode.Client.Tests.Protocol.Serialization;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Geode.Client.Tests.Protocol;
@@ -17,8 +18,11 @@ public class TcrMessageBuilderQueryWithParametersTests
     private const string Oql = "SELECT * FROM /orders WHERE total > $1";
     private const int CompileTimeout = 15;
 
-    private static TcrMessageBuilder NewBuilder() =>
-        new(new TcrPartBuilder(), SerializationTestHelpers.CreateRegistry());
+    private static TcrMessageBuilder NewBuilder()
+    {
+        var sp = SerializationTestHelpers.BuildSp();
+        return new(new TcrPartBuilder(sp), sp.GetRequiredService<SerializationRegistry>(), sp);
+    }
 
     private static byte[] Int32Be(int v) =>
     [
@@ -228,7 +232,7 @@ public class TcrMessageBuilderQueryWithParametersTests
     public void QueryWithParameters_roundtrips_through_encode_decode()
     {
         var original = NewBuilder().QueryWithParameters(Oql, [100, "PAID"]);
-        var decoded = TcrMessage.Decode(original.Encode());
+        var decoded = TcrMessage.Decode(original.Encode(), SerializationTestHelpers.BuildSp());
         Assert.Equal(original, decoded);
     }
 
@@ -236,7 +240,7 @@ public class TcrMessageBuilderQueryWithParametersTests
     public void QueryWithParameters_zero_params_roundtrips()
     {
         var original = NewBuilder().QueryWithParameters(Oql, []);
-        var decoded = TcrMessage.Decode(original.Encode());
+        var decoded = TcrMessage.Decode(original.Encode(), SerializationTestHelpers.BuildSp());
         Assert.Equal(original, decoded);
     }
 
@@ -245,7 +249,7 @@ public class TcrMessageBuilderQueryWithParametersTests
     {
         var original = NewBuilder().QueryWithParameters(
             Oql, [100], messageResponseTimeoutMillis: null);
-        var decoded = TcrMessage.Decode(original.Encode());
+        var decoded = TcrMessage.Decode(original.Encode(), SerializationTestHelpers.BuildSp());
         Assert.Equal(original, decoded);
     }
 }

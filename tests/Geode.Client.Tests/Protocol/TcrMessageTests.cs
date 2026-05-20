@@ -1,4 +1,5 @@
 using Geode.Client.Protocol;
+using Geode.Client.Tests.Protocol.Serialization;
 using Xunit;
 
 namespace Geode.Client.Tests.Protocol;
@@ -16,10 +17,10 @@ public class TcrMessageTests
             MessageType: MessageType.Ping,
             TransactionId: 42,
             EarlyAck: 0,
-            Parts: Array.Empty<TcrPart>());
+            Parts: Array.Empty<TcrPart>(), ServiceProvider: SerializationTestHelpers.BuildSp());
 
         var bytes = original.Encode();
-        var decoded = TcrMessage.Decode(bytes);
+        var decoded = TcrMessage.Decode(bytes, SerializationTestHelpers.BuildSp());
 
         Assert.Equal(original, decoded);
     }
@@ -34,10 +35,10 @@ public class TcrMessageTests
             Parts: new[]
             {
                 new TcrPart(IsObject: 0, Payload: new byte[] { 0xAB }),
-            });
+            }, ServiceProvider: SerializationTestHelpers.BuildSp());
 
         var bytes = original.Encode();
-        var decoded = TcrMessage.Decode(bytes);
+        var decoded = TcrMessage.Decode(bytes, SerializationTestHelpers.BuildSp());
 
         Assert.Equal(original, decoded);
     }
@@ -54,9 +55,9 @@ public class TcrMessageTests
                 new TcrPart(IsObject: 0, Payload: new byte[] { 0x01, 0x02 }),
                 new TcrPart(IsObject: 1,  Payload: new byte[] { 0x57, 0x05, 0xAA, 0xBB }),
                 new TcrPart(IsObject: 0, Payload: ReadOnlyMemory<byte>.Empty),
-            });
+            }, ServiceProvider: SerializationTestHelpers.BuildSp());
 
-        var decoded = TcrMessage.Decode(original.Encode());
+        var decoded = TcrMessage.Decode(original.Encode(), SerializationTestHelpers.BuildSp());
         Assert.Equal(original, decoded);
     }
 
@@ -122,7 +123,7 @@ public class TcrMessageTests
             MessageType: MessageType.Ping,
             TransactionId: 42,
             EarlyAck: 0,
-            Parts: Array.Empty<TcrPart>());
+            Parts: Array.Empty<TcrPart>(), ServiceProvider: SerializationTestHelpers.BuildSp());
 
         Assert.Equal(PingFixture, msg.Encode());
     }
@@ -130,7 +131,7 @@ public class TcrMessageTests
     [Fact]
     public void Decode_Ping_byte_fixture_reproduces_message()
     {
-        var decoded = TcrMessage.Decode(PingFixture);
+        var decoded = TcrMessage.Decode(PingFixture, SerializationTestHelpers.BuildSp());
 
         Assert.Equal(MessageType.Ping, decoded.MessageType);
         Assert.Equal(42, decoded.TransactionId);
@@ -148,7 +149,7 @@ public class TcrMessageTests
             Parts: new[]
             {
                 new TcrPart(IsObject: 0, Payload: new byte[] { 0xAB }),
-            });
+            }, ServiceProvider: SerializationTestHelpers.BuildSp());
 
         Assert.Equal(PutWithBytePartFixture, msg.Encode());
     }
@@ -156,7 +157,7 @@ public class TcrMessageTests
     [Fact]
     public void Decode_Put_byte_fixture_reproduces_message()
     {
-        var decoded = TcrMessage.Decode(PutWithBytePartFixture);
+        var decoded = TcrMessage.Decode(PutWithBytePartFixture, SerializationTestHelpers.BuildSp());
 
         Assert.Equal(MessageType.Put, decoded.MessageType);
         Assert.Equal(99, decoded.TransactionId);
@@ -180,7 +181,7 @@ public class TcrMessageTests
             0x00, 0x00, 0x00, 0x00,
             0x00,
         };
-        Assert.Throws<FormatException>(() => TcrMessage.Decode(bytes));
+        Assert.Throws<FormatException>(() => TcrMessage.Decode(bytes, SerializationTestHelpers.BuildSp()));
     }
 
     [Fact]
@@ -198,21 +199,22 @@ public class TcrMessageTests
             0x00, 0x00, 0x00, 0x00,   // Part: length=0
             0x00,                      // isObject=false
         };
-        var ex = Assert.Throws<FormatException>(() => TcrMessage.Decode(bytes));
+        var ex = Assert.Throws<FormatException>(() => TcrMessage.Decode(bytes, SerializationTestHelpers.BuildSp()));
         Assert.Contains("MessageLength", ex.Message);
     }
 
     [Fact]
     public void Equality_compares_parts_element_wise()
     {
+        var sp = SerializationTestHelpers.BuildSp();
         var a = new TcrMessage(MessageType.Put, 1, 0, new[]
         {
             new TcrPart(0, new byte[] { 0xAA }),
-        });
+        }, sp);
         var b = new TcrMessage(MessageType.Put, 1, 0, new[]
         {
             new TcrPart(0, new byte[] { 0xAA }),
-        });
+        }, sp);
 
         Assert.Equal(b, a);
         Assert.Equal(b.GetHashCode(), a.GetHashCode());

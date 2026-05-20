@@ -28,7 +28,7 @@ internal sealed class ThinClientLocatorHelper(
     IServiceProvider serviceProvider,
     ILogger<ThinClientLocatorHelper> logger)
 {
-    /// <summary>cppcache <c>ThinClientLocatorHelper.cpp:117</c> — magic int prefix to every locator request.</summary>
+    /// <summary>cppcache <c>ThinClientLocatorHelper.cpp:117</c> ??magic int prefix to every locator request.</summary>
     private const int GossipVersion = 1002;
 
     /// <summary>cppcache <c>TcrConnection.hpp:44</c>: first byte the locator sends when it requires SSL but the client did not enable TLS.</summary>
@@ -53,9 +53,9 @@ internal sealed class ThinClientLocatorHelper(
     // can mean "no retries" end-to-end.
     private readonly int _connectionRetries = connectionRetries;
 
-    // ─────────────────────────────────────────────────────────────
+    // ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
     //  Public surface
-    // ─────────────────────────────────────────────────────────────
+    // ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
 
     /// <summary>
     /// Refresh the locator list from the cluster. Mirrors cppcache
@@ -100,7 +100,7 @@ internal sealed class ThinClientLocatorHelper(
 
     /// <summary>
     /// Ask the locator pool for one server to open a forward
-    /// (client → server) connection on. Mirrors cppcache
+    /// (client ??server) connection on. Mirrors cppcache
     /// <c>ThinClientLocatorHelper::getEndpointForNewFwdConn</c>
     /// (<c>ThinClientLocatorHelper.cpp:222-279</c>).
     /// </summary>
@@ -108,13 +108,12 @@ internal sealed class ThinClientLocatorHelper(
     /// Two failure modes the caller cares about:
     /// <list type="bullet">
     ///   <item>
-    ///     All locators unreachable → cppcache
+    ///     All locators unreachable ??cppcache
     ///     <c>NoAvailableLocatorsException</c>; we surface as
     ///     <see cref="GeodeException"/>.
     ///   </item>
     ///   <item>
-    ///     Some locator answered but no server matched the group →
-    ///     cppcache <c>NotConnectedException("No servers found")</c>; we
+    ///     Some locator answered but no server matched the group ??    ///     cppcache <c>NotConnectedException("No servers found")</c>; we
     ///     surface as <see cref="GeodeException"/> with the message.
     ///   </item>
     /// </list>
@@ -155,8 +154,7 @@ internal sealed class ThinClientLocatorHelper(
 
             if (!response.ServerFound)
             {
-                // Locator was reachable but reported no eligible server —
-                // remember that so we can distinguish "no locator reachable"
+                // Locator was reachable but reported no eligible server ??                // remember that so we can distinguish "no locator reachable"
                 // from "locators say cluster is empty" at the end.
                 locatorFound = true;
                 logger.LogTrace(
@@ -165,7 +163,7 @@ internal sealed class ThinClientLocatorHelper(
                 continue;
             }
 
-            // Server found — response.Server is non-null when ServerFound=true
+            // Server found ??response.Server is non-null when ServerFound=true
             // (enforced by ClientConnectionResponse.ReadFrom).
             var server = response.Server!;
             logger.LogDebug(
@@ -174,7 +172,7 @@ internal sealed class ThinClientLocatorHelper(
             return server;
         }
 
-        // Out of attempts — cppcache distinguishes the two failure modes.
+        // Out of attempts ??cppcache distinguishes the two failure modes.
         if (locatorFound)
         {
             throw new GeodeException(
@@ -186,9 +184,9 @@ internal sealed class ThinClientLocatorHelper(
             $"no locator reachable across {_connectionRetries} attempts.");
     }
 
-    // ─────────────────────────────────────────────────────────────
+    // ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
     //  Snapshot + atomic swap
-    // ─────────────────────────────────────────────────────────────
+    // ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
 
     /// <summary>Lock + copy + shuffle. Mirrors cppcache <c>getLocators()</c> (<c>ThinClientLocatorHelper.cpp:75-85</c>).</summary>
     private List<ServerLocation> SnapshotShuffledLocators()
@@ -203,7 +201,7 @@ internal sealed class ThinClientLocatorHelper(
         IReadOnlyList<ServerLocation> serverList,
         IReadOnlyList<ServerLocation> clientList)
     {
-        // cppcache ThinClientLocatorHelper.cpp:298-303 — preserve
+        // cppcache ThinClientLocatorHelper.cpp:298-303 ??preserve
         // client-known entries the server didn't echo back.
         var merged = new List<ServerLocation>(serverList);
         foreach (var oldLoc in clientList)
@@ -228,16 +226,16 @@ internal sealed class ThinClientLocatorHelper(
         }
     }
 
-    // ─────────────────────────────────────────────────────────────
+    // ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
     //  Frame builders
-    // ─────────────────────────────────────────────────────────────
+    // ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
 
-    private static byte[] BuildLocatorListRequestFrame(string serverGroup)
+    private byte[] BuildLocatorListRequestFrame(string serverGroup)
         => BuildRequestFrame(
             DSFid.LocatorListRequest,
             writer => new LocatorListRequest(serverGroup).WriteTo(writer));
 
-    private static byte[] BuildClientConnectionRequestFrame(
+    private byte[] BuildClientConnectionRequestFrame(
         string serverGroup, IReadOnlyCollection<ServerLocation> excludeServers)
         => BuildRequestFrame(
             DSFid.ClientConnectionRequest,
@@ -256,13 +254,12 @@ internal sealed class ThinClientLocatorHelper(
     /// <c>[-128, 127]</c>, switch to <c>FixedIDShort</c>/<c>FixedIDInt</c>
     /// with the matching write width.
     /// </remarks>
-    private static byte[] BuildRequestFrame(DSFid dsfid, Action<BigEndianBinaryWriter> writeBody)
+    private byte[] BuildRequestFrame(DSFid dsfid, Action<DataOutput> writeBody)
     {
-        var bufferWriter = new ArrayBufferWriter<byte>(64);
-        var writer = new BigEndianBinaryWriter(bufferWriter);
+        using var writer = ActivatorUtilities.CreateInstance<DataOutput>(serviceProvider);
 
         writer.WriteInt32(GossipVersion);
-        // Ordinal MUST be int16 — Java TcpServer.processOneConnection reads
+        // Ordinal MUST be int16 ??Java TcpServer.processOneConnection reads
         // `input.readShort()` at TcpServer.java:413; an int32 here leaves
         // the trailing 2 bytes mis-aligning the DSCode/DSFid envelope and
         // the server rejects with
@@ -273,12 +270,12 @@ internal sealed class ThinClientLocatorHelper(
         writer.WriteSByte((sbyte)dsfid);
         writeBody(writer);
 
-        return bufferWriter.WrittenSpan.ToArray();
+        return writer.WrittenSpan.ToArray();
     }
 
-    // ─────────────────────────────────────────────────────────────
+    // ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
     //  Send / receive
-    // ─────────────────────────────────────────────────────────────
+    // ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
 
     /// <summary>
     /// Send <paramref name="requestBytes"/> to <paramref name="loc"/>,
@@ -317,7 +314,7 @@ internal sealed class ThinClientLocatorHelper(
                 }
                 catch (EndOfStreamException)
                 {
-                    // Need more bytes — fall through to the read below.
+                    // Need more bytes ??fall through to the read below.
                 }
 
                 if (totalRead == buffer.Length)
@@ -342,7 +339,7 @@ internal sealed class ThinClientLocatorHelper(
         }
         catch (NotSupportedException)
         {
-            // SSL reject — propagate (no point trying other locators in
+            // SSL reject ??propagate (no point trying other locators in
             // the same cluster, they almost certainly require SSL too).
             throw;
         }
@@ -356,14 +353,14 @@ internal sealed class ThinClientLocatorHelper(
     }
 
     /// <summary>
-    /// Consume the outer envelope: optional SSL-reject byte → DSCode
-    /// <c>FixedIDByte</c> → DSFid sbyte. Throws on shape mismatch so
+    /// Consume the outer envelope: optional SSL-reject byte ??DSCode
+    /// <c>FixedIDByte</c> ??DSFid sbyte. Throws on shape mismatch so
     /// the caller's catch-all reports it as a malformed locator
     /// response.
     /// </summary>
     private static void ReadEnvelope(BigEndianBinaryReader reader, DSFid expectedDsfid)
     {
-        // cppcache: di.read() — if REPLY_SSL_ENABLED, throw; else rewind.
+        // cppcache: di.read() ??if REPLY_SSL_ENABLED, throw; else rewind.
         // The byte serves dual purpose; we don't rewind, we just consume.
         var first = reader.ReadByte();
         if (first == ReplySslEnabled)

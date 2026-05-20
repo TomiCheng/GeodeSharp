@@ -1,8 +1,7 @@
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
-/// <see cref="IDataConverter"/> for <see cref="DateTime"/> ↔
-/// <see cref="DSCode.CacheableDate"/> (61). Wire payload is an 8-byte
+/// <see cref="IDataConverter"/> for <see cref="DateTime"/> ??/// <see cref="DSCode.CacheableDate"/> (61). Wire payload is an 8-byte
 /// big-endian signed integer: milliseconds since the Unix epoch
 /// (1970-01-01T00:00:00Z), matching Java
 /// <c>java.util.Date.getTime()</c>. Mirrors cppcache
@@ -15,16 +14,16 @@ namespace Geode.Client.Protocol.Serialization;
 /// <see cref="DateTimeKind.Utc"/>. This deliberately diverges from
 /// the C++/CLI <c>clicache</c> reference implementation
 /// (<c>geode-native/clicache/src/CacheableDate.cpp::FromData</c>)
-/// which calls <c>ToLocalTime()</c> on read — that introduces a
+/// which calls <c>ToLocalTime()</c> on read ??that introduces a
 /// subtle Kind-flip footgun where
-/// <c>DateTime.UtcNow → wire → Kind=Local</c>. We keep the instant
+/// <c>DateTime.UtcNow ??wire ??Kind=Local</c>. We keep the instant
 /// stable in UTC; callers wanting local-time display call
 /// <see cref="DateTime.ToLocalTime"/> explicitly.
 /// </para>
 /// <para>
 /// <b>Write rejects <see cref="DateTimeKind.Unspecified"/>.</b>
 /// <c>DateTime.ToUniversalTime</c> silently assumes
-/// Unspecified means Local — which makes wire output depend on the
+/// Unspecified means Local ??which makes wire output depend on the
 /// runtime's local timezone, a cross-host non-determinism we refuse
 /// to inherit. cppcache / clicache don't model Kind at all so this
 /// concern is .NET-only. Callers must set <see cref="DateTime.Kind"/>
@@ -34,7 +33,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// </para>
 /// <para>
 /// <b>Precision is millisecond.</b> Sub-millisecond ticks are
-/// truncated on write (no rounding) — matches the natural .NET
+/// truncated on write (no rounding) ??matches the natural .NET
 /// behaviour of <see cref="DateTimeOffset.ToUnixTimeMilliseconds"/>
 /// and avoids the clicache "round to nearest ms" quirk where
 /// <c>t.AddTicks(1) == t</c> can become true.
@@ -46,7 +45,7 @@ internal sealed class DateTimeDataConverter : DataConverter<DateTime>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, DateTime value, byte dsCode, int depth)
+    public override void Write(DataOutput writer, DateTime value, byte dsCode, int depth)
     {
         // Three-way Kind handling. Unspecified is rejected because
         // .NET's ToUniversalTime silently assumes Local, which would
@@ -65,7 +64,7 @@ internal sealed class DateTimeDataConverter : DataConverter<DateTime>
             _ => throw new ArgumentOutOfRangeException(nameof(value)),
         };
 
-        // Truncate to ms — matches DateTimeOffset.ToUnixTimeMilliseconds
+        // Truncate to ms ??matches DateTimeOffset.ToUnixTimeMilliseconds
         // and avoids the clicache "round to nearest ms" quirk.
         long ms = (utc - DateTime.UnixEpoch).Ticks / TimeSpan.TicksPerMillisecond;
         writer.WriteInt64(ms);

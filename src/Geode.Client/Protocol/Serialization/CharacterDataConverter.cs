@@ -1,8 +1,7 @@
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
-/// <see cref="IDataConverter"/> for <see cref="char"/> ↔
-/// <see cref="DSCode.CacheableCharacter"/> (54). Wire payload is 2
+/// <see cref="IDataConverter"/> for <see cref="char"/> ??/// <see cref="DSCode.CacheableCharacter"/> (54). Wire payload is 2
 /// bytes big-endian (UTF-16 code unit, 0..65535). Mirrors cppcache
 /// <c>CacheableCharacter</c>
 /// (<c>cppcache/src/CacheableBuiltins.cpp</c> <c>toData</c> /
@@ -10,7 +9,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// </summary>
 /// <remarks>
 /// Java <c>char</c> is a UTF-16 code unit (unsigned 16-bit) and so is
-/// .NET <see cref="char"/> — one-to-one mapping, no surrogate pairs
+/// .NET <see cref="char"/> ??one-to-one mapping, no surrogate pairs
 /// handled at this layer (a single char can be an unpaired surrogate
 /// half; that's the caller's concern, the wire just carries the
 /// code unit).
@@ -21,7 +20,7 @@ internal sealed class CharacterDataConverter : DataConverter<char>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, char value, byte dsCode, int depth) =>
+    public override void Write(DataOutput writer, char value, byte dsCode, int depth) =>
         writer.WriteUInt16(value);
 
     public override char Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>

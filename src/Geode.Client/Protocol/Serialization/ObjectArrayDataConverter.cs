@@ -1,12 +1,11 @@
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
-/// <see cref="IDataConverter"/> for <see cref="object"/><c>[]</c> ↔
-/// <see cref="DSCode.CacheableObjectArray"/> (52). Wire payload is a
+/// <see cref="IDataConverter"/> for <see cref="object"/><c>[]</c> ??/// <see cref="DSCode.CacheableObjectArray"/> (52). Wire payload is a
 /// VL-encoded length (1 / 3 / 5 bytes) followed by a Java class header
 /// (one <see cref="DSCode.Class"/> tag byte + the string
 /// <c>"java.lang.Object"</c> via the standard string-write path)
-/// followed by N <i>fully-serialised objects</i> — each element starts
+/// followed by N <i>fully-serialised objects</i> ??each element starts
 /// with its own DSCode byte (including <see cref="DSCode.NullObj"/> for
 /// null elements). Mirrors cppcache <c>CacheableObjectArray</c>
 /// (<c>cppcache/src/CacheableObjectArray.cpp</c>).
@@ -15,9 +14,8 @@ namespace Geode.Client.Protocol.Serialization;
 /// <para>
 /// <b>The class-name header is part of the wire format, not metadata
 /// we can drop.</b> Java's <c>DataSerializer</c> writes an Object[]
-/// as <c>arrayLength → componentTypeName → elements</c>. We write
-/// the fixed string <c>"java.lang.Object"</c> (matching cppcache —
-/// we don't preserve the .NET runtime element type) and on read we
+/// as <c>arrayLength ??componentTypeName ??elements</c>. We write
+/// the fixed string <c>"java.lang.Object"</c> (matching cppcache ??/// we don't preserve the .NET runtime element type) and on read we
 /// consume the bytes without using them: the wire dictates the
 /// element type sequence per-element via each element's DSCode, so
 /// the header is informational only on this side.
@@ -47,7 +45,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// or <c>int[]</c> stored in an <c>object</c> variable is still
 /// <c>string[]</c> / <c>int[]</c> at <see cref="object.GetType"/>
 /// time, so they dispatch to <see cref="StringArrayDataConverter"/>
-/// / <see cref="Int32ArrayDataConverter"/> respectively — not here.
+/// / <see cref="Int32ArrayDataConverter"/> respectively ??not here.
 /// To force polymorphic element types on the wire, the caller must
 /// explicitly allocate <c>new object[] { ... }</c>.
 /// </para>
@@ -66,7 +64,7 @@ internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
     /// /<see cref="SerializationRegistry.ReadObject"/>. The
     /// <c>this</c>-reference at registry-construction time is safe
     /// for the same reason as
-    /// <see cref="StringArrayDataConverter"/> — we only store the
+    /// <see cref="StringArrayDataConverter"/> ??we only store the
     /// reference and call it later from <see cref="Write"/> /
     /// <see cref="Read"/>, by which point the registry is fully
     /// populated.
@@ -79,29 +77,28 @@ internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, object[] value, byte dsCode, int depth)
+    public override void Write(DataOutput writer, object[] value, byte dsCode, int depth)
     {
         if (value.Length > _registry.MaxArrayLength)
         {
             throw new InvalidOperationException(
                 $"ObjectArrayDataConverter: cannot serialise an array of {value.Length} elements "
-                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+                + $"??exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
         }
         writer.WriteArrayLen(value.Length);
 
         // Java class header: one DSCode.Class byte + the literal
         // string "java.lang.Object". cppcache hard-codes this name
-        // regardless of the actual element types; we mirror that —
-        // each element's own DSCode is what tells the server how to
+        // regardless of the actual element types; we mirror that ??        // each element's own DSCode is what tells the server how to
         // deserialise the slot.
         writer.WriteByte(DSCode.Class);
         writer.WriteString(JavaObjectClassName);
 
         foreach (var element in value)
         {
-            // WriteObject handles null → DSCode.NullObj (41) and
+            // WriteObject handles null ??DSCode.NullObj (41) and
             // dispatches to the appropriate converter (string / int /
-            // … or even a nested array) for non-null elements.
+            // ??or even a nested array) for non-null elements.
             // depth + 1 propagates the recursion budget.
             _registry.WriteObject(writer, element, depth + 1);
         }
@@ -118,14 +115,14 @@ internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
         {
             throw new GeodeException(
                 $"ObjectArrayDataConverter: wire array length {length} exceeds "
-                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) — refusing to allocate.");
+                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) ??refusing to allocate.");
         }
 
-        // Discard the class header — its information is redundant
+        // Discard the class header ??its information is redundant
         // with the per-element DSCode bytes that follow. cppcache's
         // fromData reads + ignores these too.
-        //   reader.ReadByte()           — DSCode.Class tag
-        //   _registry.ReadObject()      — the "java.lang.Object" string,
+        //   reader.ReadByte()           ??DSCode.Class tag
+        //   _registry.ReadObject()      ??the "java.lang.Object" string,
         //                                 routed via StringDataConverter
         reader.ReadByte();
         _registry.ReadObject(reader, depth + 1);
@@ -133,7 +130,7 @@ internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
         var array = new object[length];
         for (var i = 0; i < length; i++)
         {
-            // Element slot is object — any registered type (including
+            // Element slot is object ??any registered type (including
             // null via DSCode.NullObj) is a valid value. The "!" is a
             // CS8601 dance: the slot's static type is non-nullable
             // object, but at runtime CLR arrays of reference types

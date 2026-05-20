@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+
 namespace Geode.Client.Protocol;
 
 partial class TcrMessageBuilder
@@ -22,7 +24,7 @@ partial class TcrMessageBuilder
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Wire layout — Header (<see cref="MessageType.QueryWithParameters"/>=80,
+    /// Wire layout ??Header (<see cref="MessageType.QueryWithParameters"/>=80,
     /// NumParts=3 + (timeout?1:0) + paramCount, TransactionId=-1,
     /// EarlyAck=0) followed by:
     /// </para>
@@ -50,7 +52,7 @@ partial class TcrMessageBuilder
     /// <c>TcrMessage.cpp:1784</c> regardless of whether the timeout
     /// part is actually emitted (the if-check is on line 1796). If a
     /// caller ever passes <c>timeout &lt; 0</c> the header advertises
-    /// 4 fixed parts but writes only 3 — a latent wire mismatch.
+    /// 4 fixed parts but writes only 3 ??a latent wire mismatch.
     /// cppcache callers always pass <c>DEFAULT_QUERY_RESPONSE_TIMEOUT</c>
     /// (15s, positive), so the bug never surfaces. We compute
     /// <c>numOfParts</c> conditionally so the wire byte count always
@@ -78,39 +80,34 @@ partial class TcrMessageBuilder
         var capacity = 3 + (hasTimeoutPart ? 1 : 0) + paramCount;
         var parts = new List<TcrPart>(capacity)
         {
-            // Part 1 — Query string. cppcache writeRegionPart of the OQL
+            // Part 1 ??Query string. cppcache writeRegionPart of the OQL
             // (it re-uses the region-name part for the OQL body); we
             // call ModifiedUtf8 directly to make the encoding intent
-            // explicit — server-side decoder is the same in both cases.
+            // explicit ??server-side decoder is the same in both cases.
             partBuilder.ModifiedUtf8(queryString),
 
-            // Part 2 — Parameter count (cppcache writeIntPart).
+            // Part 2 ??Parameter count (cppcache writeIntPart).
             partBuilder.Int32(paramCount),
 
-            // Part 3 — Server compile-query-cache TTL seconds; cppcache
+            // Part 3 ??Server compile-query-cache TTL seconds; cppcache
             // hard-codes 15 (see CompileQueryClearTimeoutSeconds doc).
             partBuilder.Int32(CompileQueryClearTimeoutSeconds),
         };
 
-        // Part 4 — Optional response timeout (cppcache writeMillisecondsPart
-        // = writeIntPart). null → omit (cppcache "< 0" branch).
+        // Part 4 ??Optional response timeout (cppcache writeMillisecondsPart
+        // = writeIntPart). null ??omit (cppcache "< 0" branch).
         if (messageResponseTimeoutMillis is { } ms)
         {
             parts.Add(partBuilder.Int32(ms));
         }
 
-        // Part 5..N — Bind parameters in order. Each element is
-        // DSCode-tagged via the central registry (handles null →
-        // DSCode.NullObj automatically per its contract).
+        // Part 5..N ??Bind parameters in order. Each element is
+        // DSCode-tagged via the central registry (handles null ??        // DSCode.NullObj automatically per its contract).
         foreach (var value in parameters)
         {
             parts.Add(partBuilder.Object(w => _serializationRegistry.WriteObject(w, value)));
         }
 
-        return new TcrMessage(
-            MessageType: MessageType.QueryWithParameters,
-            TransactionId: transactionId,
-            EarlyAck: 0,
-            Parts: parts);
+        return ActivatorUtilities.CreateInstance<TcrMessage>(_serviceProvider, MessageType.QueryWithParameters, transactionId, (byte)0, parts);
     }
 }

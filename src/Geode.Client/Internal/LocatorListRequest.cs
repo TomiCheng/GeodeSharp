@@ -13,8 +13,7 @@ namespace Geode.Client.Internal;
 /// empty selects all servers, matching cppcache default). The outer
 /// locator frame (gossip version + Geode version + DSCode-tagged
 /// FixedId envelope) is the <c>LocatorConnection</c>'s responsibility
-/// (Step C). cppcache's <c>fromData</c> is intentionally empty —
-/// locator requests are client-to-server only, never deserialized on
+/// (Step C). cppcache's <c>fromData</c> is intentionally empty ??/// locator requests are client-to-server only, never deserialized on
 /// the receiving side.
 /// </remarks>
 internal sealed record LocatorListRequest(string ServerGroup = "")
@@ -25,7 +24,7 @@ internal sealed record LocatorListRequest(string ServerGroup = "")
     /// (<c>LocatorListRequest.cpp:32-34</c>): a single
     /// <c>writeString(m_servergroup)</c>.
     /// </summary>
-    public void WriteTo(BigEndianBinaryWriter writer)
+    public void WriteTo(DataOutput writer)
     {
         ArgumentNullException.ThrowIfNull(writer);
         writer.WriteString(ServerGroup);

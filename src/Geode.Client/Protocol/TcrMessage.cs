@@ -1,4 +1,4 @@
-using System.Buffers;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol;
 
@@ -24,8 +24,7 @@ namespace Geode.Client.Protocol;
 /// <para>
 /// Cppcache writes a dummy <c>0</c> for <c>MessageLength</c> at encode time
 /// and patches offset 4 once the parts are written. We use a two-pass encode
-/// instead (parts first to learn their byte length, then header + parts) —
-/// simpler given our writer does not expose a seek/patch API. The output
+/// instead (parts first to learn their byte length, then header + parts) ??/// simpler given our writer does not expose a seek/patch API. The output
 /// bytes are identical.
 /// </para>
 /// </remarks>
@@ -33,8 +32,10 @@ internal sealed record TcrMessage(
     MessageType MessageType,
     int TransactionId,
     byte EarlyAck,
-    IReadOnlyList<TcrPart> Parts)
+    IReadOnlyList<TcrPart> Parts,
+    IServiceProvider ServiceProvider)
 {
+
     /// <summary>Fixed-size frame header: four i32 fields + one u8.</summary>
     public const int HeaderLength = 17;
 
@@ -63,24 +64,22 @@ internal sealed record TcrMessage(
     public byte[] Encode()
     {
         // Pass 1: encode parts to learn their total byte length.
-        var partsBuffer = new ArrayBufferWriter<byte>();
-        var partsWriter = new BigEndianBinaryWriter(partsBuffer);
+        using var partsWriter = ActivatorUtilities.CreateInstance<DataOutput>(ServiceProvider);
         foreach (var part in Parts)
         {
             part.Encode(partsWriter);
         }
-        var partsBytes = partsBuffer.WrittenSpan;
+        var partsBytes = partsWriter.WrittenSpan;
 
         // Pass 2: write header followed by the parts payload.
-        var buffer = new ArrayBufferWriter<byte>(HeaderLength + partsBytes.Length);
-        var w = new BigEndianBinaryWriter(buffer);
+        using var w = ActivatorUtilities.CreateInstance<DataOutput>(ServiceProvider);
         w.WriteInt32((int)MessageType);
         w.WriteInt32(partsBytes.Length);   // MessageLength = bytes occupied by Parts
         w.WriteInt32(Parts.Count);
         w.WriteInt32(TransactionId);
         w.WriteByte(EarlyAck);
         w.WriteBytesOnly(partsBytes);
-        return buffer.WrittenSpan.ToArray();
+        return w.WrittenSpan.ToArray();
     }
 
     /// <summary>Decode one message from <paramref name="bytes"/>.</summary>
@@ -91,7 +90,7 @@ internal sealed record TcrMessage(
     /// <exception cref="EndOfStreamException">
     /// The buffer is shorter than the frame claims.
     /// </exception>
-    public static TcrMessage Decode(ReadOnlyMemory<byte> bytes)
+    public static TcrMessage Decode(ReadOnlyMemory<byte> bytes, IServiceProvider serviceProvider)
     {
         var reader = new BigEndianBinaryReader(bytes);
 
@@ -121,7 +120,8 @@ internal sealed record TcrMessage(
                 $"Header MessageLength={messageLength} does not match the {partsConsumed} bytes consumed by the parts.");
         }
 
-        return new TcrMessage(messageType, transactionId, earlyAck, parts);
+        return ActivatorUtilities.CreateInstance<TcrMessage>(
+            serviceProvider, messageType, transactionId, earlyAck, parts);
     }
 
     public bool Equals(TcrMessage? other)
@@ -165,7 +165,7 @@ internal sealed record TcrMessage(
     /// </remarks>
     public string GetException() =>
         throw new NotImplementedException(
-            "Phase 3 — TcrMessage.GetException (exception-reply payload stringify)");
+            "Phase 3 ??TcrMessage.GetException (exception-reply payload stringify)");
 
     /// <summary>
     /// True when <paramref name="msg"/> is a user-initiated region op
@@ -176,10 +176,10 @@ internal sealed record TcrMessage(
     /// <remarks>
     /// Mirrors <c>TcrMessage::isUserInitiativeOps</c>
     /// (<c>cppcache/src/TcrMessage.cpp:98</c>). Only the multi-user /
-    /// security dispatch path consults this predicate — Phase 3 work,
+    /// security dispatch path consults this predicate ??Phase 3 work,
     /// hence NIE stub until then.
     /// </remarks>
     public static bool IsUserInitiativeOps(TcrMessage msg) =>
         throw new NotImplementedException(
-            "Phase 3 — TcrMessage.IsUserInitiativeOps (auth / multi-user dispatch)");
+            "Phase 3 ??TcrMessage.IsUserInitiativeOps (auth / multi-user dispatch)");
 }

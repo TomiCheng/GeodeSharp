@@ -9,10 +9,10 @@ namespace Geode.Client.Protocol.Serialization;
 /// <typeparam name="T">CLR type the codec serialises.</typeparam>
 /// <remarks>
 /// Single-DSCode converters (the common case) only override
-/// <see cref="DsCodes"/>, <see cref="Write(BigEndianBinaryWriter, T, byte)"/>,
+/// <see cref="DsCodes"/>, <see cref="Write(DataOutput, T, byte)"/>,
 /// and <see cref="Read(BigEndianBinaryReader, byte)"/>. They inherit
 /// the default <see cref="GetDsCode(T)"/> which returns
-/// <c>DsCodes[0]</c> â€” fine because their <see cref="DsCodes"/> array
+/// <c>DsCodes[0]</c> ??fine because their <see cref="DsCodes"/> array
 /// is one element long. Multi-DSCode converters (only
 /// <c>StringDataConverter</c> today) override <see cref="GetDsCode(T)"/>
 /// to scan the value and branch.
@@ -29,20 +29,20 @@ internal abstract class DataConverter<T> : IDataConverter<T>
     /// </summary>
     public virtual byte GetDsCode(T value) => DsCodes[0];
 
-    public abstract void Write(BigEndianBinaryWriter writer, T value, byte dsCode, int depth);
+    public abstract void Write(DataOutput writer, T value, byte dsCode, int depth);
 
     public abstract T? Read(BigEndianBinaryReader reader, byte dsCode, int depth);
 
-    // â”€â”€ Bridges to the non-generic interface â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ?€?€ Bridges to the non-generic interface ?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€
     // The registry calls these overloads, never the typed ones
     // directly. The casts are safe because the registry looks codecs
     // up by ManagedType (encode) / DsCodes (decode). `depth` rides
-    // through unchanged â€” the registry already does the limit check
+    // through unchanged ??the registry already does the limit check
     // before calling in; this layer just forwards.
     byte IDataConverter.GetDsCode(object value) =>
         GetDsCode((T)value);
 
-    void IDataConverter.Write(BigEndianBinaryWriter writer, object value, byte dsCode, int depth) =>
+    void IDataConverter.Write(DataOutput writer, object value, byte dsCode, int depth) =>
         Write(writer, (T)value, dsCode, depth);
 
     object? IDataConverter.Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>

@@ -1,8 +1,7 @@
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
-/// <see cref="IDataConverter"/> for <see cref="long"/> ↔
-/// <see cref="DSCode.CacheableInt64"/> (58). Wire payload is 8 bytes
+/// <see cref="IDataConverter"/> for <see cref="long"/> ??/// <see cref="DSCode.CacheableInt64"/> (58). Wire payload is 8 bytes
 /// big-endian, no length prefix. Mirrors cppcache
 /// <c>CacheableInt64</c> (<c>cppcache/src/CacheableBuiltins.cpp</c>
 /// <c>toData</c> / <c>fromData</c>).
@@ -13,7 +12,7 @@ internal sealed class Int64DataConverter : DataConverter<long>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, long value, byte dsCode, int depth) =>
+    public override void Write(DataOutput writer, long value, byte dsCode, int depth) =>
         writer.WriteInt64(value);
 
     public override long Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>

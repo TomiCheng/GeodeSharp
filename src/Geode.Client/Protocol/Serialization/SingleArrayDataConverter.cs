@@ -3,15 +3,14 @@ using Geode.Client.Services;
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
-/// <see cref="IDataConverter"/> for <see cref="float"/><c>[]</c> ↔
-/// <see cref="DSCode.CacheableFloatArray"/> (50). Wire payload is a
+/// <see cref="IDataConverter"/> for <see cref="float"/><c>[]</c> ??/// <see cref="DSCode.CacheableFloatArray"/> (50). Wire payload is a
 /// VL-encoded length (1 / 3 / 5 bytes) followed by 4 bytes big-endian
 /// IEEE-754 per element. Mirrors cppcache <c>CacheableFloatArray</c>
 /// (<c>CacheableArrayPrimitive&lt;float, CacheableFloatArray&gt;</c>).
 /// </summary>
 /// <remarks>
 /// Per-element wire shape matches <see cref="SingleDataConverter"/>
-/// (DSCode 59) — NaN / ±Infinity round-trip preserves IEEE-754 bit
+/// (DSCode 59) ??NaN / ±Infinity round-trip preserves IEEE-754 bit
 /// pattern. Same key / null / empty rules as
 /// <see cref="BooleanArrayDataConverter"/>.
 /// </remarks>
@@ -25,13 +24,13 @@ internal sealed class SingleArrayDataConverter(CacheScopeContext cacheScopeConte
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, float[] value, byte dsCode, int depth)
+    public override void Write(DataOutput writer, float[] value, byte dsCode, int depth)
     {
         if (value.Length > _maxArrayLength)
         {
             throw new InvalidOperationException(
                 $"SingleArrayDataConverter: cannot serialise an array of {value.Length} elements "
-                + $"— exceeds Serialization.MaxArrayLength ({_maxArrayLength}).");
+                + $"??exceeds Serialization.MaxArrayLength ({_maxArrayLength}).");
         }
         writer.WriteArrayLen(value.Length);
         foreach (var element in value)
@@ -51,7 +50,7 @@ internal sealed class SingleArrayDataConverter(CacheScopeContext cacheScopeConte
         {
             throw new GeodeException(
                 $"SingleArrayDataConverter: wire array length {length} exceeds "
-                + $"Serialization.MaxArrayLength ({_maxArrayLength}) — refusing to allocate.");
+                + $"Serialization.MaxArrayLength ({_maxArrayLength}) ??refusing to allocate.");
         }
         var array = new float[length];
         for (var i = 0; i < length; i++)

@@ -1,8 +1,7 @@
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
-/// <see cref="IDataConverter"/> for <see cref="byte"/> ↔
-/// <see cref="DSCode.CacheableByte"/> (55). Wire payload is 1 byte.
+/// <see cref="IDataConverter"/> for <see cref="byte"/> ??/// <see cref="DSCode.CacheableByte"/> (55). Wire payload is 1 byte.
 /// Mirrors cppcache <c>CacheableByte</c>
 /// (<c>cppcache/src/CacheableBuiltins.cpp</c> <c>toData</c> /
 /// <c>fromData</c>).
@@ -11,8 +10,8 @@ namespace Geode.Client.Protocol.Serialization;
 /// <b>Signed vs unsigned</b>: cppcache / Java treat
 /// <c>CacheableByte</c> as <c>int8_t</c> / signed Java <c>byte</c>
 /// (range -128..127). We expose it as .NET <see cref="byte"/>
-/// (unsigned 0..255) — the wire bit pattern is identical
-/// (.NET <c>255</c> ↔ Java <c>-1</c> ↔ wire <c>0xFF</c>) so
+/// (unsigned 0..255) ??the wire bit pattern is identical
+/// (.NET <c>255</c> ??Java <c>-1</c> ??wire <c>0xFF</c>) so
 /// interop is correct; only the cross-language debug display
 /// differs. Choosing <c>byte</c> over <see cref="sbyte"/> matches
 /// .NET convention and keeps the type symmetrical with
@@ -24,7 +23,7 @@ internal sealed class ByteDataConverter : DataConverter<byte>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(BigEndianBinaryWriter writer, byte value, byte dsCode, int depth) =>
+    public override void Write(DataOutput writer, byte value, byte dsCode, int depth) =>
         writer.WriteByte(value);
 
     public override byte Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>

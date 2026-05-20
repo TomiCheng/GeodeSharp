@@ -8,6 +8,7 @@ using System.Text;
 using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Geode.Client.Protocol;
@@ -38,7 +39,7 @@ internal sealed class TcrConnection(
 
     /// <summary>
     /// Server's subscription-queue role, captured from the handshake reply
-    /// byte at step 10. Mirrors cppcache <c>hasServerQueue_</c> — despite
+    /// byte at step 10. Mirrors cppcache <c>hasServerQueue_</c> ??despite
     /// the "has" prefix it's an enum, not a bool:
     ///   0 = NON_REDUNDANT_SERVER       (no subscription queue)
     ///   1 = REDUNDANT_PRIMARY_SERVER   (primary HA copy)
@@ -52,7 +53,7 @@ internal sealed class TcrConnection(
     /// Number of events currently buffered in the server's subscription
     /// queue for this client, captured from handshake step 11. Mirrors
     /// cppcache <c>queueSize_</c>. Non-zero only after a reconnect with
-    /// durable subscriptions — Phase 12+. Default 0.
+    /// durable subscriptions ??Phase 12+. Default 0.
     /// </summary>
     private int _queueSize;
 
@@ -75,13 +76,12 @@ internal sealed class TcrConnection(
 
     private long _createdAt = Stopwatch.GetTimestamp();         // creationTime_ (mutable: UpdateCreationTime resets it)
     private long _lastAccessed = Stopwatch.GetTimestamp();      // lastAccessed_
-    // cppcache TcrConnection.cpp:65-70,98 — each conn picks its own [-9, +9]
+    // cppcache TcrConnection.cpp:65-70,98 ??each conn picks its own [-9, +9]
     // jitter at construction to spread load-conditioning expiry across the
     // pool and avoid synchronised mass-rotation.
     private readonly int _expiryTimeVariancePercentage = RandomNumberGenerator.GetInt32(-9, 10);
 
-    // ── cppcache TcrConnection member mirror (TcrConnection.hpp:272-363) ──
-    // Phase 1.5 mirror-then-prune. Most fields are zero / null until
+    // ?�?�?cppcache TcrConnection member mirror (TcrConnection.hpp:272-363) ?�?�?    // Phase 1.5 mirror-then-prune. Most fields are zero / null until
     // the wire path that fills them lands; back-refs are nullable typed
     // so we can swap in real DI plumbing without changing the shape.
     /// <summary>
@@ -127,7 +127,7 @@ internal sealed class TcrConnection(
     private TcrConnectionManager? _connectionManager;           // connectionManager_
     // _tcpClient + _stream above cover cppcache `conn_` (Connector).
     private ushort _port;                                       // port_
-    private object? _chunksProcessSemaphore;                    // binary_semaphore chunks_process_semaphore_ (≈ SemaphoreSlim)
+    private object? _chunksProcessSemaphore;                    // binary_semaphore chunks_process_semaphore_ (??SemaphoreSlim)
 
     private int _isBeingUsed;                                   // volatile bool isBeingUsed_ (Interlocked 0/1)
     private uint _isUsed;                                       // atomic<uint32_t> isUsed_
@@ -137,7 +137,7 @@ internal sealed class TcrConnection(
     /// <summary>
     /// Stamp this connection's last-access time. Mirrors cppcache
     /// <c>TcrConnection::touch()</c>
-    /// (<c>cppcache/src/TcrConnection.cpp:1201</c>) — pool managers call
+    /// (<c>cppcache/src/TcrConnection.cpp:1201</c>) ??pool managers call
     /// it on borrow / return so <c>cleanStaleConnections</c> /
     /// <see cref="IsIdle"/> can distinguish idle conns from active ones.
     /// </summary>
@@ -147,7 +147,7 @@ internal sealed class TcrConnection(
     /// <summary>
     /// Reset both the creation clock and the last-access clock. Mirrors
     /// cppcache <c>TcrConnection::updateCreationTime()</c>
-    /// (<c>cppcache/src/TcrConnection.cpp:1222</c>) — the pool calls this
+    /// (<c>cppcache/src/TcrConnection.cpp:1222</c>) ??the pool calls this
     /// when load-conditioning replacement fails but the conn isn't
     /// expired yet, so the same conn isn't immediately re-elected on
     /// the next <c>cleanStaleConnections</c> sweep.
@@ -223,13 +223,13 @@ internal sealed class TcrConnection(
         }
 
         // Disable Nagle so a 17-byte Ping flushes immediately instead of
-        // waiting for buffer fill — cppcache does the same.
+        // waiting for buffer fill ??cppcache does the same.
         _tcpClient.NoDelay = true;
         await _tcpClient.ConnectAsync(host, port, cts.Token).ConfigureAwait(false);
         logger.LogDebug("TcrConnection connected to {host}:{port}", host, port);
         _stream = _tcpClient.GetStream();
 
-        // Geode handshake — fail fast here if the server rejects us, so the
+        // Geode handshake ??fail fast here if the server rejects us, so the
         // caller never sees a half-initialised connection.
         await HandshakeAsync(cancellationToken: cts.Token).ConfigureAwait(false);
     }
@@ -255,17 +255,16 @@ internal sealed class TcrConnection(
         }
 
         // Build the whole client-hello in memory; flushed in one SendAsync
-        // at the end of the client→server section so the bytes hit the wire
+        // at the end of the client?�server section so the bytes hit the wire
         // as a single TCP segment.
-        var helloBuffer = new ArrayBufferWriter<byte>();
-        var hello = new BigEndianBinaryWriter(helloBuffer);
+        using var hello = ActivatorUtilities.CreateInstance<DataOutput>(ServiceProvider);
 
-        // === Client → Server ====================================================
+        // === Client ??Server ====================================================
         //
         // 1. ConnectionType (u8)
-        //      100 = CLIENT_TO_SERVER           — request / response (Phase 2–11)
-        //      101 = PRIMARY_SERVER_TO_CLIENT   — notification / subscription channel
-        //      102 = SECONDARY_SERVER_TO_CLIENT — HA secondary (server keeps the
+        //      100 = CLIENT_TO_SERVER           ??request / response (Phase 2??1)
+        //      101 = PRIMARY_SERVER_TO_CLIENT   ??notification / subscription channel
+        //      102 = SECONDARY_SERVER_TO_CLIENT ??HA secondary (server keeps the
         //            subscription queue as backup, doesn't actively push)
         const byte ClientToServer = 100;
         const byte PrimaryServerToClient = 101;
@@ -276,8 +275,8 @@ internal sealed class TcrConnection(
         hello.WriteByte(connectionType);
 
         //
-        // 2. ProtocolVersion (ordinal only — major/minor/patch never go on the
-        //    wire). Compressed form: ordinal ≤ 127 → 1 byte. Uncompressed:
+        // 2. ProtocolVersion (ordinal only ??major/minor/patch never go on the
+        //    wire). Compressed form: ordinal ??127 ??1 byte. Uncompressed:
         //    sentinel + i16. See ProtocolVersion.WriteTo.
         ProtocolVersion.Current.WriteTo(hello);
         logger.LogTrace("TcrConnection handshake, sending ProtocolVersion ordinal {Ordinal}",
@@ -287,19 +286,19 @@ internal sealed class TcrConnection(
         //      Tells server we are ready to receive its acceptance reply.
         //      Defined in cppcache/src/TcrConnection.hpp:41 as
         //      `#define REPLY_OK 59`. (The inline comment at TcrConnection.cpp:160
-        //      claims 58 — that comment is stale; the macro value 59 is what
+        //      claims 58 ??that comment is stale; the macro value 59 is what
         //      actually goes on the wire.)
         const byte ReplyOk = 59;
         hello.WriteByte(ReplyOk);
 
         //
-        // 4. Port set — channel-type dependent, NO bytes for request/response.
+        // 4. Port set ??channel-type dependent, NO bytes for request/response.
         //    cppcache TcrConnection.cpp:161-170:
-        //      - !isClientNotification → record local TCP port into a shared set
+        //      - !isClientNotification ??record local TCP port into a shared set
         //        (Geode uses the set later to identify which client a notification
         //        channel belongs to). NO bytes written here. Skipped entirely until
         //        Phase 6 (pool) / Phase 12+ (subscriptions) need it.
-        //      - isClientNotification  → write i32 PortCount + i32 × N port list.
+        //      - isClientNotification  ??write i32 PortCount + i32 ? N port list.
         //        Phase 12+.
         if (isClientNotification)
         {
@@ -309,7 +308,7 @@ internal sealed class TcrConnection(
         }
 
         //
-        // 5. ReadTimeout (i32) — request/response channel only.
+        // 5. ReadTimeout (i32) ??request/response channel only.
         //    int.MaxValue - 10000 (~24.85 days, "effectively no timeout"). The
         //    -10000 dodges an old GFE 5.7 bug where the server added a 5-sec
         //    buffer that would otherwise overflow int.MaxValue.
@@ -322,20 +321,20 @@ internal sealed class TcrConnection(
         }
 
         //
-        // 6. ClientProxyMembershipID — one DataSerializable object on the wire.
+        // 6. ClientProxyMembershipID ??one DataSerializable object on the wire.
         //    Java client writes this as `DataSerializer.writeObject(id, out)`;
         //    server reads it as `ClientProxyMembershipID.readCanonicalized(in)`
         //    which internally calls `DataSerializer.readObject`. The single
         //    `writeObject` call expands into FOUR sequential wire pieces:
         //
-        //       6a. FixedIDByte    (u8 = 1)   ← DataSerializableFixedID byte form
-        //       6b. DSFid          (u8 = 38)  ← ClientProxyMembershipId class id
-        //       6c. identity       (varint length + bytes)  ← cppcache m_memID;
+        //       6a. FixedIDByte    (u8 = 1)   ??DataSerializableFixedID byte form
+        //       6b. DSFid          (u8 = 38)  ??ClientProxyMembershipId class id
+        //       6c. identity       (varint length + bytes)  ??cppcache m_memID;
         //                                                     opaque blob containing
         //                                                     a serialised
         //                                                     InternalDistributedMember
-        //                                                     (hostname, PID, version,…)
-        //       6d. uniqueId       (i32)      ← reconnect / sync counter; 1 for fresh client
+        //                                                     (hostname, PID, version,??
+        //       6d. uniqueId       (i32)      ??reconnect / sync counter; 1 for fresh client
         //
         //    Constants: cppcache/include/geode/internal/DSCode.hpp:28
         //    (FixedIDByte = 1) and DSFixedId.hpp:47 (ClientProxyMembershipId = 38).
@@ -355,16 +354,16 @@ internal sealed class TcrConnection(
         //    Server reads ONE byte: `setOverrides(new byte[] { readByte() })`.
         //    Currently only conflation override is encoded here, sourced
         //    from GeodeClientOptions.Subscription.ConflateEvents:
-        //       null  → 0 (use server default)
-        //       true  → 1 (force conflation on)
-        //       false → 2 (force conflation off)
+        //       null  ??0 (use server default)
+        //       true  ??1 (force conflation on)
+        //       false ??2 (force conflation off)
         //    TODO: keep an eye on Java geode-core widening this array.
         hello.WriteByte(MapConflateEvents());
 
         //
         // 8. Security mode + optional credentials body.
-        //       SECURITY_CREDENTIALS_NONE              = 0   ← MVP
-        //       SECURITY_CREDENTIALS_NORMAL            = 1   ← Phase 9 auth
+        //       SECURITY_CREDENTIALS_NONE              = 0   ??MVP
+        //       SECURITY_CREDENTIALS_NORMAL            = 1   ??Phase 9 auth
         //       SECURITY_MULTIUSER_NOTIFICATIONCHANNEL = 3
         //    (TcrConnection.hpp:49-51 / Java Handshake.java)
         //    When mode != NONE, Properties body follows immediately. NONE skips it.
@@ -374,19 +373,19 @@ internal sealed class TcrConnection(
         // Flush the whole client-hello in one SendAsync. NoDelay is on
         // (set in ConnectAsync), so this lands as a single TCP segment;
         // the server reads it as one contiguous handshake.
-        var clientHello = helloBuffer.WrittenSpan.ToArray();
+        var clientHello = hello.WrittenSpan.ToArray();
         logger.LogTrace("TcrConnection sending client-hello ({byteCount} bytes)", clientHello.Length);
         await SendAsync(clientHello, cancellationToken).ConfigureAwait(false);
 
         //
-        // === Server → Client ====================================================
+        // === Server ??Client ====================================================
         //  Order taken from ClientSideHandshakeImpl.handshakeWithServer (Java).
         //
         //  9. AcceptanceCode (u8)
         //       59 = OK (Handshake.java:58 REPLY_OK).
-        //       60 REFUSED / 61 INVALID / 66 AUTH_NOT_REQUIRED — server keeps
+        //       60 REFUSED / 61 INVALID / 66 AUTH_NOT_REQUIRED ??server keeps
         //                                                       sending steps 10-14.
-        //       67 SERVER_IS_LOCATOR / 21 SSL_REQUIRED — server stops here, no
+        //       67 SERVER_IS_LOCATOR / 21 SSL_REQUIRED ??server stops here, no
         //                                                more bytes to read.
         //     Strategy: throw immediately for the "no more data" codes (matches
         //     Java client). For other non-OK codes, capture the byte and keep
@@ -407,7 +406,7 @@ internal sealed class TcrConnection(
                 "Connected port belongs to a Geode locator, not a server. " +
                 "Use locator-discovery configuration instead of pointing at this address directly.");
         }
-        // Any other non-OK code → defer the throw until after step 13 so we
+        // Any other non-OK code ??defer the throw until after step 13 so we
         // can surface the server's diagnostic message in the exception.
         //
         // 10. EndpointType / ServerQueueStatus (u8). Identifies the server's
@@ -429,11 +428,11 @@ internal sealed class TcrConnection(
         _queueSize = BinaryPrimitives.ReadInt32BigEndian(queueSizeBuf);
         logger.LogTrace("TcrConnection handshake queueSize = {queueSize}", _queueSize);
         //
-        // 12. ServerMember — varint length + N opaque bytes (the server's
+        // 12. ServerMember ??varint length + N opaque bytes (the server's
         //     serialised InternalDistributedMember). Read via
         //     DataSerializer.readByteArray on the Java side; same encoding
         //     as our WriteArrayLen / WriteBytes pair. We capture the bytes
-        //     into _serverMember without parsing — Phase 6/7 will decode.
+        //     into _serverMember without parsing ??Phase 6/7 will decode.
         var serverMemberLen = await ReadHandshakeArrayLenAsync(cancellationToken)
             .ConfigureAwait(false);
         _serverMember = serverMemberLen > 0
@@ -441,7 +440,7 @@ internal sealed class TcrConnection(
             : [];
         logger.LogTrace("TcrConnection handshake serverMember = {byteCount} bytes", _serverMember.Length);
         //
-        // 13. Message — Java writeUTF format (u16 byte-length + modified UTF-8).
+        // 13. Message ??Java writeUTF format (u16 byte-length + modified UTF-8).
         //     Server's diagnostic / refusal text; empty on the success path,
         //     populated on REFUSED / INVALID / AUTH_NOT_REQUIRED / etc.
         //     Captured into serverMessage and folded into the GeodeException
@@ -491,14 +490,14 @@ internal sealed class TcrConnection(
     /// </summary>
     private byte MapConflateEvents() => _options.Subscription.ConflateEvents switch
     {
-        null => 0,   // CONFLATION_DEFAULT — let the server decide
+        null => 0,   // CONFLATION_DEFAULT ??let the server decide
         true => 1,   // CONFLATION_ON
         false => 2,   // CONFLATION_OFF
     };
 
     /// <summary>
     /// Read exactly <paramref name="byteCount"/> bytes from the underlying
-    /// stream — the handshake's ad-hoc, non-framed read primitive. Mirrors
+    /// stream ??the handshake's ad-hoc, non-framed read primitive. Mirrors
     /// cppcache <c>TcrConnection::readHandshakeData</c>.
     /// </summary>
     /// <remarks>
@@ -522,13 +521,13 @@ internal sealed class TcrConnection(
 
     /// <summary>
     /// Read Geode's variable-length array-length encoding from the stream.
-    /// Inverse of <see cref="BigEndianBinaryWriter.WriteArrayLen"/> /
+    /// Inverse of <see cref="DataOutput.WriteArrayLen"/> /
     /// cppcache <c>DataInput::readArrayLen</c>:
     /// <list type="bullet">
-    ///   <item>first byte == <c>-1</c> (0xFF) → <c>-1</c> (null sentinel).</item>
-    ///   <item>first byte == <c>-2</c> (0xFE) → u16 length follows (3 bytes total).</item>
-    ///   <item>first byte == <c>-3</c> (0xFD) → i32 length follows (5 bytes total).</item>
-    ///   <item>otherwise (0–252) → first byte itself is the length.</item>
+    ///   <item>first byte == <c>-1</c> (0xFF) ??<c>-1</c> (null sentinel).</item>
+    ///   <item>first byte == <c>-2</c> (0xFE) ??u16 length follows (3 bytes total).</item>
+    ///   <item>first byte == <c>-3</c> (0xFD) ??i32 length follows (5 bytes total).</item>
+    ///   <item>otherwise (0??52) ??first byte itself is the length.</item>
     /// </list>
     /// </summary>
     private async Task<int> ReadHandshakeArrayLenAsync(CancellationToken cancellationToken)
@@ -624,10 +623,10 @@ internal sealed class TcrConnection(
                 .ConfigureAwait(false);
         }
 
-        // Catalogue #20 — receivedBytes. cppcache instruments at every
+        // Catalogue #20 ??receivedBytes. cppcache instruments at every
         // socket receive (TcrConnection.cpp:513); ours fires once per
         // full frame, sum identical. Null when conn is opened pre-pool
-        // (handshake reads — see PoolDM xmldoc caveat).
+        // (handshake reads ??see PoolDM xmldoc caveat).
         PoolDM?.RecordReceivedBytes(frame.Length);
 
         return frame;
@@ -637,12 +636,12 @@ internal sealed class TcrConnection(
     /// Send a <see cref="TcrMessage"/> request and read the next framed
     /// message from the wire as the reply. The message-level building
     /// block on top of <see cref="SendAsync"/> / <see cref="ReceiveAsync"/>;
-    /// every operation (Ping, Put, Get, …) ultimately composes through
+    /// every operation (Ping, Put, Get, ?? ultimately composes through
     /// here. Mirrors cppcache <c>TcrConnection::sendRequest</c>.
     /// </summary>
     /// <remarks>
     /// Pure request-response: assumes one in-flight request per
-    /// connection. Doesn't interpret the reply — callers branch on
+    /// connection. Doesn't interpret the reply ??callers branch on
     /// <see cref="TcrMessage.MessageType"/> themselves (e.g. Reply vs
     /// Exception). Phase 6 connection-pool dispatch will lift this to be
     /// the only public entry point used by the operation layer.
@@ -655,7 +654,7 @@ internal sealed class TcrConnection(
 
         await SendAsync(request.Encode(), cancellationToken).ConfigureAwait(false);
         var replyBytes = await ReceiveAsync(cancellationToken).ConfigureAwait(false);
-        return TcrMessage.Decode(replyBytes);
+        return TcrMessage.Decode(replyBytes, ServiceProvider);
     }
 
     /// <summary>
@@ -735,7 +734,7 @@ internal sealed class TcrConnection(
         chunkedResult.Reset();
 
         // Chunk loop. Read body of advertised length, hand to result,
-        // peek lastChunk flag — if not set, pull next 5-byte chunk
+        // peek lastChunk flag ??if not set, pull next 5-byte chunk
         // header and repeat. Mirrors cppcache while-processChunk.
         var stream = _stream
             ?? throw new InvalidOperationException(
@@ -770,11 +769,12 @@ internal sealed class TcrConnection(
 
         // Synthesise a TcrMessage carrying just the header fields the
         // caller branches on. Body is owned by chunkedResult.
-        return new TcrMessage(
-            MessageType: (MessageType)msgType,
-            TransactionId: txId,
-            EarlyAck: 0,
-            Parts: Array.Empty<TcrPart>());
+        return ActivatorUtilities.CreateInstance<TcrMessage>(
+            ServiceProvider,
+            (MessageType)msgType,
+            txId,
+            (byte)0,
+            Array.Empty<TcrPart>());
     }
 
     /// <summary>
@@ -865,12 +865,12 @@ internal sealed class TcrConnection(
     /// <param name="keepAlive">
     /// Tells the server whether to keep this client's subscription queue
     /// (Phase 2+ HA / durable client). Phase 1.1 callers always pass
-    /// <c>false</c> — we have no subscription state worth preserving.
+    /// <c>false</c> ??we have no subscription state worth preserving.
     /// </param>
     /// <remarks>
     /// Fire-and-forget: cppcache does not await any reply (the server
     /// just closes its side after receiving the frame) and swallows
-    /// every exception (<c>LOGINFO</c> only) — by definition this is
+    /// every exception (<c>LOGINFO</c> only) ??by definition this is
     /// the destruction path, so a half-dead socket failing the write is
     /// not an error worth propagating.
     /// </remarks>
@@ -886,7 +886,7 @@ internal sealed class TcrConnection(
 
         // 2-second send budget mirrors cppcache TcrConnection.cpp:944
         // (`send(..., std::chrono::seconds(2), false)`). The connection is
-        // dying anyway — don't let a slow / half-dead socket hold up shutdown.
+        // dying anyway ??don't let a slow / half-dead socket hold up shutdown.
         using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         sendCts.CancelAfter(TimeSpan.FromSeconds(2));
 
@@ -897,7 +897,7 @@ internal sealed class TcrConnection(
         catch (Exception ex)
         {
             // cppcache LOGINFO("Close connection message failed with msg: %s")
-            // (TcrConnection.cpp:947). By definition we're tearing down — a
+            // (TcrConnection.cpp:947). By definition we're tearing down ??a
             // failed write isn't actionable, just informational. Caller's ct
             // cancellation flows through but we still dispose below.
             logger.LogInformation(ex, "Close connection message failed");
@@ -928,8 +928,7 @@ internal sealed class TcrConnection(
 
         // Return the per-endpoint slot the pool reserved for this conn
         // (set by CreatePoolConnection* paths). Pool-wide _capSlots is
-        // still released manually by ThinClientPoolDM at each close site —
-        // intentional asymmetry while pool-wide accounting stays in the DM.
+        // still released manually by ThinClientPoolDM at each close site ??        // intentional asymmetry while pool-wide accounting stays in the DM.
         if (OwnsEndpointSlot)
         {
             Endpoint?.ReleaseSlot();

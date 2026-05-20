@@ -30,12 +30,11 @@ public class SerializationRegistryDepthTests
         // strictly less than 3.
         var registry = SerializationTestHelpers.CreateRegistry(maxDepth: 3);
         var value = new List<List<int>> { new() { 1, 2 } };
-        var buffer = new ArrayBufferWriter<byte>();
-        var writer = new BigEndianBinaryWriter(buffer);
+        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
         registry.WriteObject(writer, value);
 
-        Assert.NotEmpty(buffer.WrittenSpan.ToArray());
+        Assert.NotEmpty(writer.WrittenSpan.ToArray());
     }
 
     [Fact]
@@ -47,8 +46,7 @@ public class SerializationRegistryDepthTests
         // rather than GeodeException.
         var registry = SerializationTestHelpers.CreateRegistry(maxDepth: 2);
         var value = new List<List<int>> { new() { 1 } };
-        var buffer = new ArrayBufferWriter<byte>();
-        var writer = new BigEndianBinaryWriter(buffer);
+        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
         var ex = Assert.Throws<InvalidOperationException>(
             () => registry.WriteObject(writer, value));
@@ -63,12 +61,11 @@ public class SerializationRegistryDepthTests
         // depth 0. Scalars don't recurse, so 0 >= 1 is false and the
         // write completes.
         var registry = SerializationTestHelpers.CreateRegistry(maxDepth: 1);
-        var buffer = new ArrayBufferWriter<byte>();
-        var writer = new BigEndianBinaryWriter(buffer);
+        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
         registry.WriteObject(writer, 42);
 
-        Assert.NotEmpty(buffer.WrittenSpan.ToArray());
+        Assert.NotEmpty(writer.WrittenSpan.ToArray());
     }
 
     [Fact]
@@ -77,8 +74,7 @@ public class SerializationRegistryDepthTests
         // MaxDepth=1: even a flat List<int> fails because each element
         // re-enters the registry at depth 1 (1 >= 1).
         var registry = SerializationTestHelpers.CreateRegistry(maxDepth: 1);
-        var buffer = new ArrayBufferWriter<byte>();
-        var writer = new BigEndianBinaryWriter(buffer);
+        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
         Assert.Throws<InvalidOperationException>(
             () => registry.WriteObject(writer, new List<int> { 1 }));
@@ -166,11 +162,10 @@ public class SerializationRegistryDepthTests
         // is still allowed.
         var registry = SerializationTestHelpers.CreateRegistry(maxDepth: 3);
 
-        var buffer = new ArrayBufferWriter<byte>();
-        var writer = new BigEndianBinaryWriter(buffer);
+        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
         registry.WriteObject(writer, new List<List<int>> { new() { 7 } });
 
-        var reader = new BigEndianBinaryReader(buffer.WrittenSpan.ToArray());
+        var reader = new BigEndianBinaryReader(writer.WrittenSpan.ToArray());
         var result = registry.ReadObject(reader);
 
         var outer = Assert.IsType<List<object?>>(result);

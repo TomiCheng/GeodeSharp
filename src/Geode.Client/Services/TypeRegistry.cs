@@ -8,9 +8,8 @@ namespace Geode.Client.Services;
 /// Default <see cref="ITypeRegistry"/>. Scoped (per-cache); mirror of cppcache
 /// <c>TypeRegistry</c> (<c>cppcache/include/geode/TypeRegistry.hpp</c>).
 /// </summary>
-internal sealed class TypeRegistry(Cache cache, ILogger<TypeRegistry> logger) : ITypeRegistry
+internal sealed class TypeRegistry(ILogger<TypeRegistry> logger) : ITypeRegistry
 {
-    private readonly Cache _cache = cache;
     private readonly ConcurrentDictionary<Type, PdxEntry> _byType = new();
 
     public void RegisterPdxType<T>(string? className = null) where T : IPdxSerializable<T>
@@ -47,6 +46,10 @@ internal sealed class TypeRegistry(Cache cache, ILogger<TypeRegistry> logger) : 
         AddOrThrow(entry);
     }
 
+    /// <summary>Internal: look up a PDX registration by CLR type.</summary>
+    internal bool TryGetEntry(Type clrType, out PdxEntry entry) =>
+        _byType.TryGetValue(clrType, out entry);
+
     private void AddOrThrow(PdxEntry entry)
     {
         if (_byType.TryAdd(entry.ClrType, entry)) return;
@@ -58,7 +61,7 @@ internal sealed class TypeRegistry(Cache cache, ILogger<TypeRegistry> logger) : 
             $"PDX type '{entry.ClrType.FullName}' is already registered.");
     }
 
-    private readonly record struct PdxEntry(
+    internal readonly record struct PdxEntry(
         Type ClrType,
         string ClassName,
         Action<object, IPdxWriter> Write,

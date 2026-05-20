@@ -146,7 +146,8 @@ public static class GeodeClientExtensions
         services.TryAddScoped<Services.Cache>();
         services.TryAddSingleton<TcrPartBuilder>();
         services.TryAddScoped<SerializationRegistry>();
-        services.TryAddScoped<ITypeRegistry, TypeRegistry>();
+        services.TryAddScoped<PdxTypeRegistry>();
+        services.TryAddScoped<TypeRegistry>();
         services.TryAddScoped<TypedResultAdapter>();
         services.TryAddScoped<TcrMessageBuilder>();
         services.TryAddScoped<TcrMessageHelper>();

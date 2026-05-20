@@ -43,7 +43,8 @@ internal sealed class Cache(
     //ClientProxyMembershipIdBuilder membershipIdBuilder,
     PoolManager poolManager,
     TcrConnectionManager tcrConnectionManager,
-    TypedResultAdapter typedResultAdapter) : IGeodeCache
+    TypedResultAdapter typedResultAdapter,
+    TypeRegistry typeRegistry) : IGeodeCache
 {
 
     /// <summary>
@@ -68,7 +69,6 @@ internal sealed class Cache(
     private Task? _initTask;
     private readonly GeodeClientOptions _options = scopeContext.Options;
 
-    private ITypeRegistry? _typeRegistry;
 
     /// <summary>
     /// Runs once via <see cref="EnsureInitializedAsync"/>. Two config
@@ -577,9 +577,7 @@ internal sealed class Cache(
 
     public bool IsClosed { get; private set; }
     public string Name { get; } = scopeContext.Name;
-    public ITypeRegistry TypeRegistry => LazyInitializer.EnsureInitialized(
-        ref _typeRegistry,
-        () => ActivatorUtilities.CreateInstance<TypeRegistry>(serviceProvider, this));
+    public ITypeRegistry TypeRegistry { get; } = typeRegistry;
 
     public bool PdxIgnoreUnreadFields => _options.Cache?.Pdx.IgnoreUnreadFields ?? false;
     public bool PdxReadSerialized => _options.Cache?.Pdx.ReadSerialized ?? false;

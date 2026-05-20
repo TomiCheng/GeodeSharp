@@ -5,6 +5,7 @@ using Geode.Client.Protocol;
 using Geode.Client.Protocol.Serialization;
 using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Geode.Client.Tests.Protocol.Serialization;
 
@@ -72,7 +73,9 @@ internal static class SerializationTestHelpers
             .AddSingleton(scope)
             .BuildServiceProvider();
 
-        return new SerializationRegistry(sp, scope);
+        var typeRegistry = new TypeRegistry(NullLogger<TypeRegistry>.Instance);
+        var pdxTypeRegistry = new PdxTypeRegistry();
+        return new SerializationRegistry(sp, scope, typeRegistry, pdxTypeRegistry);
     }
 
     /// <summary>

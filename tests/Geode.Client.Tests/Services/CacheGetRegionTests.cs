@@ -34,7 +34,8 @@ public class CacheGetRegionTests
         var tccm = new TcrConnectionManager(
             scope, NullLogger<TcrConnectionManager>.Instance, sp);
         var adapter = new TypedResultAdapter();
-        return new Cache(sp, scope, poolMgr, tccm, adapter);
+        var typeRegistry = new TypeRegistry(NullLogger<TypeRegistry>.Instance);
+        return new Cache(sp, scope, poolMgr, tccm, adapter, typeRegistry);
     }
 
     // ── Path validation (cppcache CacheImpl.cpp:488-490) ────────

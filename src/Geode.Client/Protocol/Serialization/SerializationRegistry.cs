@@ -5,66 +5,16 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol.Serialization;
 
-/// <summary>
-/// Per-cache codec registry. Mirrors cppcache
-/// <c>SerializationRegistry</c>
-/// (<c>cppcache/src/SerializationRegistry.hpp/.cpp</c>) ??owns the
-/// DSCode ??<see cref="IDataConverter"/> mapping and provides the
-/// central <see cref="WriteObject"/> / <see cref="ReadObject"/>
-/// dispatch every wire op routes through for key / value
-/// serialisation.
-/// </summary>
-/// <remarks>
-/// <para>
-/// <b>Two storage indices for one converter set.</b> Each registered
-/// <see cref="IDataConverter"/> goes into both
-/// <see cref="_byDsCode"/> (decode key = wire byte) and
-/// <see cref="_byType"/> (encode key = runtime CLR type). The two
-/// dicts are intentionally not merged into one ??decode and encode
-/// dispatch by different keys.
-/// </para>
-/// <para>
-/// <b>Multi-DSCode converters.</b> A single converter can register
-/// against multiple DSCodes (one CLR type, many wire forms ??see
-/// <c>StringDataConverter</c>). <see cref="Register"/> iterates
-/// <see cref="IDataConverter.DsCodes"/> and points each entry at the
-/// same instance.
-/// </para>
-/// <para>
-/// <b>Per-cache scope.</b> Registered as DI Scoped alongside
-/// <see cref="Services.Cache"/> so multi-cluster setups can have
-/// different custom-type registrations per cluster without leaking
-/// across.
-/// </para>
-/// <para>
-/// <b>DSCode byte ownership.</b> Registry writes / reads the DSCode
-/// byte on both sides of the wire and passes it back to the
-/// converter so multi-DSCode converters can branch. Mirrors cppcache
-/// <c>DataOutput::writeObject</c> calling
-/// <c>ptr-&gt;getDsCode()</c> then writing the byte then calling
-/// <c>ptr-&gt;toData(*this)</c>.
-/// </para>
-/// <para>
-/// <b>PDX path is a Phase 2+ TODO.</b> The
-/// <see cref="ReadObject"/> dispatch reserves <c>DSCode.PDX</c> for
-/// the PDX branch; built-in converter registration covers everything
-/// MVP needs.
-/// </para>
-/// </remarks>
 internal sealed class SerializationRegistry
 {
-
     private readonly Dictionary<byte, IDataConverter> _byDsCode = [];
     private readonly Dictionary<Type, IDataConverter> _byType = [];
-    private readonly IServiceProvider _serviceProvider;
-
-    private readonly TypeRegistry _typeRegistry;
+    private readonly ObjectFactory<PdxLocalWriter> _pdxLocalWriterFactory;
+    private readonly ObjectFactory<PdxWriterWithTypeCollector> _pdxWriterWithTypeCollectorFactory;
     private readonly PdxTypeRegistry _pdxTypeRegistry;
-
-    // Cached during RegisterBuiltInConverters; PdxLocalWriter takes it
-    // via ctor to encode PDX string fields via the same code path as
-    // top-level CacheableString.
-    private StringDataConverter _stringConverter = null!;
+    private readonly CacheScopeContext _scopeContext;
+    private readonly IServiceProvider _serviceProvider;
+    private readonly TypeRegistry _typeRegistry;
 
     public SerializationRegistry(
         IServiceProvider serviceProvider,
@@ -75,22 +25,22 @@ internal sealed class SerializationRegistry
         _serviceProvider = serviceProvider;
         _typeRegistry = typeRegistry;
         _pdxTypeRegistry = pdxTypeRegistry;
-        ArgumentNullException.ThrowIfNull(scopeContext);
-        MaxDepth = scopeContext.Options.Serialization.MaxDepth;
-        MaxArrayLength = scopeContext.Options.Serialization.MaxArrayLength;
-        MaxStringLength = scopeContext.Options.Serialization.MaxStringLength;
+        _scopeContext = scopeContext;
+        _pdxLocalWriterFactory = ActivatorUtilities.CreateFactory<PdxLocalWriter>([]);
+        _pdxWriterWithTypeCollectorFactory = ActivatorUtilities.CreateFactory<PdxWriterWithTypeCollector>([typeof(string)]);
 
         RegisterBuiltInConverters();
     }
 
-    /// <summary>
-    /// Register the full built-in converter set (Tier A scalars + bytes /
-    /// string, primitive arrays, Tier B-2 generic collections). cppcache
-    /// registers ~30 of these at <c>SerializationRegistry</c> construction;
-    /// we add them as their wire formats land. Phase 1.2 shipped int32 +
-    /// boolean (the walking-skeleton minimum); Phase 1.3.0 widened to
-    /// Tier A; Phase 1.3.d added the primitive-array tier.
-    /// </summary>
+    private void Register(IDataConverter converter)
+    {
+        foreach (var dsCode in converter.DsCodes)
+        {
+            _byDsCode[dsCode] = converter;
+        }
+        _byType[converter.ManagedType] = converter;
+    }
+
     private void RegisterBuiltInConverters()
     {
         // Order: scalar (sorted by DSCode), then bytes, then string,
@@ -114,8 +64,7 @@ internal sealed class SerializationRegistry
         // CacheScopeContext from _serviceProvider ??same instance the
         // registry itself sees.
         Register(ActivatorUtilities.CreateInstance<BytesDataConverter>(_serviceProvider));        // 46  CacheableBytes     ??byte[]
-        _stringConverter = ActivatorUtilities.CreateInstance<StringDataConverter>(_serviceProvider);
-        Register(_stringConverter);                                                                // 42/87/88/89 (+69 read-only) ??string
+        Register(ActivatorUtilities.CreateInstance<StringDataConverter>(_serviceProvider));                                                                // 42/87/88/89 (+69 read-only) ??string
 
         Register(ActivatorUtilities.CreateInstance<BooleanArrayDataConverter>(_serviceProvider)); // 26  BooleanArray       ??bool[]
         Register(ActivatorUtilities.CreateInstance<CharArrayDataConverter>(_serviceProvider));    // 27  CharArray          ??char[]
@@ -147,68 +96,82 @@ internal sealed class SerializationRegistry
         Register(new StackDataConverter(this));       // 74  CacheableStack      ??Stack<T>
     }
 
-    /// <summary>
-    /// Add a converter to both the DSCode index (decode) and the CLR
-    /// type index (encode). Built-ins only; user extension goes
-    /// through <c>RegisterPdx</c> when that surface ships.
-    /// </summary>
-    /// <remarks>
-    /// Loops <paramref name="converter"/>'s <see cref="IDataConverter.DsCodes"/>
-    /// to mount every wire-form entry against the same instance ??    /// multi-DSCode converters like <c>StringDataConverter</c> need
-    /// this. <see cref="_byType"/> still gets one entry per converter
-    /// because the encode side keys by CLR type.
-    /// </remarks>
-    private void Register(IDataConverter converter)
+
+    private bool TryWriteBuiltIn(DataOutput writer, object value, Type type, int depth)
     {
-        ArgumentNullException.ThrowIfNull(converter);
-        foreach (var dsCode in converter.DsCodes)
+        if (!_byType.TryGetValue(type, out var converter) && type.IsGenericType)
         {
-            _byDsCode[dsCode] = converter;
+            _byType.TryGetValue(type.GetGenericTypeDefinition(), out converter);
         }
-        _byType[converter.ManagedType] = converter;
+
+        if (converter is null) return false;
+
+        var dsCode = converter.GetDsCode(value);
+        writer.WriteByte(dsCode);
+        converter.Write(writer, value, dsCode, depth);
+        return true;
     }
 
-    /// <summary>
-    /// Snapshot of <see cref="Options.SerializationOptions.MaxArrayLength"/>.
-    /// Used by the recursive collection / object-array / string-array
-    /// converters, which already hold a registry reference for
-    /// re-entry; the non-recursive primitive-array converters inject
-    /// <see cref="CacheScopeContext"/> directly via primary ctor and
-    /// snapshot independently.
-    /// </summary>
-    internal int MaxArrayLength { get; }
+    private bool TryWritePdx(DataOutput writer, object value, Type type)
+    {
+        if (!_typeRegistry.TryGetEntry(type, out var entry)) return false;
+        var localPdxType = _pdxTypeRegistry.GetLocalPdxType(entry.ClassName);
+        if (localPdxType is null)
+        {
+            // Step A:className 在本地 registry「沒看過」(第一次序列化)
+            // A.1 ✓ — new PdxWriterWithTypeCollector(output, className, registry)
+            using var ptc = _pdxWriterWithTypeCollectorFactory(_serviceProvider, [entry.ClassName]);
+            // A.2 ✓ — entry.Write(value, ptc):跑 user ToData,base PdxLocalWriter
+            //        的 WriteXxx 會把 field 順手蒐進 _fields(對應 cppcache
+            //        WithTypeCollector::writeXxx 裡的 m_pdxType->addXxxField)。
+            entry.Write(value, ptc);
+            // A.3 ✓ — 把採集到的 schema 取出來,叫它算 field 對照表
+            var nType = ptc.GetPdxLocalType();
+            nType.Initialize();
+            //   4. nTypeId = registry.GetPdxIdForType(className, pool, nType, true)
+            //      — 同步 wire op,跟 server 拿 / 配 typeId
+            //   5. nType.SetTypeId(nTypeId)
+            //   6. ptc.EndObjectWriting() — 補 typeId / 計長度
+            //   7. registry.AddLocalPdxType(className, nType)
+            //              .AddPdxType(nTypeId, nType)
+        }
+        else
+        {
+            // Step B:本地已有 localPdxType(第二次以後)
+            //   cppcache 註解:「now always remotewriter as we have API
+            //   Read/WriteUnreadFields」— 不管物件身上有沒有 preserved data,
+            //   都走 PdxRemoteWriter。
+            //   1. preservedData = registry.GetPreserveData(value)
+            //   2. if preservedData != null:
+            //        mergedPdxType = registry.GetPdxType(preservedData.MergedTypeId)
+            //        prw = new PdxRemoteWriter(output, mergedPdxType, preservedData, registry)
+            //      else:
+            //        prw = new PdxRemoteWriter(output, className, registry)
+            //   3. entry.Write(value, prw)
+            //   4. prw.EndObjectWriting()
+        }
 
-    // TODO Phase 2+: PDX path ??    //   private readonly Dictionary<string, IPdxConverter> _pdxByName = new();
-    //   private readonly Dictionary<Type, IPdxConverter> _pdxByType = new();
+        // 目前暫行作法(Phase 2.1 walking skeleton):一路只用 PdxLocalWriter,
+        // schema 直接呼叫 Build() 收回來丟 PdxTypeRegistry.ResolveTypeId。
+        // 等 Step A / Step B 前置缺口補齊之後,上面 if/else 才會接管。
+        //using var localWriter = _pdxLocalWriterFactory(_serviceProvider, []);
+        //entry.Write(value, localWriter);
+        //var (schema, payload) = localWriter.Build(entry.ClassName);
+        //var typeId = _pdxTypeRegistry.ResolveTypeId(schema);
 
-    /// <summary>
-    /// Snapshot of <see cref="Options.SerializationOptions.MaxDepth"/>
-    /// at scope-build time. Read once and cached because the per-cache
-    /// options bag is one-shot (<see cref="CacheScopeContext.Initialize"/>
-    /// runs before any consumer resolves) and the depth check fires on
-    /// every recursive write/read step ??no point chasing the property
-    /// chain each time.
-    /// </summary>
-    internal int MaxDepth { get; }
+        //writer.WriteByte(DSCode.PDX);
+        //writer.WriteInt32(payload.Length + sizeof(int));
+        //writer.WriteInt32(typeId);
+        //writer.WriteBytesOnly(payload);
+        return true;
+    }
 
-    /// <summary>
-    /// Snapshot of <see cref="Options.SerializationOptions.MaxStringLength"/>.
-    /// Same snapshot rationale as <see cref="MaxArrayLength"/>;
-    /// consumed today only by <see cref="StringDataConverter"/> via
-    /// the direct-CacheScopeContext path, but exposed here for any
-    /// future recursive converter that wants to bound a nested
-    /// string slot.
-    /// </summary>
-    internal int MaxStringLength { get; }
+    internal int MaxArrayLength => _scopeContext.Options.Serialization.MaxArrayLength;
 
-    /// <summary>
-    /// True if <paramref name="type"/> has a registered converter
-    /// (direct match or open-generic match for closed generics).
-    /// Used by callers that need an early "is T a wire-supported
-    /// type?" check before scheduling work that depends on the
-    /// registry ??e.g. <c>RemoteQueryService.NewQuery&lt;T&gt;</c>'s
-    /// Phase 1.4 guard against unsupported row types.
-    /// </summary>
+    internal int MaxDepth => _scopeContext.Options.Serialization.MaxDepth;
+
+    internal int MaxStringLength => _scopeContext.Options.Serialization.MaxStringLength;
+
     public bool IsRegistered(Type type)
     {
         ArgumentNullException.ThrowIfNull(type);
@@ -218,24 +181,126 @@ internal sealed class SerializationRegistry
     }
 
     /// <summary>
-    /// Decode one object: read the DSCode byte, dispatch to the
-    /// registered converter, pass the byte back so multi-DSCode
-    /// converters know which wire form to parse. Mirrors cppcache
-    /// <c>DataInput::readObject()</c>.
+    /// Async 版本的 <see cref="ReadObject"/>。Default 行為跟 sync 相同;
+    /// converter 自己決定要不要真的 await(用 default interface method 的話
+    /// 就是包 sync,override 的話可以真 async)。
     /// </summary>
-    /// <param name="depth">
-    /// Nesting level ??<c>0</c> at the top-level call. Container
-    /// converters re-enter with <c>depth + 1</c>; scalars don't
-    /// recurse. The registry refuses payloads at
-    /// <see cref="MaxDepth"/> or beyond ??defends the read path
-    /// against stack-overflow DoS from a malicious server payload.
-    /// </param>
-    /// <exception cref="GeodeException">
-    /// The DSCode is not a built-in we recognise (and in Phase 2+
-    /// not the PDX marker), OR <paramref name="depth"/> reached
-    /// <see cref="MaxDepth"/> ??wire stream more deeply nested than
-    /// the client permits.
-    /// </exception>
+    public async ValueTask<object?> ReadObjectAsync(BigEndianBinaryReader reader, int depth = 0, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(reader);
+
+        if (depth >= MaxDepth)
+        {
+            throw new GeodeException(
+                $"SerializationRegistry: read exceeded MaxDepth ({MaxDepth}).");
+        }
+
+        var dsCode = reader.ReadByte();
+        if (dsCode == DSCode.NullObj) return null;
+        if (_byDsCode.TryGetValue(dsCode, out var converter))
+        {
+            return await converter.ReadAsync(reader, dsCode, depth, ct);
+        }
+        throw new GeodeException($"SerializationRegistry: unknown DSCode {dsCode} on the wire.");
+    }
+
+    /// <summary>
+    /// Async 版本的 <see cref="WriteObject"/>。PDX 路徑(<see cref="TryWritePdxAsync"/>)
+    /// 之後會在這條鏈裡 await wire op(A.4 GetPdxIdForType)。
+    /// </summary>
+    public async ValueTask WriteObjectAsync(DataOutput writer, object? value, int depth = 0, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+
+        if (depth >= MaxDepth)
+        {
+            throw new InvalidOperationException(
+                $"SerializationRegistry: write exceeded MaxDepth ({MaxDepth}).");
+        }
+
+        if (value is null)
+        {
+            writer.WriteByte(DSCode.NullObj);
+            return;
+        }
+
+        var type = value.GetType();
+        if (await TryWriteBuiltInAsync(writer, value, type, depth, ct)) return;
+        if (await TryWritePdxAsync(writer, value, type, ct)) return;
+
+        throw new NotSupportedException($"No SerializationRegistry converter registered for runtime type {type}.");
+    }
+
+    private async ValueTask<bool> TryWriteBuiltInAsync(DataOutput writer, object value, Type type, int depth, CancellationToken ct)
+    {
+        if (!_byType.TryGetValue(type, out var converter) && type.IsGenericType)
+        {
+            _byType.TryGetValue(type.GetGenericTypeDefinition(), out converter);
+        }
+        if (converter is null) return false;
+
+        var dsCode = converter.GetDsCode(value);
+        writer.WriteByte(dsCode);
+        await converter.WriteAsync(writer, value, dsCode, depth, ct);
+        return true;
+    }
+
+    private async ValueTask<bool> TryWritePdxAsync(DataOutput writer, object value, Type type, CancellationToken ct)
+    {
+        if (!_typeRegistry.TryGetEntry(type, out var entry)) return false;
+
+        var localPdxType = _pdxTypeRegistry.GetLocalPdxType(entry.ClassName);
+        if (localPdxType is null)
+        {
+            // Step A:className 在本地 registry「沒看過」(第一次序列化)
+            // A.1 ✓ — new PdxWriterWithTypeCollector(output, className, registry)
+            using var ptc = _pdxWriterWithTypeCollectorFactory(_serviceProvider, [entry.ClassName]);
+            // A.2 ✓ — entry.Write(value, ptc):跑 user ToData,base PdxLocalWriter
+            //        的 WriteXxx 會把 field 順手蒐進 _fields。
+            entry.Write(value, ptc);
+            // A.3 ✓ — 把採集到的 schema 取出來,叫它算 field 對照表
+            var nType = ptc.GetPdxLocalType();
+            nType.Initialize();
+            // A.4 ✓ — 跟 server 拿 / 配 typeId(對齊 cppcache
+            //        PdxTypeRegistry::getPDXIdForType,內部會打
+            //        GET_PDX_ID_FOR_TYPE wire op 並把結果 cache 起來)。
+            //        pool 從 DataOutput 帶下來(對齊 cppcache
+            //        DataOutputInternal::getPool(output))。
+            var nTypeId = await _pdxTypeRegistry.GetPdxIdForTypeAsync(
+                className: entry.ClassName,
+                pool: writer.Pool,
+                nType: nType,
+                checkIfThere: true,
+                ct: ct);
+            // A.5 ✓ — typeId 寫回 schema(對齊 cppcache nType->setTypeId(typeId);
+            //        PdxType.TypeId 是 { get; set; },等效 setter)。
+            nType.TypeId = nTypeId;
+            // A.6 ✓ — 把採集到的 field-data payload(field bytes + offset
+            //        table)收回來,加上 PDX wire header(DSCode + length +
+            //        typeId)寫到外層 DataOutput。
+            //        對齊 cppcache PdxWriterWithTypeCollector::endObjectWriting
+            //        → PdxLocalWriter::writePdxHeader,但我們把 header
+            //        framing 放在外層而非 writer 內部 buffer。
+            var payload = ptc.BuildPayload();
+            writer.WriteByte(DSCode.PDX);
+            writer.WriteInt32(payload.Length + sizeof(int));   // length 含 typeId 那 4 bytes
+            writer.WriteInt32(nTypeId);
+            writer.WriteBytesOnly(payload);
+            // A.7 ✓ — 把這個 schema 灌進兩個 cache(下一次同 className 走到
+            //        TryWritePdxAsync 就會 GetLocalPdxType 命中,改走 Step B
+            //        的 PdxRemoteWriter,不再打 wire op)。對齊 cppcache
+            //        registry.addLocalPdxType / registry.addPdxType。
+            _pdxTypeRegistry.AddLocalPdxType(entry.ClassName, nType);
+            _pdxTypeRegistry.AddPdxType(nTypeId, nType);
+        }
+        else
+        {
+            // Step B:本地已有 localPdxType — 走 PdxRemoteWriter,尚未實作。
+        }
+
+        return true;
+    }
+
     public object? ReadObject(BigEndianBinaryReader reader, int depth = 0)
     {
         ArgumentNullException.ThrowIfNull(reader);
@@ -264,32 +329,9 @@ internal sealed class SerializationRegistry
             return converter.Read(reader, dsCode, depth);
         }
 
-        throw new GeodeException(
-            $"SerializationRegistry: unknown DSCode {dsCode} on the wire.");
+        throw new GeodeException($"SerializationRegistry: unknown DSCode {dsCode} on the wire.");
     }
 
-    /// <summary>
-    /// Encode <paramref name="value"/>: pick a DSCode via the
-    /// converter, write that byte, then delegate to the converter for
-    /// the payload. Mirrors cppcache
-    /// <c>DataOutput::writeObject(shared_ptr&lt;Serializable&gt;)</c>.
-    /// </summary>
-    /// <param name="depth">
-    /// Nesting level ??<c>0</c> at the top-level call. Container
-    /// converters re-enter with <c>depth + 1</c>; scalars don't
-    /// recurse. The registry refuses payloads at
-    /// <see cref="MaxDepth"/> or beyond.
-    /// </param>
-    /// <exception cref="NotSupportedException">
-    /// <paramref name="value"/>'s runtime type has no registered
-    /// converter. Becomes a PDX fall-through in Phase 2+.
-    /// </exception>
-    /// <exception cref="InvalidOperationException">
-    /// <paramref name="depth"/> reached <see cref="MaxDepth"/> ??    /// likely a cycle or pathologically nested in-memory graph from
-    /// the caller. Tune via
-    /// <c>GeodeClientOptions.Serialization.MaxDepth</c> if the
-    /// workload genuinely warrants deeper nesting.
-    /// </exception>
     public void WriteObject(DataOutput writer, object? value, int depth = 0)
     {
         ArgumentNullException.ThrowIfNull(writer);
@@ -304,81 +346,15 @@ internal sealed class SerializationRegistry
         }
 
         if (value is null)
-        {
-            // cppcache writeObject(nullptr) ??writeByte(DSCode.NullObj).
-            // No payload follows.
+        { 
             writer.WriteByte(DSCode.NullObj);
             return;
         }
 
         var type = value.GetType();
         if (TryWriteBuiltIn(writer, value, type, depth)) return;
-        if (TryWritePdx(writer, value, type, depth)) return;
+        if (TryWritePdx(writer, value, type)) return;
 
-        throw new NotSupportedException(
-            $"No SerializationRegistry converter registered for runtime type {type}.");
-    }
-
-    /// <summary>
-    /// Built-in <see cref="IDataConverter"/> dispatch ??closed-generic
-    /// hit first, open-generic fallback (e.g. <c>List&lt;int&gt;</c>
-    /// ??<c>List&lt;&gt;</c>). Returns <see langword="false"/> when no
-    /// built-in converter is registered for <paramref name="type"/>.
-    /// </summary>
-    private bool TryWriteBuiltIn(DataOutput writer, object value, Type type, int depth)
-    {
-        if (!_byType.TryGetValue(type, out var converter)
-            && type.IsGenericType)
-        {
-            // Open-generic fallback. Collection converters register
-            // their open generic (List<>, Dictionary<,>, ?? in
-            // _byType; concrete instances (List<int>, List<string>,
-            // ?? only hit on this second lookup. Single dictionary ??            // no extra index, just a smarter probe.
-            _byType.TryGetValue(type.GetGenericTypeDefinition(), out converter);
-        }
-
-        if (converter is null) return false;
-
-        var dsCode = converter.GetDsCode(value);
-        writer.WriteByte(dsCode);
-        converter.Write(writer, value, dsCode, depth);
-        return true;
-    }
-
-    /// <summary>
-    /// PDX dispatch ??encode <paramref name="value"/> when its CLR type is
-    /// PDX-registered. Returns <see langword="false"/> when not registered
-    /// (caller falls through to the unknown-type throw).
-    /// </summary>
-    /// <remarks>
-    /// cppcache reference: <c>PdxHelper::serializePdx</c>
-    /// (<c>PdxHelper.cpp:87-142</c>). Wire layout:
-    /// <c>DSCode.PDX (1)</c> · <c>PdxLength (4 BE)</c> ·
-    /// <c>TypeId (4 BE)</c> · <c>Payload (field data + var-len offset table)</c>.
-    /// <para>Open design Q: <c>GetPdxIdForType</c> wire op is async;
-    /// <see cref="WriteObject"/> is sync. Current path:
-    /// <see cref="PdxTypeRegistry.ResolveTypeId"/> is sync,
-    /// <c>SendGetPdxIdForType</c> still <c>NotImplementedException</c>
-    /// (Phase 2.1 step 3b).</para>
-    /// </remarks>
-    private bool TryWritePdx(DataOutput writer, object value, Type type, int depth)
-    {
-        if (!_typeRegistry.TryGetEntry(type, out var entry)) return false;
-
-        byte[] payload;
-        PdxType schema;
-        using (var localWriter = new PdxLocalWriter(_serviceProvider, _stringConverter))
-        {
-            entry.Write(value, localWriter);
-            (schema, payload) = localWriter.Build(entry.ClassName);
-        }
-
-        var typeId = _pdxTypeRegistry.ResolveTypeId(schema);
-
-        writer.WriteByte(DSCode.PDX);
-        writer.WriteInt32(payload.Length + sizeof(int));   // length includes typeId field
-        writer.WriteInt32(typeId);
-        writer.WriteBytesOnly(payload);
-        return true;
+        throw new NotSupportedException($"No SerializationRegistry converter registered for runtime type {type}.");
     }
 }

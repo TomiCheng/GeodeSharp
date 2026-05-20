@@ -66,11 +66,15 @@ partial class TcrMessageBuilder
     /// <see cref="DSCode.NullObj"/> (OQL <c>NULL</c>).
     /// </para>
     /// </remarks>
-    public TcrMessage QueryWithParameters(
+    public TcrMessage QueryWithParameters(string queryString, IList<object?> parameters, int? messageResponseTimeoutMillis = DefaultQueryResponseTimeoutMillis, int transactionId = MetaTransactionId) =>
+        QueryWithParametersAsync(queryString, parameters, messageResponseTimeoutMillis, transactionId).GetAwaiter().GetResult();
+
+    public async ValueTask<TcrMessage> QueryWithParametersAsync(
         string queryString,
         IList<object?> parameters,
         int? messageResponseTimeoutMillis = DefaultQueryResponseTimeoutMillis,
-        int transactionId = MetaTransactionId)
+        int transactionId = MetaTransactionId,
+        CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(queryString);
         ArgumentNullException.ThrowIfNull(parameters);
@@ -80,32 +84,19 @@ partial class TcrMessageBuilder
         var capacity = 3 + (hasTimeoutPart ? 1 : 0) + paramCount;
         var parts = new List<TcrPart>(capacity)
         {
-            // Part 1 ??Query string. cppcache writeRegionPart of the OQL
-            // (it re-uses the region-name part for the OQL body); we
-            // call ModifiedUtf8 directly to make the encoding intent
-            // explicit ??server-side decoder is the same in both cases.
             partBuilder.ModifiedUtf8(queryString),
-
-            // Part 2 ??Parameter count (cppcache writeIntPart).
             partBuilder.Int32(paramCount),
-
-            // Part 3 ??Server compile-query-cache TTL seconds; cppcache
-            // hard-codes 15 (see CompileQueryClearTimeoutSeconds doc).
             partBuilder.Int32(CompileQueryClearTimeoutSeconds),
         };
 
-        // Part 4 ??Optional response timeout (cppcache writeMillisecondsPart
-        // = writeIntPart). null ??omit (cppcache "< 0" branch).
         if (messageResponseTimeoutMillis is { } ms)
         {
             parts.Add(partBuilder.Int32(ms));
         }
 
-        // Part 5..N ??Bind parameters in order. Each element is
-        // DSCode-tagged via the central registry (handles null ??        // DSCode.NullObj automatically per its contract).
         foreach (var value in parameters)
         {
-            parts.Add(partBuilder.Object(w => _serializationRegistry.WriteObject(w, value)));
+            parts.Add(await partBuilder.ObjectAsync(async w => await _serializationRegistry.WriteObjectAsync(w, value, ct: ct)));
         }
 
         return ActivatorUtilities.CreateInstance<TcrMessage>(_serviceProvider, MessageType.QueryWithParameters, transactionId, (byte)0, parts);

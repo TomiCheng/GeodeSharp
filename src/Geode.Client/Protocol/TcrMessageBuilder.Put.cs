@@ -58,7 +58,10 @@ partial class TcrMessageBuilder
     /// Scoped) and unit tests can pin deterministic ids.
     /// </para>
     /// </remarks>
-    public TcrMessage Put(
+    public TcrMessage Put(string regionName, object key, object value, object? callbackArgument, long eventThreadId, long eventSequenceId, int transactionId = MetaTransactionId, bool isDelta = false) =>
+        PutAsync(regionName, key, value, callbackArgument, eventThreadId, eventSequenceId, transactionId, isDelta).GetAwaiter().GetResult();
+
+    public async ValueTask<TcrMessage> PutAsync(
         string regionName,
         object key,
         object value,
@@ -66,36 +69,21 @@ partial class TcrMessageBuilder
         long eventThreadId,
         long eventSequenceId,
         int transactionId = MetaTransactionId,
-        bool isDelta = false)
+        bool isDelta = false,
+        CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(regionName);
         ArgumentNullException.ThrowIfNull(key);
-        // cppcache treats a null value as Invalidate, not Put ??the
-        // public API will route there explicitly when Invalidate lands.
         ArgumentNullException.ThrowIfNull(value);
 
         var parts = new List<TcrPart>(8)
         {
-            // Part 1 ??Region name. Raw ASCII bytes (cppcache writeRegionPart).
             partBuilder.RegionName(regionName),
-
-            // Part 2 ??Operation = NullObj (cppcache writeObjectPart(nullptr)).
             partBuilder.NullObj(),
-
-            // Part 3 ??Flags i32 = 0 (cppcache writeIntPart(0)).
             partBuilder.Int32(0),
-
-            // Part 4 ??Key (DSCode-tagged via registry).
-            partBuilder.Object(w => _serializationRegistry.WriteObject(w, key)),
-
-            // Part 5 ??isDelta as CacheableBoolean.
+            await partBuilder.ObjectAsync(async w => await _serializationRegistry.WriteObjectAsync(w, key, ct: ct)),
             partBuilder.CacheableBoolean(isDelta),
-
-            // Part 6 ??Value (DSCode-tagged via registry).
-            partBuilder.Object(w => _serializationRegistry.WriteObject(w, value)),
-
-            // Part 7 ??EventId. 18 raw bytes:
-            //   [u8 longCode=3][i64 threadId BE][u8 longCode=3][i64 sequenceId BE]
+            await partBuilder.ObjectAsync(async w => await _serializationRegistry.WriteObjectAsync(w, value, ct: ct)),
             partBuilder.Raw(w =>
             {
                 w.WriteByte(EventIdLongCode);
@@ -105,10 +93,9 @@ partial class TcrMessageBuilder
             }, sizeHint: 18),
         };
 
-        // Part 8 ??Optional callback argument (DSCode-tagged via registry).
         if (callbackArgument is not null)
         {
-            parts.Add(partBuilder.Object(w => _serializationRegistry.WriteObject(w, callbackArgument)));
+            parts.Add(await partBuilder.ObjectAsync(async w => await _serializationRegistry.WriteObjectAsync(w, callbackArgument, ct: ct)));
         }
 
         return ActivatorUtilities.CreateInstance<TcrMessage>(_serviceProvider, MessageType.Put, transactionId, (byte)0, parts);

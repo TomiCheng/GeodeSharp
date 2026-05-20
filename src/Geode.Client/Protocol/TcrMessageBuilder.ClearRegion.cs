@@ -40,22 +40,22 @@ partial class TcrMessageBuilder
     /// even though clear has no per-key payload.
     /// </para>
     /// </remarks>
-    public TcrMessage ClearRegion(
+    public TcrMessage ClearRegion(string regionName, long eventThreadId, long eventSequenceId, object? callbackArgument = null, int transactionId = MetaTransactionId) =>
+        ClearRegionAsync(regionName, eventThreadId, eventSequenceId, callbackArgument, transactionId).GetAwaiter().GetResult();
+
+    public async ValueTask<TcrMessage> ClearRegionAsync(
         string regionName,
         long eventThreadId,
         long eventSequenceId,
         object? callbackArgument = null,
-        int transactionId = MetaTransactionId)
+        int transactionId = MetaTransactionId,
+        CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(regionName);
 
         var parts = new List<TcrPart>(3)
         {
-            // Part 1 ??Region name. Raw ASCII bytes (cppcache writeRegionPart).
             partBuilder.RegionName(regionName),
-
-            // Part 2 ??EventId. 18 raw bytes:
-            //   [u8 longCode=3][i64 threadId BE][u8 longCode=3][i64 sequenceId BE]
             partBuilder.Raw(w =>
             {
                 w.WriteByte(EventIdLongCode);
@@ -65,10 +65,9 @@ partial class TcrMessageBuilder
             }, sizeHint: 18),
         };
 
-        // Part 3 ??Optional callback argument (DSCode-tagged via registry).
         if (callbackArgument is not null)
         {
-            parts.Add(partBuilder.Object(w => _serializationRegistry.WriteObject(w, callbackArgument)));
+            parts.Add(await partBuilder.ObjectAsync(async w => await _serializationRegistry.WriteObjectAsync(w, callbackArgument, ct: ct)));
         }
 
         return ActivatorUtilities.CreateInstance<TcrMessage>(

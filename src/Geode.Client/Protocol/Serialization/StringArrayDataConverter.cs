@@ -45,36 +45,29 @@ namespace Geode.Client.Protocol.Serialization;
 /// this converter.
 /// </para>
 /// </remarks>
-internal sealed class StringArrayDataConverter : DataConverter<string[]>
+/// <remarks>
+/// Takes the owning <see cref="SerializationRegistry"/> so each
+/// element can re-enter <see cref="SerializationRegistry.WriteObject"/>
+/// /<see cref="SerializationRegistry.ReadObject"/>. The
+/// <c>this</c>-reference at registry-construction time is safe:
+/// we only store it and call it later from <see cref="Write"/> /
+/// <see cref="Read"/>, by which point the registry is fully
+/// populated.
+/// </remarks>
+internal sealed class StringArrayDataConverter(SerializationRegistry registry)
+    : DataConverter<string[]>
 {
     private static readonly byte[] s_dsCodes = { DSCode.CacheableStringArray };
-
-    private readonly SerializationRegistry _registry;
-
-    /// <summary>
-    /// Takes the owning <see cref="SerializationRegistry"/> so each
-    /// element can re-enter <see cref="SerializationRegistry.WriteObject"/>
-    /// /<see cref="SerializationRegistry.ReadObject"/>. The
-    /// <c>this</c>-reference at registry-construction time is safe:
-    /// we only store it and call it later from <see cref="Write"/> /
-    /// <see cref="Read"/>, by which point the registry is fully
-    /// populated.
-    /// </summary>
-    public StringArrayDataConverter(SerializationRegistry registry)
-    {
-        ArgumentNullException.ThrowIfNull(registry);
-        _registry = registry;
-    }
 
     public override byte[] DsCodes => s_dsCodes;
 
     public override void Write(DataOutput writer, string[] value, byte dsCode, int depth)
     {
-        if (value.Length > _registry.MaxArrayLength)
+        if (value.Length > registry.MaxArrayLength)
         {
             throw new InvalidOperationException(
                 $"StringArrayDataConverter: cannot serialise an array of {value.Length} elements "
-                + $"??exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+                + $"??exceeds Serialization.MaxArrayLength ({registry.MaxArrayLength}).");
         }
         writer.WriteArrayLen(value.Length);
         foreach (var element in value)
@@ -85,7 +78,22 @@ internal sealed class StringArrayDataConverter : DataConverter<string[]>
             // recursion budget into the registry ??even leaf strings
             // count, keeping the limit symmetric with container
             // elements.
-            _registry.WriteObject(writer, element, depth + 1);
+            registry.WriteObject(writer, element, depth + 1);
+        }
+    }
+
+    public override async ValueTask WriteAsync(DataOutput writer, string[] value, byte dsCode, int depth, CancellationToken ct)
+    {
+        if (value.Length > registry.MaxArrayLength)
+        {
+            throw new InvalidOperationException(
+                $"StringArrayDataConverter: cannot serialise an array of {value.Length} elements "
+                + $"— exceeds Serialization.MaxArrayLength ({registry.MaxArrayLength}).");
+        }
+        writer.WriteArrayLen(value.Length);
+        foreach (var element in value)
+        {
+            await registry.WriteObjectAsync(writer, element, depth + 1, ct);
         }
     }
 
@@ -96,11 +104,11 @@ internal sealed class StringArrayDataConverter : DataConverter<string[]>
         {
             return Array.Empty<string>();
         }
-        if (length > _registry.MaxArrayLength)
+        if (length > registry.MaxArrayLength)
         {
             throw new GeodeException(
                 $"StringArrayDataConverter: wire array length {length} exceeds "
-                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) ??refusing to allocate.");
+                + $"Serialization.MaxArrayLength ({registry.MaxArrayLength}) ??refusing to allocate.");
         }
         // Element type is string?[] in spirit (nulls survive), but the
         // CLR Type is the same string[] either way ??nullable
@@ -116,7 +124,7 @@ internal sealed class StringArrayDataConverter : DataConverter<string[]>
             // else means corrupt wire ??let InvalidCastException
             // surface that as a hard fault rather than silently
             // produce wrong data.
-            array[i] = (string)_registry.ReadObject(reader, depth + 1)!;
+            array[i] = (string)registry.ReadObject(reader, depth + 1)!;
         }
         return array;
     }

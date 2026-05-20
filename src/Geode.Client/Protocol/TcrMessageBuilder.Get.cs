@@ -35,28 +35,29 @@ partial class TcrMessageBuilder
     /// the built-in set widens as more codecs land.
     /// </para>
     /// </remarks>
-    public TcrMessage Get(
+    /// <summary>Sync wrapper for tests; production code uses <see cref="GetAsync"/>.</summary>
+    public TcrMessage Get(string regionName, object key, object? callbackArgument = null, int transactionId = MetaTransactionId) =>
+        GetAsync(regionName, key, callbackArgument, transactionId).GetAwaiter().GetResult();
+
+    public async ValueTask<TcrMessage> GetAsync(
         string regionName,
         object key,
         object? callbackArgument = null,
-        int transactionId = MetaTransactionId)
+        int transactionId = MetaTransactionId,
+        CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(regionName);
         ArgumentNullException.ThrowIfNull(key);
 
         var parts = new List<TcrPart>(3)
         {
-            // Part 1 ??Region name. Raw ASCII bytes (cppcache writeRegionPart).
             partBuilder.RegionName(regionName),
-
-            // Part 2 ??Key (DSCode-tagged via registry).
-            partBuilder.Object(w => _serializationRegistry.WriteObject(w, key)),
+            await partBuilder.ObjectAsync(async w => await _serializationRegistry.WriteObjectAsync(w, key, ct: ct)),
         };
 
-        // Part 3 ??Optional callback argument (DSCode-tagged via registry).
         if (callbackArgument is not null)
         {
-            parts.Add(partBuilder.Object(w => _serializationRegistry.WriteObject(w, callbackArgument)));
+            parts.Add(await partBuilder.ObjectAsync(async w => await _serializationRegistry.WriteObjectAsync(w, callbackArgument, ct: ct)));
         }
 
         return ActivatorUtilities.CreateInstance<TcrMessage>(_serviceProvider, MessageType.Request, transactionId, (byte)0, parts);

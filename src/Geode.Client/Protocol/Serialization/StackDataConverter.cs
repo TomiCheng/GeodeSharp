@@ -14,8 +14,8 @@ namespace Geode.Client.Protocol.Serialization;
 /// <remarks>
 /// <para>
 /// <b>The order footgun.</b> <c>Stack&lt;T&gt;</c> in .NET enumerates
-/// <i>top?’bottom</i> (most recently pushed first); the wire expects
-/// <i>bottom?’top</i>. Write reverses, read does not. Symmetric.
+/// <i>top?ï¿½bottom</i> (most recently pushed first); the wire expects
+/// <i>bottom?ï¿½top</i>. Write reverses, read does not. Symmetric.
 /// Round-trip preserves the original push order ??<c>Push(A); Push(B);
 /// Push(C)</c> writes wire <c>[A, B, C]</c>, read pushes in wire order
 /// so the rebuilt stack has <c>C</c> on top exactly as the original.
@@ -31,7 +31,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// <b>Read returns canonical <c>Stack&lt;object?&gt;</c>.</b>
 /// Target-shape conversion (to <c>Stack&lt;int&gt;</c>) happens at
 /// <see cref="TypedResultAdapter"/>'s <c>Stack&lt;&gt;</c> branch,
-/// which has to re-reverse the canonical's <i>top?’bottom</i>
+/// which has to re-reverse the canonical's <i>top?ï¿½bottom</i>
 /// iteration before constructing the typed <c>Stack&lt;T&gt;</c>
 /// via its <c>IEnumerable&lt;T&gt;</c> ctor (push-in-iteration-order
 /// semantics).
@@ -68,7 +68,7 @@ internal sealed class StackDataConverter : IDataConverter
         }
         writer.WriteArrayLen(source.Count);
 
-        // Reverse the foreach output (top?’bottom) into bottom?’top for
+        // Reverse the foreach output (top?ï¿½bottom) into bottom?ï¿½top for
         // wire. Single-pass copy into a scratch buffer descending,
         // then write the buffer ascending ??same shape as clicache
         // CacheableStack::ToData's Linq Reverse but without the LINQ
@@ -82,6 +82,29 @@ internal sealed class StackDataConverter : IDataConverter
         foreach (var item in buffer)
         {
             _registry.WriteObject(writer, item, depth + 1);
+        }
+    }
+
+    public async ValueTask WriteAsync(DataOutput writer, object value, byte dsCode, int depth, CancellationToken ct)
+    {
+        var source = (ICollection)value;
+        if (source.Count > _registry.MaxArrayLength)
+        {
+            throw new InvalidOperationException(
+                $"StackDataConverter: cannot serialise a stack of {source.Count} elements "
+                + $"â€” exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+        }
+        writer.WriteArrayLen(source.Count);
+
+        var buffer = new object?[source.Count];
+        var idx = source.Count - 1;
+        foreach (var item in source)
+        {
+            buffer[idx--] = item;
+        }
+        foreach (var item in buffer)
+        {
+            await _registry.WriteObjectAsync(writer, item, depth + 1, ct);
         }
     }
 
@@ -100,7 +123,7 @@ internal sealed class StackDataConverter : IDataConverter
                 + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) ??refusing to allocate.");
         }
 
-        // Wire is bottom?’top order; pushing in wire order places
+        // Wire is bottom?ï¿½top order; pushing in wire order places
         // wire[0] at the bottom and wire[N-1] on top ??original
         // push sequence preserved.
         for (var i = 0; i < length; i++)

@@ -33,7 +33,21 @@ internal abstract class DataConverter<T> : IDataConverter<T>
 
     public abstract T? Read(BigEndianBinaryReader reader, byte dsCode, int depth);
 
-    // ?€?€ Bridges to the non-generic interface ?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€
+    /// <summary>
+    /// é è¨­:è·‘ sync <see cref="Write"/> ç„¶å¾Œå› completed taskã€‚Recursive
+    /// container converter æˆ–å°‡ä¾†æœƒ await wire op çš„ converter overrideã€‚
+    /// </summary>
+    public virtual ValueTask WriteAsync(DataOutput writer, T value, byte dsCode, int depth, CancellationToken ct)
+    {
+        Write(writer, value, dsCode, depth);
+        return ValueTask.CompletedTask;
+    }
+
+    /// <summary>é è¨­:è·‘ sync <see cref="Read"/> åŒ…æˆ <see cref="ValueTask{TResult}"/>ã€‚</summary>
+    public virtual ValueTask<T?> ReadAsync(BigEndianBinaryReader reader, byte dsCode, int depth, CancellationToken ct) =>
+        ValueTask.FromResult(Read(reader, dsCode, depth));
+
+    // ?ï¿½?ï¿½ Bridges to the non-generic interface ?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½
     // The registry calls these overloads, never the typed ones
     // directly. The casts are safe because the registry looks codecs
     // up by ManagedType (encode) / DsCodes (decode). `depth` rides
@@ -47,4 +61,10 @@ internal abstract class DataConverter<T> : IDataConverter<T>
 
     object? IDataConverter.Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>
         Read(reader, dsCode, depth);
+
+    ValueTask IDataConverter.WriteAsync(DataOutput writer, object value, byte dsCode, int depth, CancellationToken ct) =>
+        WriteAsync(writer, (T)value, dsCode, depth, ct);
+
+    async ValueTask<object?> IDataConverter.ReadAsync(BigEndianBinaryReader reader, byte dsCode, int depth, CancellationToken ct) =>
+        await ReadAsync(reader, dsCode, depth, ct);
 }

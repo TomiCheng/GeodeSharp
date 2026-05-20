@@ -91,13 +91,17 @@ partial class TcrMessageBuilder
     /// callback part &#x2014; not implemented yet, throws when set.</param>
     /// <param name="transactionId">Geode txn id;
     /// <see cref="MetaTransactionId"/> for non-transactional ops.</param>
-    public TcrMessage PutAll(
+    public TcrMessage PutAll(string regionName, IReadOnlyDictionary<object, object> map, long eventThreadId, long eventSequenceId, object? callbackArgument = null, int transactionId = MetaTransactionId) =>
+        PutAllAsync(regionName, map, eventThreadId, eventSequenceId, callbackArgument, transactionId).GetAwaiter().GetResult();
+
+    public async ValueTask<TcrMessage> PutAllAsync(
         string regionName,
         IReadOnlyDictionary<object, object> map,
         long eventThreadId,
         long eventSequenceId,
         object? callbackArgument = null,
-        int transactionId = MetaTransactionId)
+        int transactionId = MetaTransactionId,
+        CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(regionName);
         ArgumentNullException.ThrowIfNull(map);
@@ -158,8 +162,8 @@ partial class TcrMessageBuilder
             ArgumentNullException.ThrowIfNull(kv.Value);
             var key = kv.Key;
             var value = kv.Value;
-            parts.Add(partBuilder.Object(w => _serializationRegistry.WriteObject(w, key)));
-            parts.Add(partBuilder.Object(w => _serializationRegistry.WriteObject(w, value)));
+            parts.Add(await partBuilder.ObjectAsync(async w => await _serializationRegistry.WriteObjectAsync(w, key, ct: ct)));
+            parts.Add(await partBuilder.ObjectAsync(async w => await _serializationRegistry.WriteObjectAsync(w, value, ct: ct)));
         }
 
         return ActivatorUtilities.CreateInstance<TcrMessage>(_serviceProvider, MessageType.PutAll, transactionId, (byte)0, parts);

@@ -16,4 +16,16 @@ internal sealed class PdxType(string className, IReadOnlyList<PdxField> fields)
     /// <c>AddPdxType</c> wire op completes. <c>-1</c> until resolved.
     /// </summary>
     public int TypeId { get; set; } = -1;
+
+    /// <summary>
+    /// 計算 read / write 用的 field 對照表(remote↔local index map、
+    /// variable-length field position map 等)。對應 cppcache
+    /// <c>PdxType::InitializeType()</c>(PdxType.cpp:300),內部跑
+    /// <c>initRemoteToLocal</c> / <c>initLocalToRemote</c> /
+    /// <c>generatePositionMap</c>。我們還沒做 read 端,先擺 NIE。
+    /// </summary>
+    public void Initialize() =>
+        throw new NotImplementedException(
+            $"{nameof(PdxType)}.{nameof(Initialize)}: " +
+            $"remote↔local field maps not yet built (Phase 2.1 Step A.3 prereq).");
 }

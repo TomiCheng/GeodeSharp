@@ -21,7 +21,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// </para>
 /// <para>
 /// <b>Key-value interleaved on the wire.</b> Entries are
-/// <c>[k0, v0, k1, v1, ?¦]</c> (cppcache calls <c>writeObject(key)</c>
+/// <c>[k0, v0, k1, v1, ?ï¿½]</c> (cppcache calls <c>writeObject(key)</c>
 /// then <c>writeObject(value)</c> per entry), NOT all-keys-then-all-
 /// values. Read mirrors the order. Iteration order is non-
 /// deterministic ??same as <c>std::unordered_map</c>.
@@ -96,6 +96,23 @@ internal sealed class DictionaryDataConverter : IDataConverter
             // depth + 1 propagates the recursion budget per slot.
             _registry.WriteObject(writer, entry.Key, depth + 1);
             _registry.WriteObject(writer, entry.Value, depth + 1);
+        }
+    }
+
+    public async ValueTask WriteAsync(DataOutput writer, object value, byte dsCode, int depth, CancellationToken ct)
+    {
+        var source = (IDictionary)value;
+        if (source.Count > _registry.MaxArrayLength)
+        {
+            throw new InvalidOperationException(
+                $"DictionaryDataConverter: cannot serialise a map of {source.Count} entries "
+                + $"â€” exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+        }
+        writer.WriteArrayLen(source.Count);
+        foreach (DictionaryEntry entry in source)
+        {
+            await _registry.WriteObjectAsync(writer, entry.Key, depth + 1, ct);
+            await _registry.WriteObjectAsync(writer, entry.Value, depth + 1, ct);
         }
     }
 

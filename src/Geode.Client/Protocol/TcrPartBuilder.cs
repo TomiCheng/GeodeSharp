@@ -179,6 +179,10 @@ internal sealed class TcrPartBuilder(IServiceProvider serviceProvider)
     public TcrPart Object(Action<DataOutput> write, int sizeHint = 0) =>
         Build(isObject: 1, sizeHint, write);
 
+    /// <summary>Async 版本的 <see cref="Object"/>;允許 body writer await(例如 PDX wire op)。</summary>
+    public ValueTask<TcrPart> ObjectAsync(Func<DataOutput, ValueTask> write, int sizeHint = 0) =>
+        BuildAsync(isObject: 1, sizeHint, write);
+
     /// <summary>
     /// Build a Part whose payload is a raw byte sequence (<c>IsObject=0</c>),
     /// composed by <paramref name="write"/>. Use for EventId and other
@@ -198,6 +202,15 @@ internal sealed class TcrPartBuilder(IServiceProvider serviceProvider)
         using var output = ActivatorUtilities.CreateInstance<DataOutput>(serviceProvider);
         write(output);
         // Copy out — output's buffer returns to ArrayPool on Dispose.
+        return new TcrPart(isObject, output.WrittenSpan.ToArray());
+    }
+
+    private async ValueTask<TcrPart> BuildAsync(byte isObject, int sizeHint, Func<DataOutput, ValueTask> write)
+    {
+        _ = sizeHint;
+
+        using var output = ActivatorUtilities.CreateInstance<DataOutput>(serviceProvider);
+        await write(output);
         return new TcrPart(isObject, output.WrittenSpan.ToArray());
     }
 }

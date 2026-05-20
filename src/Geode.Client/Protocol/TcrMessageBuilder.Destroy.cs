@@ -53,37 +53,27 @@ partial class TcrMessageBuilder
     /// drives it from <see cref="Services.EventIdGenerator"/>.
     /// </para>
     /// </remarks>
-    public TcrMessage Destroy(
+    public TcrMessage Destroy(string regionName, object key, long eventThreadId, long eventSequenceId, object? callbackArgument = null, int transactionId = MetaTransactionId) =>
+        DestroyAsync(regionName, key, eventThreadId, eventSequenceId, callbackArgument, transactionId).GetAwaiter().GetResult();
+
+    public async ValueTask<TcrMessage> DestroyAsync(
         string regionName,
         object key,
         long eventThreadId,
         long eventSequenceId,
         object? callbackArgument = null,
-        int transactionId = MetaTransactionId)
+        int transactionId = MetaTransactionId,
+        CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(regionName);
         ArgumentNullException.ThrowIfNull(key);
 
         var parts = new List<TcrPart>(6)
         {
-            // Part 1 ??Region name. Raw ASCII bytes (cppcache writeRegionPart).
             partBuilder.RegionName(regionName),
-
-            // Part 2 ??Key (DSCode-tagged via registry).
-            partBuilder.Object(w => _serializationRegistry.WriteObject(w, key)),
-
-            // Part 3 ??ExpectedOldValue = NullObj
-            //          (cppcache writeObjectPart(nullptr) #1).
+            await partBuilder.ObjectAsync(async w => await _serializationRegistry.WriteObjectAsync(w, key, ct: ct)),
             partBuilder.NullObj(),
-
-            // Part 4 ??Operation = NullObj
-            //          (cppcache writeObjectPart(nullptr) #2).
-            //   For unconditional destroy this stays NullObj; conditional
-            //   remove ships an Operation.OP_TYPE_DESTROY byte (8) here.
             partBuilder.NullObj(),
-
-            // Part 5 ??EventId. 18 raw bytes:
-            //   [u8 longCode=3][i64 threadId BE][u8 longCode=3][i64 sequenceId BE]
             partBuilder.Raw(w =>
             {
                 w.WriteByte(EventIdLongCode);
@@ -93,10 +83,9 @@ partial class TcrMessageBuilder
             }, sizeHint: 18),
         };
 
-        // Part 6 ??Optional callback argument (DSCode-tagged via registry).
         if (callbackArgument is not null)
         {
-            parts.Add(partBuilder.Object(w => _serializationRegistry.WriteObject(w, callbackArgument)));
+            parts.Add(await partBuilder.ObjectAsync(async w => await _serializationRegistry.WriteObjectAsync(w, callbackArgument, ct: ct)));
         }
 
         return ActivatorUtilities.CreateInstance<TcrMessage>(_serviceProvider, MessageType.Destroy, transactionId, (byte)0, parts);

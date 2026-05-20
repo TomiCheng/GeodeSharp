@@ -41,35 +41,30 @@ partial class TcrMessageBuilder
     /// set widens in Phase 1.2.c.
     /// </para>
     /// </remarks>
-    public TcrMessage ContainsKey(
+    public TcrMessage ContainsKey(string regionName, object key, object? callbackArgument = null, bool isContainsKey = true, int transactionId = MetaTransactionId) =>
+        ContainsKeyAsync(regionName, key, callbackArgument, isContainsKey, transactionId).GetAwaiter().GetResult();
+
+    public async ValueTask<TcrMessage> ContainsKeyAsync(
         string regionName,
         object key,
         object? callbackArgument = null,
         bool isContainsKey = true,
-        int transactionId = MetaTransactionId)
+        int transactionId = MetaTransactionId,
+        CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(regionName);
         ArgumentNullException.ThrowIfNull(key);
 
         var parts = new List<TcrPart>(4)
         {
-            // Part 1 ??Region name. Raw ASCII bytes (cppcache writeRegionPart).
             partBuilder.RegionName(regionName),
-
-            // Part 2 ??Key (DSCode-tagged). Registry writes DSCode byte
-            // + payload via the converter for key's runtime type.
-            partBuilder.Object(w => _serializationRegistry.WriteObject(w, key)),
-
-            // Part 3 ??Op-flag i32 (0 = containsKey, 1 = containsValueForKey).
-            // cppcache writeIntPart(isContainsKey ? 0 : 1).
+            await partBuilder.ObjectAsync(async w => await _serializationRegistry.WriteObjectAsync(w, key, ct: ct)),
             partBuilder.Int32(isContainsKey ? 0 : 1),
         };
 
-        // Part 4 ??Optional callback argument. Same registry path ??        // any type with a registered converter works; otherwise the
-        // registry throws NotSupportedException.
         if (callbackArgument is not null)
         {
-            parts.Add(partBuilder.Object(w => _serializationRegistry.WriteObject(w, callbackArgument)));
+            parts.Add(await partBuilder.ObjectAsync(async w => await _serializationRegistry.WriteObjectAsync(w, callbackArgument, ct: ct)));
         }
 
         return ActivatorUtilities.CreateInstance<TcrMessage>(_serviceProvider, MessageType.ContainsKey, transactionId, (byte)0, parts);

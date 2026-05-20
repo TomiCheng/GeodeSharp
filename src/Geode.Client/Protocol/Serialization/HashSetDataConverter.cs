@@ -99,6 +99,25 @@ internal sealed class HashSetDataConverter : IDataConverter
         }
     }
 
+    public async ValueTask WriteAsync(DataOutput writer, object value, byte dsCode, int depth, CancellationToken ct)
+    {
+        var source = (IEnumerable)value;
+        var items = new List<object?>();
+        foreach (var item in source) items.Add(item);
+
+        if (items.Count > _registry.MaxArrayLength)
+        {
+            throw new InvalidOperationException(
+                $"HashSetDataConverter: cannot serialise a set of {items.Count} elements "
+                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+        }
+        writer.WriteArrayLen(items.Count);
+        foreach (var item in items)
+        {
+            await _registry.WriteObjectAsync(writer, item, depth + 1, ct);
+        }
+    }
+
     public object? Read(BigEndianBinaryReader reader, byte dsCode, int depth)
     {
         var length = reader.ReadArrayLen();

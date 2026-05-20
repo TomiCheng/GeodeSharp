@@ -104,6 +104,24 @@ internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
         }
     }
 
+    public override async ValueTask WriteAsync(DataOutput writer, object[] value, byte dsCode, int depth, CancellationToken ct)
+    {
+        if (value.Length > _registry.MaxArrayLength)
+        {
+            throw new InvalidOperationException(
+                $"ObjectArrayDataConverter: cannot serialise an array of {value.Length} elements "
+                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+        }
+        writer.WriteArrayLen(value.Length);
+        writer.WriteByte(DSCode.Class);
+        writer.WriteString(JavaObjectClassName);
+
+        foreach (var element in value)
+        {
+            await _registry.WriteObjectAsync(writer, element, depth + 1, ct);
+        }
+    }
+
     public override object[] Read(BigEndianBinaryReader reader, byte dsCode, int depth)
     {
         var length = reader.ReadArrayLen();

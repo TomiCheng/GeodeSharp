@@ -225,10 +225,11 @@ internal sealed partial class ThinClientRegion(
         //
         // ─── Step 1+2: build request frame ────────────────────
         var (threadId, sequenceId) = eventIdGenerator.Next();
-        var request = tcrMessageBuilder.ClearRegion(
+        var request = await tcrMessageBuilder.ClearRegionAsync(
             regionName: FullPath,
             eventThreadId: threadId,
-            eventSequenceId: sequenceId);
+            eventSequenceId: sequenceId,
+            ct: ct);
 
         // ─── Step 3: dispatch via DM ─────────────────────────
         var reply = await dm
@@ -283,7 +284,7 @@ internal sealed partial class ThinClientRegion(
         // Region FullPath + DSCode-tagged key via
         // SerializationRegistry; partial source:
         // Protocol/TcrMessageBuilder.ContainsKey.cs.
-        var request = tcrMessageBuilder.ContainsKey(FullPath, key);
+        var request = await tcrMessageBuilder.ContainsKeyAsync(FullPath, key, ct: ct);
 
         // ─── Step 3: dispatch via DM ─────────────────────────
         // ThinClientPoolDM.SendSyncRequestAsync picks the (single in
@@ -366,9 +367,10 @@ internal sealed partial class ThinClientRegion(
         // callback placeholder); see TcrMessageBuilder.GetAll.cs for
         // the layout discussion. No EventId — GetAll has no per-key
         // mutation concept, so the EventIdGenerator isn't touched.
-        var request = tcrMessageBuilder.GetAll(
+        var request = await tcrMessageBuilder.GetAllAsync(
             regionName: FullPath,
-            keys: keyList);
+            keys: keyList,
+            ct: ct);
 
         // ─── Step 3: register chunked-result + dispatch ──────
         // cppcache hangs a fresh ChunkedGetAllResponse off the
@@ -459,7 +461,7 @@ internal sealed partial class ThinClientRegion(
         // TcrMessageRequest ctor (TcrMessage.cpp:1858-1898).
         //
         // ─── Step 1+2: build request frame ────────────────────
-        var request = tcrMessageBuilder.Get(FullPath, key);
+        var request = await tcrMessageBuilder.GetAsync(FullPath, key, ct: ct);
 
         // ─── Step 3: dispatch via DM ─────────────────────────
         var reply = await dm
@@ -504,11 +506,12 @@ internal sealed partial class ThinClientRegion(
         //
         // ─── Step 1+2: build request frame ────────────────────
         var (threadId, sequenceId) = eventIdGenerator.Next();
-        var request = tcrMessageBuilder.Invalidate(
+        var request = await tcrMessageBuilder.InvalidateAsync(
             regionName: FullPath,
             key: key,
             eventThreadId: threadId,
-            eventSequenceId: sequenceId);
+            eventSequenceId: sequenceId,
+            ct: ct);
 
         // ─── Step 3: dispatch via DM ─────────────────────────
         var reply = await dm
@@ -573,11 +576,12 @@ internal sealed partial class ThinClientRegion(
         // 5+2N parts (region / eventId / skipCallbacks=0 / flags=0 /
         // count / N×(key,value)); see TcrMessageBuilder.PutAll.cs
         // for the layout discussion.
-        var request = tcrMessageBuilder.PutAll(
+        var request = await tcrMessageBuilder.PutAllAsync(
             regionName: FullPath,
             map: map,
             eventThreadId: threadId,
-            eventSequenceId: baseSequenceId);
+            eventSequenceId: baseSequenceId,
+            ct: ct);
 
         // ─── Step 3: register chunked-result + dispatch ──────
         // cppcache hangs a fresh ChunkedPutAllResponse off the
@@ -649,13 +653,14 @@ internal sealed partial class ThinClientRegion(
         // generator (cppcache EventIdTSS::initFromTSS). Delta is hard-
         // coded false — Phase 4 territory.
         var (threadId, sequenceId) = eventIdGenerator.Next();
-        var request = tcrMessageBuilder.Put(
+        var request = await tcrMessageBuilder.PutAsync(
             regionName: FullPath,
             key: key,
             value: value,
             callbackArgument: null,
             eventThreadId: threadId,
-            eventSequenceId: sequenceId);
+            eventSequenceId: sequenceId,
+            ct: ct);
 
         // ─── Step 3: dispatch via DM ─────────────────────────
         // ThinClientPoolDM.SendSyncRequestAsync picks the (single in
@@ -710,11 +715,12 @@ internal sealed partial class ThinClientRegion(
         // as (clientId, threadId, baseSeq+i) for i ∈ [0, N).
         // cppcache writeEventIdPart(keys.size()-1) parity.
         var (threadId, baseSequenceId) = eventIdGenerator.NextRange(keys.Count);
-        var request = tcrMessageBuilder.RemoveAll(
+        var request = await tcrMessageBuilder.RemoveAllAsync(
             regionName: FullPath,
             keys: keys,
             eventThreadId: threadId,
-            eventSequenceId: baseSequenceId);
+            eventSequenceId: baseSequenceId,
+            ct: ct);
 
         // ─── Step 3: register chunked-result + dispatch ──────
         // cppcache hangs a fresh ChunkedRemoveAllResponse off the
@@ -787,11 +793,12 @@ internal sealed partial class ThinClientRegion(
         //
         // ─── Step 1+2: build request frame ────────────────────
         var (threadId, sequenceId) = eventIdGenerator.Next();
-        var request = tcrMessageBuilder.Destroy(
+        var request = await tcrMessageBuilder.DestroyAsync(
             regionName: FullPath,
             key: key,
             eventThreadId: threadId,
-            eventSequenceId: sequenceId);
+            eventSequenceId: sequenceId,
+            ct: ct);
 
         // ─── Step 3: dispatch via DM ─────────────────────────
         var reply = await dm

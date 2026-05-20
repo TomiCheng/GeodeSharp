@@ -82,11 +82,15 @@ partial class TcrMessageBuilder
     /// <c>null</c>. Non-null throws ??see remarks.</param>
     /// <param name="transactionId">Geode txn id;
     /// <see cref="MetaTransactionId"/> for non-transactional ops.</param>
-    public TcrMessage GetAll(
+    public TcrMessage GetAll(string regionName, IReadOnlyList<object> keys, object? callbackArgument = null, int transactionId = MetaTransactionId) =>
+        GetAllAsync(regionName, keys, callbackArgument, transactionId).GetAwaiter().GetResult();
+
+    public async ValueTask<TcrMessage> GetAllAsync(
         string regionName,
         IReadOnlyList<object> keys,
         object? callbackArgument = null,
-        int transactionId = MetaTransactionId)
+        int transactionId = MetaTransactionId,
+        CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(regionName);
         ArgumentNullException.ThrowIfNull(keys);
@@ -96,9 +100,6 @@ partial class TcrMessageBuilder
                 "GetAll requires at least one key.", nameof(keys));
         }
 
-        // Phase 1.3: callback overload not exposed on IRegion; refuse
-        // rather than silently emitting the wrong msg type
-        // (GET_ALL_WITH_CALLBACK=107) if someone tries.
         if (callbackArgument is not null)
         {
             throw new NotSupportedException(
@@ -107,11 +108,6 @@ partial class TcrMessageBuilder
                 + "no-callback overload.");
         }
 
-        // Snapshot the key list into a local so the lambdas below capture
-        // a stable reference (defensive ??caller could in theory mutate
-        // IReadOnlyList<object> if the underlying is a List<object>).
-        // Per-key null check up front so the wire writer doesn't blow up
-        // half-way through serialisation.
         for (var i = 0; i < keys.Count; i++)
         {
             if (keys[i] is null)
@@ -124,15 +120,8 @@ partial class TcrMessageBuilder
 
         var parts = new List<TcrPart>(3)
         {
-            // Part 1 ??Region name. Raw ASCII (cppcache writeRegionPart).
             partBuilder.RegionName(regionName),
-
-            // Part 2 ??Keys, as the in-band wire shape of a
-            // CacheableObjectArray. Mirrors cppcache's manual write
-            // (TcrMessage.cpp:702-710) byte-for-byte; we keep it inline
-            // here rather than routing through SerializationRegistry +
-            // ObjectArrayDataConverter so the wire bytes are visible.
-            partBuilder.Object(w =>
+            await partBuilder.ObjectAsync(async w =>
             {
                 w.WriteByte(DSCode.CacheableObjectArray);
                 w.WriteArrayLen(keys.Count);
@@ -140,13 +129,9 @@ partial class TcrMessageBuilder
                 w.WriteString(GetAllJavaObjectClassName);
                 foreach (var key in keys)
                 {
-                    _serializationRegistry.WriteObject(w, key);
+                    await _serializationRegistry.WriteObjectAsync(w, key, ct: ct);
                 }
             }),
-
-            // Part 3 ??Callback or int(0). cppcache InitializeGetallMsg
-            // (TcrMessage.cpp:2517-2521) dispatches: callback != null ??            // writeObjectPart; null ??writeIntPart(0). Phase 1.3 always
-            // hits the int(0) branch because we refuse callback above.
             partBuilder.Int32(0),
         };
 

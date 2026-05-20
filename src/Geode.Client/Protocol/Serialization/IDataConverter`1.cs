@@ -22,10 +22,16 @@ internal interface IDataConverter<T> : IDataConverter
     /// </summary>
     void Write(DataOutput writer, T value, byte dsCode, int depth);
 
+    /// <summary>Typed async 版,no boxing。</summary>
+    ValueTask WriteAsync(DataOutput writer, T value, byte dsCode, int depth, CancellationToken ct);
+
     /// <summary>
     /// Typed counterpart to
     /// <see cref="IDataConverter.Read(BigEndianBinaryReader, byte, int)"/>;
     /// no boxing.
     /// </summary>
     new T? Read(BigEndianBinaryReader reader, byte dsCode, int depth);
+
+    /// <summary>Typed async 版,no boxing。</summary>
+    new ValueTask<T?> ReadAsync(BigEndianBinaryReader reader, byte dsCode, int depth, CancellationToken ct);
 }

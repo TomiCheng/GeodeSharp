@@ -56,25 +56,23 @@ partial class TcrMessageBuilder
     /// <c>PoolOptions</c>.
     /// </para>
     /// </remarks>
-    public TcrMessage Query(
+    public TcrMessage Query(string queryString, long eventThreadId, long eventSequenceId, int? messageResponseTimeoutMillis = DefaultQueryResponseTimeoutMillis, int transactionId = MetaTransactionId) =>
+        QueryAsync(queryString, eventThreadId, eventSequenceId, messageResponseTimeoutMillis, transactionId).GetAwaiter().GetResult();
+
+    public ValueTask<TcrMessage> QueryAsync(
         string queryString,
         long eventThreadId,
         long eventSequenceId,
         int? messageResponseTimeoutMillis = DefaultQueryResponseTimeoutMillis,
-        int transactionId = MetaTransactionId)
+        int transactionId = MetaTransactionId,
+        CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(queryString);
+        _ = ct;
 
         var parts = new List<TcrPart>(3)
         {
-            // Part 1 ??Query string. cppcache writeRegionPart of the OQL
-            // (it re-uses the region-name part for the OQL body); we
-            // call ModifiedUtf8 directly to make the encoding intent
-            // explicit ??server-side decoder is the same in both cases.
             partBuilder.ModifiedUtf8(queryString),
-
-            // Part 2 ??EventId. 18 raw bytes:
-            //   [u8 longCode=3][i64 threadId BE][u8 longCode=3][i64 sequenceId BE]
             partBuilder.Raw(w =>
             {
                 w.WriteByte(EventIdLongCode);
@@ -84,13 +82,12 @@ partial class TcrMessageBuilder
             }, sizeHint: 18),
         };
 
-        // Part 3 ??Optional response timeout. cppcache writeMillisecondsPart
-        //   = writeIntPart = [part_len=4][isObj=0][int32 BE ms].
         if (messageResponseTimeoutMillis is { } ms)
         {
             parts.Add(partBuilder.Raw(w => w.WriteInt32(ms), sizeHint: 4));
         }
 
-        return ActivatorUtilities.CreateInstance<TcrMessage>(_serviceProvider, MessageType.Query, transactionId, (byte)0, parts);
+        return ValueTask.FromResult(
+            ActivatorUtilities.CreateInstance<TcrMessage>(_serviceProvider, MessageType.Query, transactionId, (byte)0, parts));
     }
 }

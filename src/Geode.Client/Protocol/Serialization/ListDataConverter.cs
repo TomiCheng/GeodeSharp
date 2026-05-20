@@ -99,6 +99,22 @@ internal sealed class ListDataConverter : IDataConverter
         }
     }
 
+    public async ValueTask WriteAsync(DataOutput writer, object value, byte dsCode, int depth, CancellationToken ct)
+    {
+        var source = (IList)value;
+        if (source.Count > _registry.MaxArrayLength)
+        {
+            throw new InvalidOperationException(
+                $"ListDataConverter: cannot serialise a list of {source.Count} elements "
+                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+        }
+        writer.WriteArrayLen(source.Count);
+        foreach (var item in source)
+        {
+            await _registry.WriteObjectAsync(writer, item, depth + 1, ct);
+        }
+    }
+
     public object? Read(BigEndianBinaryReader reader, byte dsCode, int depth)
     {
         var length = reader.ReadArrayLen();

@@ -22,8 +22,8 @@ namespace Geode.Client.Protocol.Serialization;
 /// <b>One converter, possibly many DSCodes.</b> Most converters
 /// handle exactly one wire DSCode (<c>int</c> ??/// <see cref="DSCode.CacheableInt32"/>). <c>string</c> is special:
 /// one converter handles four DSCodes (<c>CacheableASCIIString</c> /
-/// <c>?�ASCIIStringHuge</c> / <c>CacheableString</c> /
-/// <c>?�StringHuge</c>) and picks which one at <see cref="Write"/>
+/// <c>?�ASCIIStringHuge</c> / <c>CacheableString</c> /
+/// <c>?�StringHuge</c>) and picks which one at <see cref="Write"/>
 /// time based on content. The <see cref="DsCodes"/> array is the
 /// decode-side index; <see cref="GetDsCode"/> resolves the
 /// encode-side choice.
@@ -119,6 +119,17 @@ internal interface IDataConverter
     void Write(DataOutput writer, object value, byte dsCode, int depth);
 
     /// <summary>
+    /// Async 版本的 <see cref="Write"/>;default interface method,wrap sync。
+    /// 會 await 的 converter(recursive container 或將來會打 wire op 的 PDX
+    /// 路徑)override 這個方法做真的 async work。
+    /// </summary>
+    ValueTask WriteAsync(DataOutput writer, object value, byte dsCode, int depth, CancellationToken ct)
+    {
+        Write(writer, value, dsCode, depth);
+        return ValueTask.CompletedTask;
+    }
+
+    /// <summary>
     /// Read one payload from <paramref name="reader"/>. The DSCode
     /// byte has already been consumed by the registry (used for codec
     /// lookup) and is passed back as <paramref name="dsCode"/> so
@@ -137,4 +148,8 @@ internal interface IDataConverter
     /// for value types whose stored representation is "no value".
     /// </returns>
     object? Read(BigEndianBinaryReader reader, byte dsCode, int depth);
+
+    /// <summary>Async 版本的 <see cref="Read"/>;default interface method,wrap sync。</summary>
+    ValueTask<object?> ReadAsync(BigEndianBinaryReader reader, byte dsCode, int depth, CancellationToken ct) =>
+        ValueTask.FromResult(Read(reader, dsCode, depth));
 }

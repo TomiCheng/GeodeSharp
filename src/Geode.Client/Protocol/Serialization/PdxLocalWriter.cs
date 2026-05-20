@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using Geode.Client.Pdx;
+using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol.Serialization;
@@ -9,7 +10,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// <see cref="IPdxSerializable{TSelf}.ToData"/>. Mirror of cppcache
 /// <c>PdxLocalWriter</c> (<c>cppcache/src/PdxLocalWriter.hpp</c>).
 /// </summary>
-internal sealed class PdxLocalWriter(IServiceProvider serviceProvider, StringDataConverter stringConverter)
+internal class PdxLocalWriter(IServiceProvider serviceProvider)
     : IPdxWriter, IDisposable
 {
     // Wire layout (excluding leading DSCode.PDX byte written by
@@ -28,6 +29,15 @@ internal sealed class PdxLocalWriter(IServiceProvider serviceProvider, StringDat
     private readonly DataOutput _output = ActivatorUtilities.CreateInstance<DataOutput>(serviceProvider);
     private readonly List<PdxField> _fields = [];
     private readonly List<int> _varLenOffsets = [];
+
+    /// <summary>
+    /// 子類用:把目前累積的 field list 包成 <see cref="PdxType"/>。對應
+    /// cppcache <c>PdxWriterWithTypeCollector::getPdxLocalType()</c> 從 base
+    /// 拿 <c>m_pdxType</c> 的動作 — 我們蒐 field 在 base 做,所以這裡幫子類
+    /// 把它取出來。
+    /// </summary>
+    protected PdxType BuildSchema(string className) => new(className, _fields);
+    private readonly StringDataConverter _stringConverter = new(serviceProvider.GetRequiredService<CacheScopeContext>());
 
     public IPdxWriter WriteBoolean(string fieldName, bool value)
     {
@@ -127,22 +137,21 @@ internal sealed class PdxLocalWriter(IServiceProvider serviceProvider, StringDat
         // Reuse Phase 1's StringDataConverter so max-length, DSCode
         // selection (ASCII / huge / mod UTF-8 / UTF-16) and payload
         // encoding stay symmetric with non-PDX strings.
-        var dsCode = stringConverter.GetDsCode(value);
+        var dsCode = _stringConverter.GetDsCode(value);
         _output.WriteByte(dsCode);
-        stringConverter.Write(_output, value, dsCode, depth: 0);
+        _stringConverter.Write(_output, value, dsCode, depth: 0);
         return this;
     }
 
     /// <summary>
-    /// Finalize payload and return the collected schema. Caller
-    /// (<c>SerializationRegistry.TryWritePdx</c>) resolves
-    /// <paramref name="className"/> → typeId via PdxTypeRegistry, then
-    /// writes <c>DSCode.PDX</c> + <c>PdxLength</c> + <c>TypeId</c>
-    /// + this payload to the wire.
+    /// Finalize the field-data payload(field bytes + offset table)。對應
+    /// cppcache <c>PdxLocalWriter::endObjectWriting</c> + <c>writeOffsets</c>
+    /// — 但**不含** wire-level header(<c>DSCode.PDX</c>/length/typeId),
+    /// 那是 caller(<c>SerializationRegistry.TryWritePdxAsync</c>)
+    /// 寫到外層 <see cref="DataOutput"/>。
     /// </summary>
-    public (PdxType Schema, byte[] Payload) Build(string className)
+    public byte[] BuildPayload()
     {
-        var schema = new PdxType(className, _fields);
         var fieldData = _output.WrittenSpan;
 
         // Offset table: numVarLen - 1 entries (first var-len's offset is
@@ -152,7 +161,7 @@ internal sealed class PdxLocalWriter(IServiceProvider serviceProvider, StringDat
         int numEntries = Math.Max(0, _varLenOffsets.Count - 1);
         if (numEntries == 0)
         {
-            return (schema, fieldData.ToArray());
+            return fieldData.ToArray();
         }
 
         var (width, totalLen) = PickOffsetWidth(fieldData.Length, numEntries);
@@ -180,7 +189,7 @@ internal sealed class PdxLocalWriter(IServiceProvider serviceProvider, StringDat
             }
         }
 
-        return (schema, payload);
+        return payload;
     }
 
     public void Dispose() => _output.Dispose();

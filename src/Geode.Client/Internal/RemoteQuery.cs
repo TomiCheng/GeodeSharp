@@ -39,17 +39,17 @@ internal sealed class RemoteQuery<T>(
     public Task<IReadOnlyList<T>> ExecuteAsync(CancellationToken ct = default)
         => ExecuteCoreAsync(ct);
 
-    // ?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€
+    // ?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½
     //  Shared execution path. Mirrors cppcache RemoteQuery::execute
     //  + executeNoThrow merged (RemoteQuery.cpp:67-182). Both public
     //  ExecuteAsync overloads delegate here.
     //
-    //  ?€?€ Pre-requisite work ?€?€
+    //  ?ï¿½?ï¿½ Pre-requisite work ?ï¿½?ï¿½
     //   A1. TcrMessageBuilder.Query                    ??done
     //   A2. TcrMessageBuilder.QueryWithParameters      ??done
     //   A3. ChunkedQueryResponse<T> (TcrChunkedResult) ??pending
     //
-    //  ?€?€ Phase 1.4 skipped (cppcache surface we omit) ?€?€
+    //  ?ï¿½?ï¿½ Phase 1.4 skipped (cppcache surface we omit) ?ï¿½?ï¿½
     //   ??GuardUserAttributes / AuthenticatedView binding (Phase 3)
     //   ??pool->getStats().incQueryExecutionId() (Phase 1.5 stats)
     //   ??enableTimeStatistics / sampleStartNanos (Phase 1.5 stats)
@@ -85,21 +85,23 @@ internal sealed class RemoteQuery<T>(
             // writeEventIdPart unconditionally. Reuse the per-cache
             // EventIdGenerator that Put / ClearRegion already drive.
             var (threadId, sequenceId) = eventIdGenerator.Next();
-            request = messageBuilder.Query(
+            request = await messageBuilder.QueryAsync(
                 QueryString,
                 eventThreadId: threadId,
                 eventSequenceId: sequenceId,
-                messageResponseTimeoutMillis: timeoutMs);
+                messageResponseTimeoutMillis: timeoutMs,
+                ct: ct);
         }
         else
         {
             // QueryWithParameters(80) omits the EventId part (cppcache
             // TcrMessageQueryWithParameters ctor doesn't call
             // writeEventIdPart).
-            request = messageBuilder.QueryWithParameters(
+            request = await messageBuilder.QueryWithParametersAsync(
                 QueryString,
                 Parameters,
-                messageResponseTimeoutMillis: timeoutMs);
+                messageResponseTimeoutMillis: timeoutMs,
+                ct: ct);
         }
 
         // B4 ??Build ChunkedQueryResponse<T> collector (A3). cppcache

@@ -77,33 +77,6 @@ internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(DataOutput writer, object[] value, byte dsCode, int depth)
-    {
-        if (value.Length > _registry.MaxArrayLength)
-        {
-            throw new InvalidOperationException(
-                $"ObjectArrayDataConverter: cannot serialise an array of {value.Length} elements "
-                + $"??exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
-        }
-        writer.WriteArrayLen(value.Length);
-
-        // Java class header: one DSCode.Class byte + the literal
-        // string "java.lang.Object". cppcache hard-codes this name
-        // regardless of the actual element types; we mirror that ??        // each element's own DSCode is what tells the server how to
-        // deserialise the slot.
-        writer.WriteByte(DSCode.Class);
-        writer.WriteString(JavaObjectClassName);
-
-        foreach (var element in value)
-        {
-            // WriteObject handles null ??DSCode.NullObj (41) and
-            // dispatches to the appropriate converter (string / int /
-            // ??or even a nested array) for non-null elements.
-            // depth + 1 propagates the recursion budget.
-            _registry.WriteObject(writer, element, depth + 1);
-        }
-    }
-
     public override async ValueTask WriteAsync(DataOutput writer, object[] value, byte dsCode, int depth, CancellationToken ct)
     {
         if (value.Length > _registry.MaxArrayLength)

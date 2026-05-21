@@ -53,21 +53,20 @@ internal sealed class BooleanArrayDataConverter(CacheScopeContext cacheScopeCont
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(DataOutput writer, bool[] value, byte dsCode, int depth)
+    public override ValueTask WriteAsync(DataOutput writer, bool[] value, byte dsCode, int depth, CancellationToken ct)
     {
         if (value.Length > _maxArrayLength)
         {
             throw new InvalidOperationException(
                 $"BooleanArrayDataConverter: cannot serialise an array of {value.Length} elements "
-                + $"??exceeds Serialization.MaxArrayLength ({_maxArrayLength}). "
-                + "Tune GeodeClientOptions.Serialization.MaxArrayLength if the workload "
-                + "genuinely warrants larger payloads.");
+                + $"— exceeds Serialization.MaxArrayLength ({_maxArrayLength}).");
         }
         writer.WriteArrayLen(value.Length);
         foreach (var element in value)
         {
             writer.WriteBool(element);
         }
+        return ValueTask.CompletedTask;
     }
 
     public override bool[] Read(BigEndianBinaryReader reader, byte dsCode, int depth)

@@ -12,8 +12,11 @@ internal sealed class Int64DataConverter : DataConverter<long>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(DataOutput writer, long value, byte dsCode, int depth) =>
+    public override ValueTask WriteAsync(DataOutput writer, long value, byte dsCode, int depth, CancellationToken ct)
+    {
         writer.WriteInt64(value);
+        return ValueTask.CompletedTask;
+    }
 
     public override long Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>
         reader.ReadInt64();

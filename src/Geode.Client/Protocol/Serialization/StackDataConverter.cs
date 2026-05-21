@@ -55,36 +55,6 @@ internal sealed class StackDataConverter : IDataConverter
 
     public byte GetDsCode(object value) => DSCode.CacheableStack;
 
-    public void Write(DataOutput writer, object value, byte dsCode, int depth)
-    {
-        // Stack<T> implements non-generic ICollection ??Count is
-        // O(1), no scratch list needed.
-        var source = (ICollection)value;
-        if (source.Count > _registry.MaxArrayLength)
-        {
-            throw new InvalidOperationException(
-                $"StackDataConverter: cannot serialise a stack of {source.Count} elements "
-                + $"??exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
-        }
-        writer.WriteArrayLen(source.Count);
-
-        // Reverse the foreach output (top?�bottom) into bottom?�top for
-        // wire. Single-pass copy into a scratch buffer descending,
-        // then write the buffer ascending ??same shape as clicache
-        // CacheableStack::ToData's Linq Reverse but without the LINQ
-        // chain.
-        var buffer = new object?[source.Count];
-        var i = source.Count - 1;
-        foreach (var item in source)
-        {
-            buffer[i--] = item;
-        }
-        foreach (var item in buffer)
-        {
-            _registry.WriteObject(writer, item, depth + 1);
-        }
-    }
-
     public async ValueTask WriteAsync(DataOutput writer, object value, byte dsCode, int depth, CancellationToken ct)
     {
         var source = (ICollection)value;

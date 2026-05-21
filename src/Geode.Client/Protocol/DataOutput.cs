@@ -40,7 +40,6 @@ namespace Geode.Client.Protocol;
 internal sealed class DataOutput(SerializationRegistry registry, IPool? pool = null)
     : IDisposable, IBufferWriter<byte>
 {
-    
     // cppcache TSSDataOutput::getBuffer default = 8192. Keep identical
     // so the typical message rent doesn't grow.
     private const int InitialSize = 8192;
@@ -49,6 +48,13 @@ internal sealed class DataOutput(SerializationRegistry registry, IPool? pool = n
     private int _disposed;
     private int _position;
     private int _writtenCount;
+
+    /// <summary>
+    /// 拿 DataOutput 對應的 <see cref="SerializationRegistry"/>;PDX deserialize
+    /// 流程未來需要它(read 端 schema 查 / register)。目前是讓 ctor 參數
+    /// 不被當 unused 抱怨的存在,實際讀取方還沒接上。
+    /// </summary>
+    internal SerializationRegistry Registry => registry;
 
     private void EnsureCapacity(int additionalBytes)
     {
@@ -64,27 +70,6 @@ internal sealed class DataOutput(SerializationRegistry registry, IPool? pool = n
         Array.Copy(_bytes, newBytes, _writtenCount);
         ArrayPool<byte>.Shared.Return(_bytes);
         _bytes = newBytes;
-    }
-
-    /// <summary>
-    /// Private nested-encode dispatch. Mirrors cppcache
-    /// <c>DataOutput::writeObjectInternal</c> ??    /// <c>getSerializationRegistry().serialize(ptr, *this, isDelta)</c>.
-    /// </summary>
-    private void WriteObjectInternal(object? value, bool isDelta)
-    {
-        // isDelta is Phase 4 (delta propagation) — accepted now for
-        // cppcache shape parity but not yet implementable.
-        if (isDelta)
-        {
-            throw new NotImplementedException(
-                "Delta-encoded writeObject (Phase 4) not yet implemented.");
-        }
-
-        // SerializationRegistry.WriteObject takes DataOutput;
-        // DataOutput is IBufferWriter<byte>, so wrap-as-adapter here.
-        // When SerializationRegistry gets a native DataOutput overload,
-        // this can pass `this` directly.
-        registry.WriteObject(this, value, depth: 0);
     }
 
     public void Advance(int count)
@@ -300,14 +285,6 @@ internal sealed class DataOutput(SerializationRegistry registry, IPool? pool = n
         _position += byteLen;
         if (_position > _writtenCount) _writtenCount = _position;
     }
-
-    /// <summary>
-    /// Encode <paramref name="value"/> via the cache's
-    /// <c>SerializationRegistry</c>. Mirrors cppcache
-    /// <c>DataOutput::writeObject(Serializable*, bool isDelta)</c>.
-    /// </summary>
-    public void WriteObject(object? value, bool isDelta = false) =>
-        WriteObjectInternal(value, isDelta);
 
     public void WriteSByte(sbyte value) => WriteByte((byte)value);
 

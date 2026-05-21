@@ -45,11 +45,8 @@ internal sealed class DateTimeDataConverter : DataConverter<DateTime>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(DataOutput writer, DateTime value, byte dsCode, int depth)
+    public override ValueTask WriteAsync(DataOutput writer, DateTime value, byte dsCode, int depth, CancellationToken ct)
     {
-        // Three-way Kind handling. Unspecified is rejected because
-        // .NET's ToUniversalTime silently assumes Local, which would
-        // make the wire bytes depend on the runtime's local timezone.
         var utc = value.Kind switch
         {
             DateTimeKind.Utc => value,
@@ -63,11 +60,9 @@ internal sealed class DateTimeDataConverter : DataConverter<DateTime>
                 nameof(value)),
             _ => throw new ArgumentOutOfRangeException(nameof(value)),
         };
-
-        // Truncate to ms ??matches DateTimeOffset.ToUnixTimeMilliseconds
-        // and avoids the clicache "round to nearest ms" quirk.
         long ms = (utc - DateTime.UnixEpoch).Ticks / TimeSpan.TicksPerMillisecond;
         writer.WriteInt64(ms);
+        return ValueTask.CompletedTask;
     }
 
     public override DateTime Read(BigEndianBinaryReader reader, byte dsCode, int depth)

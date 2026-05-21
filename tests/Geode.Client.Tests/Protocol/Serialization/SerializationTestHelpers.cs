@@ -56,9 +56,15 @@ internal static class SerializationTestHelpers
     /// </summary>
     public static byte[] Encode(object value)
     {
+        // Test-only sync facade. Production callers all go through
+        // WriteObjectAsync; this helper blocks because xUnit assertion
+        // sites are convenient when sync. The async path never actually
+        // awaits anything for non-PDX values (built-in converters do CPU
+        // work and return CompletedTask), so no deadlock risk here.
         var sp = BuildSp();
         using var writer = ActivatorUtilities.CreateInstance<DataOutput>(sp);
-        sp.GetRequiredService<SerializationRegistry>().WriteObject(writer, value);
+        sp.GetRequiredService<SerializationRegistry>()
+            .WriteObjectAsync(writer, value).AsTask().GetAwaiter().GetResult();
         return writer.WrittenSpan.ToArray();
     }
 

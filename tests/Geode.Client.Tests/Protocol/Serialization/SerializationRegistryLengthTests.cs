@@ -31,28 +31,27 @@ public class SerializationRegistryLengthTests
     // ── Primitive array (CacheScopeContext-direct path) ────────
 
     [Fact]
-    public void Int32Array_write_at_limit_succeeds()
+    public async Task Int32Array_write_at_limit_succeeds()
     {
-        // maxArrayLength=3, int[3] — inclusive bound, exact-fit OK.
         var registry = SerializationTestHelpers.CreateRegistry(maxArrayLength: 3);
         using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
-        registry.WriteObject(writer, new[] { 1, 2, 3 });
+        await registry.WriteObjectAsync(writer, new[] { 1, 2, 3 }, ct: TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(writer.WrittenSpan.ToArray());
     }
 
     [Fact]
-    public void Int32Array_write_over_limit_throws_InvalidOperationException()
+    public async Task Int32Array_write_over_limit_throws_InvalidOperationException()
     {
         var registry = SerializationTestHelpers.CreateRegistry(maxArrayLength: 3);
         using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => registry.WriteObject(writer, new[] { 1, 2, 3, 4 }));
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await registry.WriteObjectAsync(writer, new[] { 1, 2, 3, 4 }, ct: TestContext.Current.CancellationToken));
         Assert.Contains("MaxArrayLength", ex.Message);
-        Assert.Contains("4", ex.Message);     // actual length
-        Assert.Contains("3", ex.Message);     // configured limit
+        Assert.Contains("4", ex.Message);
+        Assert.Contains("3", ex.Message);
     }
 
     [Fact]
@@ -77,15 +76,13 @@ public class SerializationRegistryLengthTests
     // ── Collection (registry-snapshot path) ────────────────────
 
     [Fact]
-    public void List_write_over_limit_throws_InvalidOperationException()
+    public async Task List_write_over_limit_throws_InvalidOperationException()
     {
-        // Same limit reaches via _registry.MaxArrayLength inside
-        // ListDataConverter — different injection path, same behaviour.
         var registry = SerializationTestHelpers.CreateRegistry(maxArrayLength: 3);
         using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => registry.WriteObject(writer, new List<int> { 1, 2, 3, 4 }));
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await registry.WriteObjectAsync(writer, new List<int> { 1, 2, 3, 4 }, ct: TestContext.Current.CancellationToken));
         Assert.Contains("MaxArrayLength", ex.Message);
     }
 
@@ -106,29 +103,26 @@ public class SerializationRegistryLengthTests
     // ── byte[] (separate MaxBytesLength) ───────────────────────
 
     [Fact]
-    public void Bytes_uses_MaxBytesLength_not_MaxArrayLength()
+    public async Task Bytes_uses_MaxBytesLength_not_MaxArrayLength()
     {
-        // maxArrayLength=3 (would reject a 5-element int[]) but
-        // maxBytesLength=10 — byte[5] should succeed under the bytes
-        // limit. Proves the limits are wired to distinct converters.
         var registry = SerializationTestHelpers.CreateRegistry(
             maxArrayLength: 3,
             maxBytesLength: 10);
         using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
-        registry.WriteObject(writer, new byte[] { 1, 2, 3, 4, 5 });
+        await registry.WriteObjectAsync(writer, new byte[] { 1, 2, 3, 4, 5 }, ct: TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(writer.WrittenSpan.ToArray());
     }
 
     [Fact]
-    public void Bytes_write_over_limit_throws_InvalidOperationException()
+    public async Task Bytes_write_over_limit_throws_InvalidOperationException()
     {
         var registry = SerializationTestHelpers.CreateRegistry(maxBytesLength: 4);
         using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => registry.WriteObject(writer, new byte[] { 1, 2, 3, 4, 5 }));
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await registry.WriteObjectAsync(writer, new byte[] { 1, 2, 3, 4, 5 }, ct: TestContext.Current.CancellationToken));
         Assert.Contains("MaxBytesLength", ex.Message);
     }
 
@@ -150,25 +144,23 @@ public class SerializationRegistryLengthTests
     // ── String (MaxStringLength, multi-DSCode) ─────────────────
 
     [Fact]
-    public void String_write_over_limit_throws_InvalidOperationException()
+    public async Task String_write_over_limit_throws_InvalidOperationException()
     {
-        // "abcd" = 4 chars > maxStringLength=3
         var registry = SerializationTestHelpers.CreateRegistry(maxStringLength: 3);
         using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => registry.WriteObject(writer, "abcd"));
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await registry.WriteObjectAsync(writer, "abcd", ct: TestContext.Current.CancellationToken));
         Assert.Contains("MaxStringLength", ex.Message);
     }
 
     [Fact]
-    public void String_at_limit_succeeds()
+    public async Task String_at_limit_succeeds()
     {
-        // "abc" = 3 chars, exact fit at maxStringLength=3
         var registry = SerializationTestHelpers.CreateRegistry(maxStringLength: 3);
         using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
-        registry.WriteObject(writer, "abc");
+        await registry.WriteObjectAsync(writer, "abc", ct: TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(writer.WrittenSpan.ToArray());
     }

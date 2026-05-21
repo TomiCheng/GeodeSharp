@@ -12,8 +12,11 @@ internal sealed class BooleanDataConverter : DataConverter<bool>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(DataOutput writer, bool value, byte dsCode, int depth) =>
+    public override ValueTask WriteAsync(DataOutput writer, bool value, byte dsCode, int depth, CancellationToken ct)
+    {
         writer.WriteByte(value ? (byte)1 : (byte)0);
+        return ValueTask.CompletedTask;
+    }
 
     public override bool Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>
         reader.ReadByte() != 0;

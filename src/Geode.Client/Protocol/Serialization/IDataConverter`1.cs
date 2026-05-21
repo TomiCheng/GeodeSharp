@@ -15,13 +15,6 @@ internal interface IDataConverter<T> : IDataConverter
     /// </summary>
     byte GetDsCode(T value);
 
-    /// <summary>
-    /// Typed counterpart to
-    /// <see cref="IDataConverter.Write(DataOutput, object, byte, int)"/>;
-    /// no boxing.
-    /// </summary>
-    void Write(DataOutput writer, T value, byte dsCode, int depth);
-
     /// <summary>Typed async 版,no boxing。</summary>
     ValueTask WriteAsync(DataOutput writer, T value, byte dsCode, int depth, CancellationToken ct);
 

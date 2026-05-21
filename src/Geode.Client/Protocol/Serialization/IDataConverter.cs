@@ -88,46 +88,17 @@ internal interface IDataConverter
     byte GetDsCode(object value);
 
     /// <summary>
-    /// Write <paramref name="value"/>'s payload to
-    /// <paramref name="writer"/>. The DSCode byte is NOT written here
-    /// ??the registry writes it before delegating in, then passes the
-    /// byte back as <paramref name="dsCode"/> so multi-DSCode
-    /// converters can branch without re-scanning the value.
+    /// Write <paramref name="value"/>'s payload to <paramref name="writer"/>.
+    /// The DSCode byte is NOT written here — the registry writes it
+    /// before delegating in, then passes the byte back as
+    /// <paramref name="dsCode"/> so multi-DSCode converters can branch.
     /// </summary>
-    /// <param name="value">
-    /// Boxed instance of <see cref="ManagedType"/>; concrete
-    /// implementations unbox and forward to the generic
-    /// <see cref="IDataConverter{T}.Write(DataOutput, T, byte)"/>.
-    /// </param>
-    /// <param name="dsCode">
-    /// The DSCode the registry just wrote (the return value of an
-    /// earlier <see cref="GetDsCode"/> call on the same value).
-    /// Single-DSCode converters ignore it.
-    /// </param>
     /// <param name="depth">
-    /// Current nesting level ??<c>0</c> at the top-level call, one
-    /// higher per nested container. Scalar / primitive-array
-    /// converters ignore. Container converters MUST forward
-    /// <c>depth + 1</c> when they re-enter
-    /// <see cref="SerializationRegistry.WriteObject"/> for each
-    /// element. The registry refuses payloads where this would exceed
-    /// <c>SerializationRegistry.MaxDepth</c> (default 64; mirrors
-    /// <see cref="System.Text.Json.JsonSerializerOptions.MaxDepth"/>),
-    /// defending against stack-overflow DoS from a malicious /
-    /// pathological object graph.
+    /// Current nesting level — <c>0</c> at the top-level call.
+    /// Container converters MUST forward <c>depth + 1</c> when re-entering
+    /// <see cref="SerializationRegistry.WriteObjectAsync"/>.
     /// </param>
-    void Write(DataOutput writer, object value, byte dsCode, int depth);
-
-    /// <summary>
-    /// Async 版本的 <see cref="Write"/>;default interface method,wrap sync。
-    /// 會 await 的 converter(recursive container 或將來會打 wire op 的 PDX
-    /// 路徑)override 這個方法做真的 async work。
-    /// </summary>
-    ValueTask WriteAsync(DataOutput writer, object value, byte dsCode, int depth, CancellationToken ct)
-    {
-        Write(writer, value, dsCode, depth);
-        return ValueTask.CompletedTask;
-    }
+    ValueTask WriteAsync(DataOutput writer, object value, byte dsCode, int depth, CancellationToken ct);
 
     /// <summary>
     /// Read one payload from <paramref name="reader"/>. The DSCode

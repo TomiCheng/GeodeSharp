@@ -71,34 +71,6 @@ internal sealed class HashSetDataConverter : IDataConverter
 
     public byte GetDsCode(object value) => DSCode.CacheableHashSet;
 
-    public void Write(DataOutput writer, object value, byte dsCode, int depth)
-    {
-        // HashSet<T> doesn't expose non-generic Count via cast; one
-        // scratch pass collects the elements + counts them, second
-        // pass writes them. Trade an O(N) alloc for one extra
-        // enumeration over reflection on the typed Count property.
-        var source = (IEnumerable)value;
-        var items = new List<object?>();
-        foreach (var item in source)
-        {
-            items.Add(item);
-        }
-
-        if (items.Count > _registry.MaxArrayLength)
-        {
-            throw new InvalidOperationException(
-                $"HashSetDataConverter: cannot serialise a set of {items.Count} elements "
-                + $"??exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
-        }
-        writer.WriteArrayLen(items.Count);
-        foreach (var item in items)
-        {
-            // WriteObject handles null ??DSCode.NullObj and dispatches
-            // by per-element runtime type.
-            _registry.WriteObject(writer, item, depth + 1);
-        }
-    }
-
     public async ValueTask WriteAsync(DataOutput writer, object value, byte dsCode, int depth, CancellationToken ct)
     {
         var source = (IEnumerable)value;

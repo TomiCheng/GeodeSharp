@@ -61,27 +61,6 @@ internal sealed class StringArrayDataConverter(SerializationRegistry registry)
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(DataOutput writer, string[] value, byte dsCode, int depth)
-    {
-        if (value.Length > registry.MaxArrayLength)
-        {
-            throw new InvalidOperationException(
-                $"StringArrayDataConverter: cannot serialise an array of {value.Length} elements "
-                + $"??exceeds Serialization.MaxArrayLength ({registry.MaxArrayLength}).");
-        }
-        writer.WriteArrayLen(value.Length);
-        foreach (var element in value)
-        {
-            // WriteObject handles null ??DSCode.NullObj (41) and
-            // picks the correct string DSCode (42 / 87 / 88 / 89)
-            // for non-null elements. depth + 1 propagates the
-            // recursion budget into the registry ??even leaf strings
-            // count, keeping the limit symmetric with container
-            // elements.
-            registry.WriteObject(writer, element, depth + 1);
-        }
-    }
-
     public override async ValueTask WriteAsync(DataOutput writer, string[] value, byte dsCode, int depth, CancellationToken ct)
     {
         if (value.Length > registry.MaxArrayLength)

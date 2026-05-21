@@ -23,19 +23,20 @@ internal sealed class Int32ArrayDataConverter(CacheScopeContext cacheScopeContex
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(DataOutput writer, int[] value, byte dsCode, int depth)
+    public override ValueTask WriteAsync(DataOutput writer, int[] value, byte dsCode, int depth, CancellationToken ct)
     {
         if (value.Length > _maxArrayLength)
         {
             throw new InvalidOperationException(
                 $"Int32ArrayDataConverter: cannot serialise an array of {value.Length} elements "
-                + $"??exceeds Serialization.MaxArrayLength ({_maxArrayLength}).");
+                + $"— exceeds Serialization.MaxArrayLength ({_maxArrayLength}).");
         }
         writer.WriteArrayLen(value.Length);
         foreach (var element in value)
         {
             writer.WriteInt32(element);
         }
+        return ValueTask.CompletedTask;
     }
 
     public override int[] Read(BigEndianBinaryReader reader, byte dsCode, int depth)

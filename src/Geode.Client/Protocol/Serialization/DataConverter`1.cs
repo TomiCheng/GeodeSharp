@@ -29,35 +29,19 @@ internal abstract class DataConverter<T> : IDataConverter<T>
     /// </summary>
     public virtual byte GetDsCode(T value) => DsCodes[0];
 
-    public abstract void Write(DataOutput writer, T value, byte dsCode, int depth);
+    public abstract ValueTask WriteAsync(DataOutput writer, T value, byte dsCode, int depth, CancellationToken ct);
 
     public abstract T? Read(BigEndianBinaryReader reader, byte dsCode, int depth);
-
-    /// <summary>
-    /// 預設:跑 sync <see cref="Write"/> 然後回 completed task。Recursive
-    /// container converter 或將來會 await wire op 的 converter override。
-    /// </summary>
-    public virtual ValueTask WriteAsync(DataOutput writer, T value, byte dsCode, int depth, CancellationToken ct)
-    {
-        Write(writer, value, dsCode, depth);
-        return ValueTask.CompletedTask;
-    }
 
     /// <summary>預設:跑 sync <see cref="Read"/> 包成 <see cref="ValueTask{TResult}"/>。</summary>
     public virtual ValueTask<T?> ReadAsync(BigEndianBinaryReader reader, byte dsCode, int depth, CancellationToken ct) =>
         ValueTask.FromResult(Read(reader, dsCode, depth));
 
-    // ?�?� Bridges to the non-generic interface ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
-    // The registry calls these overloads, never the typed ones
-    // directly. The casts are safe because the registry looks codecs
-    // up by ManagedType (encode) / DsCodes (decode). `depth` rides
-    // through unchanged ??the registry already does the limit check
-    // before calling in; this layer just forwards.
+    // Bridges to the non-generic interface — registry holds IDataConverter,
+    // dispatches via these overloads. Casts are safe because the registry
+    // looks codecs up by ManagedType / DsCodes.
     byte IDataConverter.GetDsCode(object value) =>
         GetDsCode((T)value);
-
-    void IDataConverter.Write(DataOutput writer, object value, byte dsCode, int depth) =>
-        Write(writer, (T)value, dsCode, depth);
 
     object? IDataConverter.Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>
         Read(reader, dsCode, depth);

@@ -76,29 +76,6 @@ internal sealed class DictionaryDataConverter : IDataConverter
 
     public byte GetDsCode(object value) => DSCode.CacheableHashMap;
 
-    public void Write(DataOutput writer, object value, byte dsCode, int depth)
-    {
-        // Dictionary<K,V> implements non-generic IDictionary (and
-        // therefore non-generic ICollection with Count) ??unlike
-        // HashSet<T>, no scratch list needed.
-        var source = (IDictionary)value;
-        if (source.Count > _registry.MaxArrayLength)
-        {
-            throw new InvalidOperationException(
-                $"DictionaryDataConverter: cannot serialise a map of {source.Count} entries "
-                + $"??exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
-        }
-        writer.WriteArrayLen(source.Count);
-        foreach (DictionaryEntry entry in source)
-        {
-            // Key first, value second ??interleaved per cppcache's
-            // writeObject(iter.first) / writeObject(iter.second).
-            // depth + 1 propagates the recursion budget per slot.
-            _registry.WriteObject(writer, entry.Key, depth + 1);
-            _registry.WriteObject(writer, entry.Value, depth + 1);
-        }
-    }
-
     public async ValueTask WriteAsync(DataOutput writer, object value, byte dsCode, int depth, CancellationToken ct)
     {
         var source = (IDictionary)value;

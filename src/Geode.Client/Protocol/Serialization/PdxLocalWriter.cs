@@ -36,7 +36,10 @@ internal class PdxLocalWriter(IServiceProvider serviceProvider)
     /// 拿 <c>m_pdxType</c> 的動作 — 我們蒐 field 在 base 做,所以這裡幫子類
     /// 把它取出來。
     /// </summary>
-    protected PdxType BuildSchema(string className) => new(className, _fields);
+    protected PdxType BuildSchema(string className)
+    {
+        return ActivatorUtilities.CreateInstance<PdxType>(serviceProvider, className, _fields);
+    }
     private readonly StringDataConverter _stringConverter = new(serviceProvider.GetRequiredService<CacheScopeContext>());
 
     public IPdxWriter WriteBoolean(string fieldName, bool value)
@@ -136,10 +139,14 @@ internal class PdxLocalWriter(IServiceProvider serviceProvider)
 
         // Reuse Phase 1's StringDataConverter so max-length, DSCode
         // selection (ASCII / huge / mod UTF-8 / UTF-16) and payload
-        // encoding stay symmetric with non-PDX strings.
+        // encoding stay symmetric with non-PDX strings。IPdxWriter 是 sync
+        // 介面(user ToData 不會 await),而 StringDataConverter 在
+        // async 化之後只剩 WriteAsync;但 string encoding 純 CPU、不會真
+        // await,所以這裡 block 一下是 no-op。
         var dsCode = _stringConverter.GetDsCode(value);
         _output.WriteByte(dsCode);
-        _stringConverter.Write(_output, value, dsCode, depth: 0);
+        _stringConverter.WriteAsync(_output, value, dsCode, depth: 0, ct: default)
+            .AsTask().GetAwaiter().GetResult();
         return this;
     }
 
@@ -214,5 +221,9 @@ internal class PdxLocalWriter(IServiceProvider serviceProvider)
         _fields.Add(new PdxField(name, type, Index: _fields.Count, IsFixedSize: true));
 
     private void AddVarLenField(string name, PdxFieldType type) =>
-        _fields.Add(new PdxField(name, type, Index: _fields.Count, IsFixedSize: false));
+        _fields.Add(new PdxField(
+            name, type, Index: _fields.Count, IsFixedSize: false,
+            // _varLenOffsets is appended to BEFORE this call (see WriteString),
+            // so Count-1 = the slot id just claimed for this field.
+            VarLenFieldIdx: _varLenOffsets.Count - 1));
 }

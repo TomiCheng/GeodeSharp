@@ -55,25 +55,6 @@ internal sealed class LinkedListDataConverter : IDataConverter
 
     public byte GetDsCode(object value) => DSCode.CacheableLinkedList;
 
-    public void Write(DataOutput writer, object value, byte dsCode, int depth)
-    {
-        // LinkedList<T> implements non-generic ICollection ??Count
-        // is O(1), no scratch list needed (unlike HashSet<T>).
-        // foreach yields head?�tail, matching the cppcache wire order.
-        var source = (ICollection)value;
-        if (source.Count > _registry.MaxArrayLength)
-        {
-            throw new InvalidOperationException(
-                $"LinkedListDataConverter: cannot serialise a list of {source.Count} elements "
-                + $"??exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
-        }
-        writer.WriteArrayLen(source.Count);
-        foreach (var item in source)
-        {
-            _registry.WriteObject(writer, item, depth + 1);
-        }
-    }
-
     public async ValueTask WriteAsync(DataOutput writer, object value, byte dsCode, int depth, CancellationToken ct)
     {
         var source = (ICollection)value;

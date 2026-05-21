@@ -9,14 +9,7 @@ namespace Geode.Client.Protocol.Serialization;
 internal sealed class PdxWriterWithTypeCollector(IServiceProvider serviceProvider, string className)
     : PdxLocalWriter(serviceProvider)
 {
-    // cppcache PdxWriterWithTypeCollector ctor 帶 className 進來,塞到
-    // m_pdxClassName。我們先把 className 留著,後面 Step A.3 / A.7 採集 schema
-    // 跟 register 到 PdxTypeRegistry 時都會用到。
-    public string ClassName { get; } = className;
+    public string ClassName => className;
 
-    /// <summary>
-    /// 把 user ToData 期間蒐集到的 field list 包成 <see cref="PdxType"/>。
-    /// 對應 cppcache <c>PdxWriterWithTypeCollector::getPdxLocalType()</c>。
-    /// </summary>
-    public PdxType GetPdxLocalType() => BuildSchema(ClassName);
+    public PdxType GetPdxLocalType() => BuildSchema(className);
 }

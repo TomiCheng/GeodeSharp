@@ -132,43 +132,37 @@ internal sealed class StringDataConverter(CacheScopeContext cacheScopeContext)
             : DSCode.CacheableASCIIString;          // 87 ??ASCII short
     }
 
-    public override void Write(DataOutput writer, string value, byte dsCode, int depth)
+    public override ValueTask WriteAsync(DataOutput writer, string value, byte dsCode, int depth, CancellationToken ct)
     {
-        // Top-level cap covers all four DSCode branches. Unit differs
-        // (chars for 87/88/89, modified-UTF-8 bytes for 42), but the
-        // configured limit is one number applied uniformly ??caller
-        // can tune up if a legitimate workload needs longer payloads.
         if (value.Length > _maxStringLength)
         {
             throw new InvalidOperationException(
                 $"StringDataConverter: cannot serialise a string of {value.Length} chars "
-                + $"??exceeds Serialization.MaxStringLength ({_maxStringLength}).");
+                + $"— exceeds Serialization.MaxStringLength ({_maxStringLength}).");
         }
         switch (dsCode)
         {
             case DSCode.CacheableASCIIString:
                 writer.WriteUInt16((ushort)value.Length);
                 WriteAsciiBytes(writer, value);
-                return;
+                break;
 
             case DSCode.CacheableASCIIStringHuge:
                 writer.WriteInt32(value.Length);
                 WriteAsciiBytes(writer, value);
-                return;
+                break;
 
             case DSCode.CacheableString:
-                // WriteJavaModifiedUtf8 emits its own u16 byte-length
-                // prefix + the modified-UTF-8 payload.
                 writer.WriteJavaModifiedUtf8(value);
-                return;
+                break;
 
             case DSCode.CacheableStringHuge:
-                writer.WriteInt32(value.Length);    // char count, NOT byte count
+                writer.WriteInt32(value.Length);
                 foreach (var c in value)
                 {
                     writer.WriteUInt16(c);
                 }
-                return;
+                break;
 
             default:
                 throw new ArgumentOutOfRangeException(
@@ -177,6 +171,7 @@ internal sealed class StringDataConverter(CacheScopeContext cacheScopeContext)
                     $"StringDataConverter cannot write payload for DSCode {dsCode}; " +
                     $"GetDsCode only emits 42 / 87 / 88 / 89.");
         }
+        return ValueTask.CompletedTask;
     }
 
     public override string? Read(BigEndianBinaryReader reader, byte dsCode, int depth)

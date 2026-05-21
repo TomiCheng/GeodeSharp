@@ -31,19 +31,20 @@ internal sealed class CharArrayDataConverter(CacheScopeContext cacheScopeContext
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(DataOutput writer, char[] value, byte dsCode, int depth)
+    public override ValueTask WriteAsync(DataOutput writer, char[] value, byte dsCode, int depth, CancellationToken ct)
     {
         if (value.Length > _maxArrayLength)
         {
             throw new InvalidOperationException(
                 $"CharArrayDataConverter: cannot serialise an array of {value.Length} elements "
-                + $"??exceeds Serialization.MaxArrayLength ({_maxArrayLength}).");
+                + $"— exceeds Serialization.MaxArrayLength ({_maxArrayLength}).");
         }
         writer.WriteArrayLen(value.Length);
         foreach (var element in value)
         {
             writer.WriteUInt16(element);
         }
+        return ValueTask.CompletedTask;
     }
 
     public override char[] Read(BigEndianBinaryReader reader, byte dsCode, int depth)

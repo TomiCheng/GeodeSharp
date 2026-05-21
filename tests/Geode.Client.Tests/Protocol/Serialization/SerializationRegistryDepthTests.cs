@@ -23,7 +23,7 @@ public class SerializationRegistryDepthTests
     // ── Write side ─────────────────────────────────────────────
 
     [Fact]
-    public void Write_within_depth_budget_succeeds()
+    public async Task Write_within_depth_budget_succeeds()
     {
         // MaxDepth=3 leaves room for depths 0, 1, 2. List<List<int>>
         // uses depth 0 (outer), 1 (inner List), 2 (int element) — all
@@ -32,52 +32,43 @@ public class SerializationRegistryDepthTests
         var value = new List<List<int>> { new() { 1, 2 } };
         using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
-        registry.WriteObject(writer, value);
+        await registry.WriteObjectAsync(writer, value, ct: TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(writer.WrittenSpan.ToArray());
     }
 
     [Fact]
-    public void Write_exceeding_max_depth_throws_InvalidOperationException()
+    public async Task Write_exceeding_max_depth_throws_InvalidOperationException()
     {
-        // MaxDepth=2: List<List<int>> hits depth=2 when the int element
-        // tries to enter the registry (2 >= 2 → fail). Caller bug
-        // (cycle / pathological graph) → InvalidOperationException
-        // rather than GeodeException.
         var registry = SerializationTestHelpers.CreateRegistry(maxDepth: 2);
         var value = new List<List<int>> { new() { 1 } };
         using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => registry.WriteObject(writer, value));
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await registry.WriteObjectAsync(writer, value, ct: TestContext.Current.CancellationToken));
         Assert.Contains("MaxDepth", ex.Message);
-        Assert.Contains("2", ex.Message);    // the configured limit
+        Assert.Contains("2", ex.Message);
     }
 
     [Fact]
-    public void Write_top_level_scalar_at_max_depth_one_succeeds()
+    public async Task Write_top_level_scalar_at_max_depth_one_succeeds()
     {
-        // MaxDepth=1 admits exactly one entry: the top-level call at
-        // depth 0. Scalars don't recurse, so 0 >= 1 is false and the
-        // write completes.
         var registry = SerializationTestHelpers.CreateRegistry(maxDepth: 1);
         using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
-        registry.WriteObject(writer, 42);
+        await registry.WriteObjectAsync(writer, 42, ct: TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(writer.WrittenSpan.ToArray());
     }
 
     [Fact]
-    public void Write_any_container_at_max_depth_one_throws()
+    public async Task Write_any_container_at_max_depth_one_throws()
     {
-        // MaxDepth=1: even a flat List<int> fails because each element
-        // re-enters the registry at depth 1 (1 >= 1).
         var registry = SerializationTestHelpers.CreateRegistry(maxDepth: 1);
         using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
 
-        Assert.Throws<InvalidOperationException>(
-            () => registry.WriteObject(writer, new List<int> { 1 }));
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await registry.WriteObjectAsync(writer, new List<int> { 1 }, ct: TestContext.Current.CancellationToken));
     }
 
     // ── Read side ──────────────────────────────────────────────
@@ -155,15 +146,12 @@ public class SerializationRegistryDepthTests
     // ── Symmetry: encode at the limit feeds decode at the same limit ──
 
     [Fact]
-    public void Encode_then_decode_round_trips_at_the_exact_limit()
+    public async Task Encode_then_decode_round_trips_at_the_exact_limit()
     {
-        // MaxDepth=3, write List<List<int>>{ {7} }, read it back —
-        // both directions hit max depth=2 (int element entry), which
-        // is still allowed.
         var registry = SerializationTestHelpers.CreateRegistry(maxDepth: 3);
 
         using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
-        registry.WriteObject(writer, new List<List<int>> { new() { 7 } });
+        await registry.WriteObjectAsync(writer, new List<List<int>> { new() { 7 } }, ct: TestContext.Current.CancellationToken);
 
         var reader = new BigEndianBinaryReader(writer.WrittenSpan.ToArray());
         var result = registry.ReadObject(reader);

@@ -9,8 +9,9 @@ internal sealed class SerializationRegistry
 {
     private readonly Dictionary<byte, IDataConverter> _byDsCode = [];
     private readonly Dictionary<Type, IDataConverter> _byType = [];
-    private readonly ObjectFactory<PdxLocalWriter> _pdxLocalWriterFactory;
     private readonly ObjectFactory<PdxWriterWithTypeCollector> _pdxWriterWithTypeCollectorFactory;
+    private readonly ObjectFactory<PdxRemoteWriter> _pdxRemoteWriterByClassNameFactory;
+    private readonly ObjectFactory<PdxRemoteWriter> _pdxRemoteWriterByPdxTypeFactory;
     private readonly PdxTypeRegistry _pdxTypeRegistry;
     private readonly CacheScopeContext _scopeContext;
     private readonly IServiceProvider _serviceProvider;
@@ -26,8 +27,9 @@ internal sealed class SerializationRegistry
         _typeRegistry = typeRegistry;
         _pdxTypeRegistry = pdxTypeRegistry;
         _scopeContext = scopeContext;
-        _pdxLocalWriterFactory = ActivatorUtilities.CreateFactory<PdxLocalWriter>([]);
         _pdxWriterWithTypeCollectorFactory = ActivatorUtilities.CreateFactory<PdxWriterWithTypeCollector>([typeof(string)]);
+        _pdxRemoteWriterByClassNameFactory = ActivatorUtilities.CreateFactory<PdxRemoteWriter>([typeof(string)]);
+        _pdxRemoteWriterByPdxTypeFactory = ActivatorUtilities.CreateFactory<PdxRemoteWriter>([typeof(PdxType), typeof(PdxRemotePreservedData)]);
 
         RegisterBuiltInConverters();
     }
@@ -96,75 +98,6 @@ internal sealed class SerializationRegistry
         Register(new StackDataConverter(this));       // 74  CacheableStack      ??Stack<T>
     }
 
-
-    private bool TryWriteBuiltIn(DataOutput writer, object value, Type type, int depth)
-    {
-        if (!_byType.TryGetValue(type, out var converter) && type.IsGenericType)
-        {
-            _byType.TryGetValue(type.GetGenericTypeDefinition(), out converter);
-        }
-
-        if (converter is null) return false;
-
-        var dsCode = converter.GetDsCode(value);
-        writer.WriteByte(dsCode);
-        converter.Write(writer, value, dsCode, depth);
-        return true;
-    }
-
-    private bool TryWritePdx(DataOutput writer, object value, Type type)
-    {
-        if (!_typeRegistry.TryGetEntry(type, out var entry)) return false;
-        var localPdxType = _pdxTypeRegistry.GetLocalPdxType(entry.ClassName);
-        if (localPdxType is null)
-        {
-            // Step A:className 在本地 registry「沒看過」(第一次序列化)
-            // A.1 ✓ — new PdxWriterWithTypeCollector(output, className, registry)
-            using var ptc = _pdxWriterWithTypeCollectorFactory(_serviceProvider, [entry.ClassName]);
-            // A.2 ✓ — entry.Write(value, ptc):跑 user ToData,base PdxLocalWriter
-            //        的 WriteXxx 會把 field 順手蒐進 _fields(對應 cppcache
-            //        WithTypeCollector::writeXxx 裡的 m_pdxType->addXxxField)。
-            entry.Write(value, ptc);
-            // A.3 ✓ — 把採集到的 schema 取出來,叫它算 field 對照表
-            var nType = ptc.GetPdxLocalType();
-            nType.Initialize();
-            //   4. nTypeId = registry.GetPdxIdForType(className, pool, nType, true)
-            //      — 同步 wire op,跟 server 拿 / 配 typeId
-            //   5. nType.SetTypeId(nTypeId)
-            //   6. ptc.EndObjectWriting() — 補 typeId / 計長度
-            //   7. registry.AddLocalPdxType(className, nType)
-            //              .AddPdxType(nTypeId, nType)
-        }
-        else
-        {
-            // Step B:本地已有 localPdxType(第二次以後)
-            //   cppcache 註解:「now always remotewriter as we have API
-            //   Read/WriteUnreadFields」— 不管物件身上有沒有 preserved data,
-            //   都走 PdxRemoteWriter。
-            //   1. preservedData = registry.GetPreserveData(value)
-            //   2. if preservedData != null:
-            //        mergedPdxType = registry.GetPdxType(preservedData.MergedTypeId)
-            //        prw = new PdxRemoteWriter(output, mergedPdxType, preservedData, registry)
-            //      else:
-            //        prw = new PdxRemoteWriter(output, className, registry)
-            //   3. entry.Write(value, prw)
-            //   4. prw.EndObjectWriting()
-        }
-
-        // 目前暫行作法(Phase 2.1 walking skeleton):一路只用 PdxLocalWriter,
-        // schema 直接呼叫 Build() 收回來丟 PdxTypeRegistry.ResolveTypeId。
-        // 等 Step A / Step B 前置缺口補齊之後,上面 if/else 才會接管。
-        //using var localWriter = _pdxLocalWriterFactory(_serviceProvider, []);
-        //entry.Write(value, localWriter);
-        //var (schema, payload) = localWriter.Build(entry.ClassName);
-        //var typeId = _pdxTypeRegistry.ResolveTypeId(schema);
-
-        //writer.WriteByte(DSCode.PDX);
-        //writer.WriteInt32(payload.Length + sizeof(int));
-        //writer.WriteInt32(typeId);
-        //writer.WriteBytesOnly(payload);
-        return true;
-    }
 
     internal int MaxArrayLength => _scopeContext.Options.Serialization.MaxArrayLength;
 
@@ -245,6 +178,25 @@ internal sealed class SerializationRegistry
         return true;
     }
 
+    /// <summary>
+    /// Encode <paramref name="value"/> as a PDX wire frame. Returns
+    /// <see langword="false"/> when <paramref name="type"/> isn't registered
+    /// as PDX (caller falls through to the unsupported-type throw).
+    /// Mirror of cppcache <c>PdxHelper::serializePdx</c>
+    /// (<c>PdxHelper.cpp:87</c>).
+    /// </summary>
+    /// <remarks>
+    /// Two branches keyed on whether the className has been collected
+    /// locally before:
+    /// <list type="bullet">
+    ///   <item><b>Step A</b> (first time): collect schema via
+    ///         <see cref="PdxWriterWithTypeCollector"/>, round-trip to
+    ///         server for typeId, cache both, emit frame.</item>
+    ///   <item><b>Step B</b> (subsequent): reuse the cached schema/typeId
+    ///         via <see cref="PdxRemoteWriter"/>; ctor form depends on
+    ///         whether the value carries preserved unread fields.</item>
+    /// </list>
+    /// </remarks>
     private async ValueTask<bool> TryWritePdxAsync(DataOutput writer, object value, Type type, CancellationToken ct)
     {
         if (!_typeRegistry.TryGetEntry(type, out var entry)) return false;
@@ -252,50 +204,82 @@ internal sealed class SerializationRegistry
         var localPdxType = _pdxTypeRegistry.GetLocalPdxType(entry.ClassName);
         if (localPdxType is null)
         {
-            // Step A:className 在本地 registry「沒看過」(第一次序列化)
-            // A.1 ✓ — new PdxWriterWithTypeCollector(output, className, registry)
             using var ptc = _pdxWriterWithTypeCollectorFactory(_serviceProvider, [entry.ClassName]);
-            // A.2 ✓ — entry.Write(value, ptc):跑 user ToData,base PdxLocalWriter
-            //        的 WriteXxx 會把 field 順手蒐進 _fields。
             entry.Write(value, ptc);
-            // A.3 ✓ — 把採集到的 schema 取出來,叫它算 field 對照表
             var nType = ptc.GetPdxLocalType();
             nType.Initialize();
-            // A.4 ✓ — 跟 server 拿 / 配 typeId(對齊 cppcache
-            //        PdxTypeRegistry::getPDXIdForType,內部會打
-            //        GET_PDX_ID_FOR_TYPE wire op 並把結果 cache 起來)。
-            //        pool 從 DataOutput 帶下來(對齊 cppcache
-            //        DataOutputInternal::getPool(output))。
+
+            // A.4 Round-trip to the server to get a cluster-wide typeId.
+            //     pool comes from the DataOutput (mirror cppcache
+            //     DataOutputInternal::getPool).
             var nTypeId = await _pdxTypeRegistry.GetPdxIdForTypeAsync(
                 className: entry.ClassName,
                 pool: writer.Pool,
                 nType: nType,
                 checkIfThere: true,
                 ct: ct);
-            // A.5 ✓ — typeId 寫回 schema(對齊 cppcache nType->setTypeId(typeId);
-            //        PdxType.TypeId 是 { get; set; },等效 setter)。
+
+            // A.5 Stamp typeId onto the schema.
             nType.TypeId = nTypeId;
-            // A.6 ✓ — 把採集到的 field-data payload(field bytes + offset
-            //        table)收回來,加上 PDX wire header(DSCode + length +
-            //        typeId)寫到外層 DataOutput。
-            //        對齊 cppcache PdxWriterWithTypeCollector::endObjectWriting
-            //        → PdxLocalWriter::writePdxHeader,但我們把 header
-            //        framing 放在外層而非 writer 內部 buffer。
+
+            // A.6 Emit the PDX wire frame: DSCode + length + typeId + payload.
+            //     Length covers typeId + payload (cppcache PdxLocalWriter::
+            //     writePdxHeader convention).
             var payload = ptc.BuildPayload();
             writer.WriteByte(DSCode.PDX);
-            writer.WriteInt32(payload.Length + sizeof(int));   // length 含 typeId 那 4 bytes
+            writer.WriteInt32(payload.Length + sizeof(int));
             writer.WriteInt32(nTypeId);
             writer.WriteBytesOnly(payload);
-            // A.7 ✓ — 把這個 schema 灌進兩個 cache(下一次同 className 走到
-            //        TryWritePdxAsync 就會 GetLocalPdxType 命中,改走 Step B
-            //        的 PdxRemoteWriter,不再打 wire op)。對齊 cppcache
-            //        registry.addLocalPdxType / registry.addPdxType。
+
+            // A.7 Cache the schema in both maps so the next call hits
+            //     Step B (no wire op).
             _pdxTypeRegistry.AddLocalPdxType(entry.ClassName, nType);
             _pdxTypeRegistry.AddPdxType(nTypeId, nType);
         }
         else
         {
-            // Step B:本地已有 localPdxType — 走 PdxRemoteWriter,尚未實作。
+            // Step B — schema cached. cppcache always picks PdxRemoteWriter
+            // here because WriteUnreadFields is part of the public API; we
+            // can't tell upfront whether the user will use it.
+
+            // B.1 Look up unread-field bytes preserved from a prior
+            //     deserialize. null is the common case.
+            var preservedData = _pdxTypeRegistry.GetPreserveData(value);
+
+            // B.2 Two PdxRemoteWriter ctor forms (cppcache PdxHelper.cpp:128).
+            PdxRemoteWriter prw;
+            if (preservedData is not null)
+            {
+                var mergedPdxType = _pdxTypeRegistry.GetPdxType(preservedData.MergedTypeId)
+                    ?? throw new GeodeException(
+                        $"PdxTypeRegistry: merged typeId {preservedData.MergedTypeId} " +
+                        $"referenced by preserved data is not in the by-typeId cache.");
+                prw = _pdxRemoteWriterByPdxTypeFactory(_serviceProvider, [mergedPdxType, preservedData]);
+            }
+            else
+            {
+                prw = _pdxRemoteWriterByClassNameFactory(_serviceProvider, [entry.ClassName]);
+            }
+
+            using (prw)
+            {
+                // B.3 Run user ToData; PdxLocalWriter emits the field
+                //     bytes against the existing schema.
+                // TODO: cppcache PdxRemoteWriter overrides each WriteXxx
+                //       to splice in preservedData's unread bytes — wire
+                //       that up once WriteUnreadFields lands.
+                entry.Write(value, prw);
+
+                // B.4 Same frame layout as A.6; typeId picks the merged
+                //     schema when preserved data is present, otherwise the
+                //     local one.
+                var schema = prw.MergedPdxType ?? localPdxType;
+                var payload = prw.BuildPayload();
+                writer.WriteByte(DSCode.PDX);
+                writer.WriteInt32(payload.Length + sizeof(int));
+                writer.WriteInt32(schema.TypeId);
+                writer.WriteBytesOnly(payload);
+            }
         }
 
         return true;
@@ -332,29 +316,4 @@ internal sealed class SerializationRegistry
         throw new GeodeException($"SerializationRegistry: unknown DSCode {dsCode} on the wire.");
     }
 
-    public void WriteObject(DataOutput writer, object? value, int depth = 0)
-    {
-        ArgumentNullException.ThrowIfNull(writer);
-
-        if (depth >= MaxDepth)
-        {
-            throw new InvalidOperationException(
-                $"SerializationRegistry: write exceeded MaxDepth ({MaxDepth}). "
-                + "Refusing to serialise a potentially cyclic or pathologically "
-                + "nested object graph. Tune GeodeClientOptions.Serialization.MaxDepth "
-                + "if a legitimate workload needs deeper nesting.");
-        }
-
-        if (value is null)
-        { 
-            writer.WriteByte(DSCode.NullObj);
-            return;
-        }
-
-        var type = value.GetType();
-        if (TryWriteBuiltIn(writer, value, type, depth)) return;
-        if (TryWritePdx(writer, value, type)) return;
-
-        throw new NotSupportedException($"No SerializationRegistry converter registered for runtime type {type}.");
-    }
 }

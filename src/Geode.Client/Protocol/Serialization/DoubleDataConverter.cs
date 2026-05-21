@@ -19,8 +19,11 @@ internal sealed class DoubleDataConverter : DataConverter<double>
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(DataOutput writer, double value, byte dsCode, int depth) =>
+    public override ValueTask WriteAsync(DataOutput writer, double value, byte dsCode, int depth, CancellationToken ct)
+    {
         writer.WriteDouble(value);
+        return ValueTask.CompletedTask;
+    }
 
     public override double Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>
         reader.ReadDouble();

@@ -52,15 +52,16 @@ internal sealed class BytesDataConverter(CacheScopeContext cacheScopeContext)
 
     public override byte[] DsCodes => s_dsCodes;
 
-    public override void Write(DataOutput writer, byte[] value, byte dsCode, int depth)
+    public override ValueTask WriteAsync(DataOutput writer, byte[] value, byte dsCode, int depth, CancellationToken ct)
     {
         if (value.Length > _maxBytesLength)
         {
             throw new InvalidOperationException(
                 $"BytesDataConverter: cannot serialise a byte[] of {value.Length} bytes "
-                + $"??exceeds Serialization.MaxBytesLength ({_maxBytesLength}).");
+                + $"— exceeds Serialization.MaxBytesLength ({_maxBytesLength}).");
         }
         writer.WriteBytes(value);
+        return ValueTask.CompletedTask;
     }
 
     public override byte[]? Read(BigEndianBinaryReader reader, byte dsCode, int depth)

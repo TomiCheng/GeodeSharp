@@ -71,34 +71,6 @@ internal sealed class ListDataConverter : IDataConverter
 
     public byte GetDsCode(object value) => DSCode.CacheableArrayList;
 
-    public void Write(DataOutput writer, object value, byte dsCode, int depth)
-    {
-        // Any IList works at the type-erased layer ??we accept the
-        // value as IList (non-generic) so List<int>, List<string>,
-        // and IList<T> implementations all flow through the same
-        // path. The registry has already established that the value's
-        // runtime type maps to this converter via the open-generic
-        // fallback.
-        var source = (IList)value;
-        if (source.Count > _registry.MaxArrayLength)
-        {
-            throw new InvalidOperationException(
-                $"ListDataConverter: cannot serialise a list of {source.Count} elements "
-                + $"??exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
-        }
-        writer.WriteArrayLen(source.Count);
-        foreach (var item in source)
-        {
-            // WriteObject handles null ??DSCode.NullObj (41) and
-            // dispatches to the appropriate converter per element
-            // runtime type. Nested lists work because List<List<T>>'s
-            // outer iteration yields inner List instances which
-            // re-enter this same converter via the open-generic
-            // fallback.
-            _registry.WriteObject(writer, item, depth + 1);
-        }
-    }
-
     public async ValueTask WriteAsync(DataOutput writer, object value, byte dsCode, int depth, CancellationToken ct)
     {
         var source = (IList)value;

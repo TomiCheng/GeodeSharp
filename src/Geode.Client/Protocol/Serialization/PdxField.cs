@@ -64,4 +64,53 @@ internal sealed record PdxField(
     /// </summary>
     public bool SameField(PdxField other) =>
         Name == other.Name && Type == other.Type && IsFixedSize == other.IsFixedSize;
+
+    /// <summary>
+    /// <see langword="true"/> when this field participates in the schema's
+    /// identity hash/equality. Mirror of cppcache <c>m_isIdentityField</c>;
+    /// defaults to <see langword="false"/> (cppcache <c>PdxFieldType.cpp:66</c>).
+    /// </summary>
+    /// <remarks>
+    /// Identity-field marking is the user-facing
+    /// <c>IPdxWriter.MarkIdentityField</c> opt-in (Phase 2.x). Until that
+    /// API lands, no field is identity-marked and ToData writes
+    /// <see langword="false"/> for all fields.
+    /// </remarks>
+    public bool IsIdentityField { get; init; }
+
+    /// <summary>
+    /// Serialise this field's schema entry into <paramref name="output"/>
+    /// as part of <see cref="PdxType.ToData"/>'s field-table loop. Mirror
+    /// of cppcache <c>PdxFieldType::toData</c>
+    /// (<c>cppcache/src/PdxFieldType.cpp:88</c>).
+    /// </summary>
+    /// <remarks>
+    /// Wire layout (cppcache <c>PdxFieldType.cpp:88-97</c>):
+    /// <code>
+    /// str  Name
+    /// i32  Index            (cppcache m_sequenceId)
+    /// i32  VarLenFieldIdx   (0 for fixed-size fields — see note below)
+    /// i8   (sbyte)Type      (PdxFieldType enum value)
+    /// i32  RelativeOffset
+    /// i32  VarLenOffsetIndex (cppcache m_vlOffsetIndex)
+    /// bool IsIdentityField
+    /// </code>
+    /// <para>
+    /// <b>VarLenFieldIdx wire compat.</b> Our record uses <c>-1</c> as
+    /// the default sentinel for fixed-size fields (semantic "no slot");
+    /// cppcache stores <c>0</c> in the same case (<c>PdxType.cpp:138</c>
+    /// last ctor arg). Wire shape has to match cppcache, so we project
+    /// <c>-1</c> → <c>0</c> at this boundary.
+    /// </para>
+    /// </remarks>
+    public void ToData(DataOutput output)
+    {
+        output.WriteString(Name);
+        output.WriteInt32(Index);
+        output.WriteInt32(IsFixedSize ? 0 : VarLenFieldIdx);
+        output.WriteByte((byte)(sbyte)Type);
+        output.WriteInt32(RelativeOffset);
+        output.WriteInt32(VarLenOffsetIndex);
+        output.WriteBool(IsIdentityField);
+    }
 }

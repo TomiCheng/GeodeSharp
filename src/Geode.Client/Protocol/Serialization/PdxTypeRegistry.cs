@@ -223,9 +223,7 @@ internal sealed class PdxTypeRegistry(
 
     /// <summary>Short string from a <c>MessageType.Exception</c> reply for diagnostics.</summary>
     private static string DecodeExceptionPreview(TcrMessage reply) =>
-        throw new NotImplementedException(
-            $"{nameof(DecodeExceptionPreview)}: lift the helper out of " +
-            "ThinClientRegion or share it here.");
+        TcrMessageHelper.DecodeExceptionPreview(reply);
 
     /// <summary>Look up cached schema by typeId; <see langword="null"/> on miss.</summary>
     public PdxType? GetPdxType(int typeId) =>

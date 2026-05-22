@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.RegularExpressions;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
@@ -41,31 +40,6 @@ internal sealed partial class ThinClientRegion(
     ThinClientBaseDM dm)
     : LocalRegion(name, null, attributes)
 {
-
-    /// <summary>
-    /// Best-effort ASCII preview of an Exception reply's Part 0. The
-    /// server typically returns the Java exception class name +
-    /// message there as a <c>CacheableASCIIString</c>; until
-    /// <c>StringDataConverter</c> lands we just render printable bytes
-    /// directly so the caller sees a readable hint in the
-    /// <see cref="GeodeException"/> message. Mirrors the diagnostic
-    /// pattern in <c>GetDiagnosticTests</c>.
-    /// </summary>
-    private static string DecodeExceptionPreview(TcrMessage reply)
-    {
-        if (reply.Parts.Count == 0)
-        {
-            return "<no exception parts>";
-        }
-
-        var bytes = reply.Parts[0].Payload.Span;
-        var sb = new StringBuilder(bytes.Length);
-        foreach (var b in bytes)
-        {
-            sb.Append(b is >= 0x20 and < 0x7F ? (char)b : '.');
-        }
-        return sb.ToString();
-    }
 
     /// <summary>
     /// Decode a value-bearing part the way cppcache
@@ -254,7 +228,7 @@ internal sealed partial class ThinClientRegion(
             case MessageType.Exception:
                 throw new GeodeException(
                     $"Server exception on Clear '{FullPath}': " +
-                    DecodeExceptionPreview(reply));
+                    TcrMessageHelper.DecodeExceptionPreview(reply));
 
             case MessageType.ClearRegionDataError:
                 logger.LogError(
@@ -319,7 +293,7 @@ internal sealed partial class ThinClientRegion(
             case MessageType.Exception:
                 throw new GeodeException(
                     $"Server exception on ContainsKey '{FullPath}': " +
-                    DecodeExceptionPreview(reply));
+                    TcrMessageHelper.DecodeExceptionPreview(reply));
 
             default:
                 throw new GeodeException(
@@ -486,7 +460,7 @@ internal sealed partial class ThinClientRegion(
             case MessageType.Exception:
                 throw new GeodeException(
                     $"Server exception on Get '{FullPath}': " +
-                    DecodeExceptionPreview(reply));
+                    TcrMessageHelper.DecodeExceptionPreview(reply));
 
             default:
                 throw new GeodeException(
@@ -533,7 +507,7 @@ internal sealed partial class ThinClientRegion(
             case MessageType.Exception:
                 throw new GeodeException(
                     $"Server exception on Invalidate '{FullPath}': " +
-                    DecodeExceptionPreview(reply));
+                    TcrMessageHelper.DecodeExceptionPreview(reply));
 
             case MessageType.InvalidateError:
                 throw new GeodeException(
@@ -684,7 +658,7 @@ internal sealed partial class ThinClientRegion(
             case MessageType.Exception:
                 throw new GeodeException(
                     $"Server exception on Put '{FullPath}': " +
-                    DecodeExceptionPreview(reply));
+                    TcrMessageHelper.DecodeExceptionPreview(reply));
 
             default:
                 throw new GeodeException(
@@ -835,7 +809,7 @@ internal sealed partial class ThinClientRegion(
             case MessageType.Exception:
                 throw new GeodeException(
                     $"Server exception on Remove '{FullPath}': " +
-                    DecodeExceptionPreview(reply));
+                    TcrMessageHelper.DecodeExceptionPreview(reply));
 
             default:
                 throw new GeodeException(

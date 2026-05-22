@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.Extensions.Logging;
 
 namespace Geode.Client.Protocol;
@@ -74,11 +75,11 @@ internal sealed class TcrMessageHelper(ILogger<TcrMessageHelper> logger)
         // Mirrors cppcache TcrMessageHelper::readChunkPartHeader
         // (cppcache/src/TcrMessage.cpp:3191-3251).
         //
-        // ?€?€?€ Step 1: read partLen + isObj ?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€
+        // ?ï¿½?ï¿½?ï¿½ Step 1: read partLen + isObj ?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½
         partLen = reader.ReadInt32();
         var isObj = reader.ReadBool();
 
-        // ?€?€?€ Step 2: partLen == 0 ??NullObject ?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€
+        // ?ï¿½?ï¿½?ï¿½ Step 2: partLen == 0 ??NullObject ?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½
         // cppcache comment: "special null object is case for scalar
         // query result". Phase 1.3 ChunkedRemoveAllResponse uses
         // this to recognise an empty-batch reply.
@@ -87,7 +88,7 @@ internal sealed class TcrMessageHelper(ILogger<TcrMessageHelper> logger)
             return ChunkObjectType.NullObject;
         }
 
-        // ?€?€?€ Step 3: !isObj ??Exception ?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€
+        // ?ï¿½?ï¿½?ï¿½ Step 3: !isObj ??Exception ?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½
         // cppcache: "otherwise we're currently always expecting an
         // object" ??non-object part with non-zero length signals
         // an exception payload.
@@ -99,7 +100,7 @@ internal sealed class TcrMessageHelper(ILogger<TcrMessageHelper> logger)
             return ChunkObjectType.Exception;
         }
 
-        // ?€?€?€ Step 4: read DSCode byte ?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€
+        // ?ï¿½?ï¿½?ï¿½ Step 4: read DSCode byte ?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½
         // cppcache reads the byte twice into rawByte / partType
         // (latter cast to DSCode); our DSCode is a byte-constant
         // class so no cast needed. compId defaults to partType and
@@ -108,7 +109,7 @@ internal sealed class TcrMessageHelper(ILogger<TcrMessageHelper> logger)
         var partType = reader.ReadByte();
         var compId = (int)partType;
 
-        // ?€?€?€ Step 5: JavaSerializable ??Exception ?€?€?€?€?€?€?€?€?€?€?€?€?€?€
+        // ?ï¿½?ï¿½?ï¿½ Step 5: JavaSerializable ??Exception ?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½
         // cppcache rewinds (input.reset) + calls readExceptionPart to
         // decode the Java-serialised exception body and mutates the
         // reply msg type to EXCEPTION. Our record is immutable so we
@@ -126,7 +127,7 @@ internal sealed class TcrMessageHelper(ILogger<TcrMessageHelper> logger)
             return ChunkObjectType.Exception;
         }
 
-        // ?€?€?€ Step 6: NullObj DSCode ??NullObject ?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€
+        // ?ï¿½?ï¿½?ï¿½ Step 6: NullObj DSCode ??NullObject ?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½
         // cppcache comment: "special null object is case for scalar
         // query result". Same NullObject signal as step 2 but
         // triggered by the inner DSCode tag rather than partLen=0.
@@ -135,7 +136,7 @@ internal sealed class TcrMessageHelper(ILogger<TcrMessageHelper> logger)
             return ChunkObjectType.NullObject;
         }
 
-        // ?€?€?€ Step 7: enforce DSCode + read fixed-id compId ?€?€?€?€?€
+        // ?ï¿½?ï¿½?ï¿½ Step 7: enforce DSCode + read fixed-id compId ?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½
         // When caller passed a specific expected DSCode (Byte / Short
         // fixed-id), verify partType matches and read the trailing
         // 1/2-byte fixed-id into compId. expectedDsCode == 0
@@ -165,7 +166,7 @@ internal sealed class TcrMessageHelper(ILogger<TcrMessageHelper> logger)
             }
         }
 
-        // ?€?€?€ Step 8: compId mismatch ??throw ?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€
+        // ?ï¿½?ï¿½?ï¿½ Step 8: compId mismatch ??throw ?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½
         if (compId != expectedPartType)
         {
             throw new GeodeException(
@@ -174,11 +175,43 @@ internal sealed class TcrMessageHelper(ILogger<TcrMessageHelper> logger)
                 $"expected = {expectedPartType}, raw = {(int)partType}");
         }
 
-        // ?€?€?€ Step 9: standard object chunk ?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€
+        // ?ï¿½?ï¿½?ï¿½ Step 9: standard object chunk ?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½?ï¿½
         // isLastChunk byte unused in our port ??cppcache only reads
         // it via readExceptionPart (step 5 deferred) and the secure
         // trailer (Phase 3+ auth).
         _ = isLastChunk;
         return ChunkObjectType.Object;
+    }
+
+    /// <summary>
+    /// Best-effort ASCII preview of an Exception reply's Part 0. The
+    /// server typically returns the Java exception class name + message
+    /// there as a <c>CacheableASCIIString</c>; until <c>StringDataConverter</c>
+    /// lands we render printable bytes directly so the caller sees a
+    /// readable hint in the <see cref="GeodeException"/> message.
+    /// </summary>
+    /// <remarks>
+    /// Mirror of cppcache <c>TcrMessageHelper::readExceptionPart</c>
+    /// (<c>cppcache/src/TcrMessage.cpp:3253</c>) â€” but stripped down:
+    /// cppcache actually deserialises the Java exception object, we
+    /// just dump printable ASCII for diagnostics. Upgrades when
+    /// <c>StringDataConverter</c> + Java exception deserialise land.
+    /// </remarks>
+    public static string DecodeExceptionPreview(TcrMessage reply)
+    {
+        ArgumentNullException.ThrowIfNull(reply);
+
+        if (reply.Parts.Count == 0)
+        {
+            return "<no exception parts>";
+        }
+
+        var bytes = reply.Parts[0].Payload.Span;
+        var sb = new StringBuilder(bytes.Length);
+        foreach (var b in bytes)
+        {
+            sb.Append(b is >= 0x20 and < 0x7F ? (char)b : '.');
+        }
+        return sb.ToString();
     }
 }

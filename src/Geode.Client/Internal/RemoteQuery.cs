@@ -1,4 +1,3 @@
-using System.Text;
 using Geode.Client.Protocol;
 using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -136,7 +135,7 @@ internal sealed class RemoteQuery<T>(
         {
             throw new GeodeException(
                 $"Server exception on Query '{QueryString}': " +
-                DecodeExceptionPreview(reply));
+                TcrMessageHelper.DecodeExceptionPreview(reply));
         }
 
         // B8 ??Log "reading reply". cppcache RemoteQuery.cpp:93.
@@ -159,32 +158,4 @@ internal sealed class RemoteQuery<T>(
         return collector.Results!;
     }
 
-    /// <summary>
-    /// Best-effort preview of the bytes in an <c>EXCEPTION</c> reply's
-    /// first part. cppcache surfaces the server-side message via
-    /// <c>reply.getException()</c>; our reply path doesn't decode the
-    /// exception object yet ??we render the raw bytes as printable
-    /// ASCII so the throw at least carries a hint.
-    /// </summary>
-    /// <remarks>
-    /// Copy of <c>ThinClientRegion.DecodeExceptionPreview</c>
-    /// (<c>Services/ThinClientRegion.cs:764-778</c>). If a third
-    /// caller materialises, lift to a shared helper (likely on
-    /// <see cref="TcrMessageHelper"/>).
-    /// </remarks>
-    private static string DecodeExceptionPreview(TcrMessage reply)
-    {
-        if (reply.Parts.Count == 0)
-        {
-            return "<no exception parts>";
-        }
-
-        var bytes = reply.Parts[0].Payload.Span;
-        var sb = new StringBuilder(bytes.Length);
-        foreach (var b in bytes)
-        {
-            sb.Append(b is >= 0x20 and < 0x7F ? (char)b : '.');
-        }
-        return sb.ToString();
-    }
 }

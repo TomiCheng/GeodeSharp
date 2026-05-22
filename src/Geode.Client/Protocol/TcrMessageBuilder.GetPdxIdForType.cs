@@ -1,6 +1,5 @@
 using Geode.Client.Protocol.Serialization;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 
 namespace Geode.Client.Protocol;
 
@@ -27,42 +26,35 @@ partial class TcrMessageBuilder
     ///                     + DSCode.Class (43) + "org.apache.geode.pdx.internal.PdxType"
     ///                     — that's PdxType.ToData's own first bytes.
     /// </code>
+    /// <para>
+    /// Body serialisation is delegated to <see cref="PdxType.ToData"/>,
+    /// which is currently a NIE leaf (cppcache <c>PdxType.cpp:66</c>).
+    /// Until it lands, the builder itself wires up but any attempt to
+    /// actually issue the request will surface the inner NIE.
+    /// </para>
     /// </remarks>
-    public ValueTask<TcrMessage> GetPdxIdForTypeAsync(
+    public async ValueTask<TcrMessage> GetPdxIdForTypeAsync(
         PdxType schema,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(schema);
 
-        // TODO: PdxType.ToData(DataOutput) not implemented yet — the part
-        //       body that should run is `schema.ToData(w)` inside the
-        //       partBuilder.ObjectAsync lambda. Until that lands, this
-        //       builder cannot produce a real request.
-        //
-        // Intended shape once PdxType.ToData exists:
-        //
-        //   _logger.LogDebug(
-        //       "TcrMessageBuilder.GetPdxIdForTypeAsync: className={ClassName}",
-        //       schema.ClassName);
-        //   var parts = new List<TcrPart>(1)
-        //   {
-        //       // Part 1 — schema body, IsObject=1, no DSCode prefix added by
-        //       //          partBuilder (PdxType.ToData writes its own leading
-        //       //          DSCode.DataSerializable byte).
-        //       await partBuilder.ObjectAsync(w =>
-        //       {
-        //           schema.ToData(w);
-        //           return ValueTask.CompletedTask;
-        //       }),
-        //   };
-        //   return ActivatorUtilities.CreateInstance<TcrMessage>(
-        //       _serviceProvider, MessageType.GetPdxIdForType,
-        //       MetaTransactionId, (byte)0, parts);
+        var parts = new List<TcrPart>(1)
+        {
+            // Part 1 — schema body, IsObject=1. PdxType.ToData writes its
+            // own leading DSCode.DataSerializable byte, so partBuilder
+            // does not prepend one. Mirror of cppcache
+            // writeObjectPart(..., callToData=true) at TcrMessage.cpp:2880.
+            await partBuilder.ObjectAsync(w =>
+            {
+                schema.ToData(w);
+                return ValueTask.CompletedTask;
+            }),
+        };
 
         _ = ct;
-        throw new NotImplementedException(
-            $"{nameof(TcrMessageBuilder)}.{nameof(GetPdxIdForTypeAsync)}: " +
-            "PdxType.ToData(DataOutput) not implemented yet — request body " +
-            "can't be serialised. See cppcache TcrMessage.cpp:2874 / PdxType.cpp:66.");
+        return ActivatorUtilities.CreateInstance<TcrMessage>(
+            _serviceProvider, MessageType.GetPdxIdForType,
+            MetaTransactionId, (byte)0, parts);
     }
 }

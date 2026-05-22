@@ -188,4 +188,80 @@ internal sealed class PdxType(
 
     /// <summary>Server-assigned typeId; <c>-1</c> until <c>GET_PDX_ID_FOR_TYPE</c> resolves.</summary>
     public int TypeId { get; set; } = -1;
+
+    /// <summary>
+    /// Wire-format Java class id for the PDX schema descriptor itself.
+    /// Mirror of cppcache <c>PdxType::m_javaPdxClass</c>
+    /// (<c>PdxType.cpp:37</c>).
+    /// </summary>
+    public const string JavaPdxClass = "org.apache.geode.pdx.internal.PdxType";
+
+    /// <summary>
+    /// <see langword="true"/> when <see cref="ClassName"/> names a Java
+    /// (server-side) domain class; <see langword="false"/> for
+    /// pure-PDX/<c>PdxInstance</c> schemas. Wire field at
+    /// <c>PdxType::toData</c> is the negation (<c>noJavaClass</c>).
+    /// Mirror of cppcache <c>is_java_class_</c>; default tracks
+    /// cppcache's <c>expectDomainClass=true</c>.
+    /// </summary>
+    public bool IsJavaClass { get; init; } = true;
+
+    /// <summary>
+    /// cppcache <c>m_varLenFieldIdx</c>: the largest var-len slot id
+    /// assigned, or <c>0</c> when no var-len fields are present.
+    /// Mirror of cppcache <c>PdxType.cpp:151</c> — increments only after
+    /// the first var-len field is added, so for N var-len fields the
+    /// value is <c>max(0, N-1)</c>.
+    /// </summary>
+    public int VarLenFieldIdx
+    {
+        get
+        {
+            var count = 0;
+            foreach (var f in Fields)
+            {
+                if (!f.IsFixedSize) count++;
+            }
+            return count == 0 ? 0 : count - 1;
+        }
+    }
+
+    /// <summary>
+    /// Serialise this schema into <paramref name="output"/> as the part
+    /// body of a <c>GET_PDX_ID_FOR_TYPE</c> (opcode 93) request. Mirror
+    /// of cppcache <c>PdxType::toData</c> (<c>PdxType.cpp:66</c>).
+    /// </summary>
+    /// <remarks>
+    /// Wire layout (cppcache <c>PdxType.cpp:66-91</c>):
+    /// <code>
+    /// u8   DSCode.DataSerializable (45)
+    /// u8   DSCode.Class (43)
+    /// str  JavaPdxClass ("org.apache.geode.pdx.internal.PdxType")
+    /// str  ClassName
+    /// bool !IsJavaClass     (the wire field is "noJavaClass")
+    /// i32  TypeId           (server reassigns; client sentinel is -1)
+    /// i32  VarLenFieldIdx
+    /// i32  Fields.Count     (DataOutput.WriteArrayLen)
+    /// for each PdxField: PdxField.ToData(output)
+    /// </code>
+    /// <para>
+    /// Per-field body is delegated to <see cref="PdxField.ToData"/>,
+    /// currently a NIE leaf (cppcache <c>PdxFieldType.cpp:88</c>).
+    /// </para>
+    /// </remarks>
+    public void ToData(DataOutput output)
+    {
+        output.WriteByte(DSCode.DataSerializable);
+        output.WriteByte(DSCode.Class);
+        output.WriteString(JavaPdxClass);
+        output.WriteString(ClassName);
+        output.WriteBool(!IsJavaClass);
+        output.WriteInt32(TypeId);
+        output.WriteInt32(VarLenFieldIdx);
+        output.WriteArrayLen(Fields.Count);
+        foreach (var f in Fields)
+        {
+            f.ToData(output);
+        }
+    }
 }

@@ -212,15 +212,7 @@ internal sealed class SerializationRegistry
             // A.4 Round-trip to the server to get a cluster-wide typeId.
             //     pool comes from the DataOutput (mirror cppcache
             //     DataOutputInternal::getPool).
-            var nTypeId = await _pdxTypeRegistry.GetPdxIdForTypeAsync(
-                className: entry.ClassName,
-                pool: writer.Pool,
-                nType: nType,
-                checkIfThere: true,
-                ct: ct);
-
-            // A.5 Stamp typeId onto the schema.
-            nType.TypeId = nTypeId;
+            nType.TypeId = await _pdxTypeRegistry.GetPdxIdForTypeAsync(entry.ClassName, writer.Pool, nType, true, ct);
 
             // A.6 Emit the PDX wire frame: DSCode + length + typeId + payload.
             //     Length covers typeId + payload (cppcache PdxLocalWriter::
@@ -228,13 +220,13 @@ internal sealed class SerializationRegistry
             var payload = ptc.BuildPayload();
             writer.WriteByte(DSCode.PDX);
             writer.WriteInt32(payload.Length + sizeof(int));
-            writer.WriteInt32(nTypeId);
+            writer.WriteInt32(nType.TypeId);
             writer.WriteBytesOnly(payload);
 
             // A.7 Cache the schema in both maps so the next call hits
             //     Step B (no wire op).
             _pdxTypeRegistry.AddLocalPdxType(entry.ClassName, nType);
-            _pdxTypeRegistry.AddPdxType(nTypeId, nType);
+            _pdxTypeRegistry.AddPdxType(nType.TypeId, nType);
         }
         else
         {

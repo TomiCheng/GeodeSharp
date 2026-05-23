@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client;
 
 /// <summary>
@@ -20,5 +19,3 @@ public interface IQueryService
     /// </exception>
     IQuery<T> NewQuery<T>(string oql);
 }
-
-*/

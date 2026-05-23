@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client;
 
 /// <summary>
@@ -22,5 +21,3 @@ public class CacheServerException : GeodeException
     public CacheServerException(string message, Exception innerException)
         : base(message, innerException) { }
 }
-
-*/

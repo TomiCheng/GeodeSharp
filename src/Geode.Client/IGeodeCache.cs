@@ -3,7 +3,7 @@ namespace Geode.Client;
 /// <summary>
 /// A connection to a single Geode cluster, obtained from <see cref="IGeodeCacheFactory"/>.
 /// </summary>
-public interface IGeodeCache //: IRegionService
+public interface IGeodeCache: IRegionService
 {
     /// <summary>
     /// Cache name.

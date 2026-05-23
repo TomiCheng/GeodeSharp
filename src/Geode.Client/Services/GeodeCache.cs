@@ -1,15 +1,22 @@
+using System.Collections.Concurrent;
 using Geode.Client.Internal;
+using Geode.Client.Protocol.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Services;
 
 internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
 {
-    private readonly Lazy<PoolManager> _poolManager;
-    private readonly string _name;
+    private int _destroyPending;
     private readonly SemaphoreSlim _initLock = new(1, 1);
+    private Task? _initTask;
+    private readonly string _name;
+    private readonly Lazy<PoolManager> _poolManager;
+    private readonly ConcurrentDictionary<string, IRegion> _regions = new(StringComparer.Ordinal);
     private readonly SystemProperties _systemProperties = new();
     private readonly Lazy<TcrConnectionManager> _tcrConnectionManager;
+    private readonly TypedResultAdapter _typedResultAdapter = new();
+
     public GeodeCache(IServiceProvider serviceProvider, string name)
     {
         _name = name;
@@ -20,30 +27,6 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
                    () => ActivatorUtilities.CreateInstance<TcrConnectionManager>(serviceProvider, this),
                    LazyThreadSafetyMode.ExecutionAndPublication);
     }
-
-    public string Name => _name;
-
-    public IPoolManager PoolManager => _poolManager.Value;
-
-    internal SystemProperties CacheProperties => _systemProperties;
-
-    internal TcrConnectionManager ConnectionManager => _tcrConnectionManager.Value;
-
-    public async ValueTask DisposeAsync()
-    {
-        // Forward to CloseAsync; idempotent until connection logic lands.
-        await CloseAsync().ConfigureAwait(false);
-
-        // TCCM is now DI-Scoped — the per-cache AsyncServiceScope
-        // disposes it for us in reverse-resolve order, after Cache.
-        // PoolManager / ClientProxyMembershipIdBuilder / CacheScopeContext
-        // ride the same cascade.
-
-        _initLock.Dispose();
-    }
-
-
-    private Task? _initTask;
 
     private async Task InitializeCoreAsync(CancellationToken ct)
     {
@@ -82,6 +65,34 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
         // TODO: if (_options.Cache?.Pdx is { } pdx) apply pdx
         //   ignoreUnreadFields / readSerialized to _pdxTypeRegistry.
     }
+
+    internal async Task InitializeAsync(CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(IsClosed, this);
+        var task = Volatile.Read(ref _initTask);
+        if (task is null)
+        {
+            await _initLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                task = _initTask;
+                if (task is null)
+                {
+                    task = InitializeCoreAsync(ct);
+                    Volatile.Write(ref _initTask, task);
+                }
+            }
+            finally
+            {
+                _initLock.Release();
+            }
+        }
+        await task.WaitAsync(ct).ConfigureAwait(false);
+    }
+
+    internal SystemProperties CacheProperties => _systemProperties;
+
+    internal TcrConnectionManager ConnectionManager => _tcrConnectionManager.Value;
 
     //    /// <summary>
     //    /// Build pools and regions from an already-bound
@@ -376,30 +387,98 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
         IsClosed = true;
     }
 
-
-
-    internal async Task InitializeAsync(CancellationToken ct = default)
+    public async ValueTask DisposeAsync()
     {
+        // Forward to CloseAsync; idempotent until connection logic lands.
+        await CloseAsync().ConfigureAwait(false);
+
+        // TCCM is now DI-Scoped — the per-cache AsyncServiceScope
+        // disposes it for us in reverse-resolve order, after Cache.
+        // PoolManager / ClientProxyMembershipIdBuilder / CacheScopeContext
+        // ride the same cascade.
+
+        _initLock.Dispose();
+    }
+
+    /// <summary>
+    /// Mirrors cppcache <c>CacheImpl::getRegion</c>
+    /// (<c>cppcache/src/CacheImpl.cpp:475-518</c>) line-for-line:
+    /// throwIfClosed, m_destroyPending check (returns null), path
+    /// validation, leading-slash strip, first-segment lookup,
+    /// sub-region recursion via <c>region-&gt;getSubregion(remainder)</c>.
+    /// </summary>
+    public IRegion? GetRegion(string path)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+
+        // cppcache: throwIfClosed
         ObjectDisposedException.ThrowIf(IsClosed, this);
-        var task = Volatile.Read(ref _initTask);
-        if (task is null)
+
+        // cppcache lock_guard(m_destroyCacheMutex) is unnecessary —
+        // ConcurrentDictionary covers map-side races, and
+        // _destroyPending is a single atomic int.
+        if (Volatile.Read(ref _destroyPending) != 0)
         {
-            await _initLock.WaitAsync(ct).ConfigureAwait(false);
-            try
-            {
-                task = _initTask;
-                if (task is null)
-                {
-                    task = InitializeCoreAsync(ct);
-                    Volatile.Write(ref _initTask, task);
-                }
-            }
-            finally
-            {
-                _initLock.Release();
-            }
+            // cppcache CacheImpl.cpp:483 — silent null when destroy is
+            // mid-flight, distinct from throwIfClosed (which fires
+            // after IsClosed flips true).
+            return null;
         }
-        await task.WaitAsync(ct).ConfigureAwait(false);
+
+        // cppcache: path == "/" || path.length() < 1 →
+        //   IllegalArgumentException("Cache::getRegion: path is empty
+        //   or a /"). We split into ArgumentException for empty (BCL
+        //   ArgumentException.ThrowIfNullOrEmpty) and for "/".
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        if (path == "/")
+        {
+            throw new ArgumentException("Cache.GetRegion: path is empty or '/'.", nameof(path));
+        }
+
+        // cppcache: strip a single leading "/".
+        var fullname = path.StartsWith('/') ? path[1..] : path;
+
+        // cppcache: split at first '/'; left segment is the root region
+        // name, the rest (if any) is the sub-region path.
+        var idx = fullname.IndexOf('/');
+        var stepname = idx < 0 ? fullname : fullname[..idx];
+
+        // cppcache findRegion(stepname): pure map lookup.
+        if (!_regions.TryGetValue(stepname, out var region))
+        {
+            return null;
+        }
+
+        if (idx >= 0)
+        {
+            // cppcache CacheImpl.cpp:504 — recurse into sub-region tree.
+            //   var remainder = fullname[(idx + 1)..];
+            //   region = region.GetSubregion(remainder);
+            // TODO sub-region phase: IRegion has no GetSubregion yet;
+            //   add it once the sub-region API surfaces. Until then,
+            //   any path with an interior '/' falls through to NIE so
+            //   callers don't silently get the root when they asked
+            //   for a child.
+            throw new NotImplementedException(
+                $"Sub-region path '{path}' not yet supported; sub-region " +
+                "API lands in a future phase.");
+        }
+
+        // TODO Phase 3 multi-user: cppcache CacheImpl.cpp:509-514 —
+        //   if (isPoolInMultiuserMode(*region)) LOGWARN("...attached
+        //   with region ... is in multiuser authentication mode...").
+
+        return region;
+    }
+
+    public IRegion<TKey, TValue>? GetRegion<TKey, TValue>(string path)
+    where TKey : IEquatable<TKey>
+    {
+        // Untyped lookup does the cppcache-faithful work (path validation,
+        // sub-region recursion, destroyPending check). RegionView is a
+        // pure compile-time wrapper — TKey/TValue are not runtime-bound.
+        var region = GetRegion(path);
+        return region is null ? null : new RegionView<TKey, TValue>(region, _typedResultAdapter);
     }
 
     //    /// <summary>
@@ -431,90 +510,15 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
     //        return pool.QueryService;
     //    }
 
-    //    public IRegion<TKey, TValue>? GetRegion<TKey, TValue>(string path)
-    //        where TKey : IEquatable<TKey>
-    //    {
-    //        // Untyped lookup does the cppcache-faithful work (path validation,
-    //        // sub-region recursion, destroyPending check). RegionView is a
-    //        // pure compile-time wrapper — TKey/TValue are not runtime-bound.
-    //        var region = GetRegion(path);
-    //        return region is null ? null : new RegionView<TKey, TValue>(region, typedResultAdapter);
-    //    }
 
-    //    /// <summary>
-    //    /// Mirrors cppcache <c>CacheImpl::getRegion</c>
-    //    /// (<c>cppcache/src/CacheImpl.cpp:475-518</c>) line-for-line:
-    //    /// throwIfClosed, m_destroyPending check (returns null), path
-    //    /// validation, leading-slash strip, first-segment lookup,
-    //    /// sub-region recursion via <c>region-&gt;getSubregion(remainder)</c>.
-    //    /// </summary>
-    //    public IRegion? GetRegion(string path)
-    //    {
-    //        ArgumentNullException.ThrowIfNull(path);
-
-    //        // cppcache: throwIfClosed
-    //        ObjectDisposedException.ThrowIf(IsClosed, this);
-
-    //        // cppcache lock_guard(m_destroyCacheMutex) is unnecessary —
-    //        // ConcurrentDictionary covers map-side races, and
-    //        // _destroyPending is a single atomic int.
-    //        if (Volatile.Read(ref _destroyPending) != 0)
-    //        {
-    //            // cppcache CacheImpl.cpp:483 — silent null when destroy is
-    //            // mid-flight, distinct from throwIfClosed (which fires
-    //            // after IsClosed flips true).
-    //            return null;
-    //        }
-
-    //        // cppcache: path == "/" || path.length() < 1 →
-    //        //   IllegalArgumentException("Cache::getRegion: path is empty
-    //        //   or a /"). We split into ArgumentException for empty (BCL
-    //        //   ArgumentException.ThrowIfNullOrEmpty) and for "/".
-    //        ArgumentException.ThrowIfNullOrEmpty(path);
-    //        if (path == "/")
-    //        {
-    //            throw new ArgumentException(
-    //                "Cache.GetRegion: path is empty or '/'.", nameof(path));
-    //        }
-
-    //        // cppcache: strip a single leading "/".
-    //        var fullname = path.StartsWith('/') ? path[1..] : path;
-
-    //        // cppcache: split at first '/'; left segment is the root region
-    //        // name, the rest (if any) is the sub-region path.
-    //        var idx = fullname.IndexOf('/');
-    //        var stepname = idx < 0 ? fullname : fullname[..idx];
-
-    //        // cppcache findRegion(stepname): pure map lookup.
-    //        if (!_regions.TryGetValue(stepname, out var region))
-    //        {
-    //            return null;
-    //        }
-
-    //        if (idx >= 0)
-    //        {
-    //            // cppcache CacheImpl.cpp:504 — recurse into sub-region tree.
-    //            //   var remainder = fullname[(idx + 1)..];
-    //            //   region = region.GetSubregion(remainder);
-    //            // TODO sub-region phase: IRegion has no GetSubregion yet;
-    //            //   add it once the sub-region API surfaces. Until then,
-    //            //   any path with an interior '/' falls through to NIE so
-    //            //   callers don't silently get the root when they asked
-    //            //   for a child.
-    //            throw new NotImplementedException(
-    //                $"Sub-region path '{path}' not yet supported; sub-region " +
-    //                "API lands in a future phase.");
-    //        }
-
-    //        // TODO Phase 3 multi-user: cppcache CacheImpl.cpp:509-514 —
-    //        //   if (isPoolInMultiuserMode(*region)) LOGWARN("...attached
-    //        //   with region ... is in multiuser authentication mode...").
-
-    //        return region;
-    //    }
 
     public bool IsClosed { get; private set; }
-    //    public string Name { get; } = scopeContext.Name;
+
+    public string Name => _name;
+
+    public IPoolManager PoolManager => _poolManager.Value;
+
+
     //    public ITypeRegistry TypeRegistry { get; } = typeRegistry;
 
     //    public bool PdxIgnoreUnreadFields => _options.Cache?.Pdx.IgnoreUnreadFields ?? false;
@@ -528,14 +532,10 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
     //    // m_initialized  → captured by _initTask (null = not started)
     //    // m_initDoneLock → _initLock (SemaphoreSlim, async-friendly)
     //    // m_destroyCacheMutex → bucket 1, replaced by System.Threading.Lock
-    //    private int _destroyPending;          // m_destroyPending (Interlocked 0/1)
+
     //    private bool _keepAlive;              // m_keepAlive
 
-    //    // ── Region registry (CacheImpl.hpp:364-366) ──
-    //    // cppcache m_regions is std::map<string, shared_ptr<Region>>; we
-    //    // hold the non-generic IRegion base because XML-driven population
-    //    // happens before TKey/TValue are known.
-    //    private readonly ConcurrentDictionary<string, IRegion> _regions = new(StringComparer.Ordinal);
+
 
     //    // ── Connection / Pool (CacheImpl.hpp:330, 362-363, 369) ──
     //    private object? _distributedSystem;   // m_distributedSystem

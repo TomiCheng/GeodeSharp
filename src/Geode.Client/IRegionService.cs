@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client;
 
 /// <summary>
@@ -34,5 +33,3 @@ public interface IRegionService : IAsyncDisposable
     // Phase 1.x: IReadOnlyList<IRegion> RootRegions { get; }
     // Phase 2:   PdxInstanceFactory CreatePdxInstanceFactory(string className, ...);
 }
-
-*/

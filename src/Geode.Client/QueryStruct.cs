@@ -1,4 +1,3 @@
-/*
 using System.Collections;
 
 namespace Geode.Client;
@@ -70,5 +69,3 @@ public sealed class QueryStruct : IReadOnlyList<object?>
     public IEnumerator<object?> GetEnumerator() => _values.GetEnumerator();
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
-
-*/

@@ -1,4 +1,3 @@
-/*
 using System.Collections.Concurrent;
 using Geode.Client.Pdx;
 using Microsoft.Extensions.Logging;
@@ -68,5 +67,3 @@ internal sealed class TypeRegistry(ILogger<TypeRegistry> logger) : ITypeRegistry
         Action<object, IPdxWriter> Write,
         Func<IPdxReader, object> Read);
 }
-
-*/

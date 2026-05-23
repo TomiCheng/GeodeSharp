@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Pdx;
 
 /// <summary>Writes PDX fields during serialization.</summary>
@@ -34,5 +33,3 @@ public interface IPdxWriter
     /// <summary>Write a date field (Java <c>java.util.Date</c>).</summary>
     IPdxWriter WriteDate(string fieldName, DateTime value);
 }
-
-*/

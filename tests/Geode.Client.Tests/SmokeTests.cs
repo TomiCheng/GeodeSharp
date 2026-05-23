@@ -1,3 +1,4 @@
+/*
 using Xunit;
 
 namespace Geode.Client.Tests;
@@ -11,3 +12,5 @@ public class SmokeTests
         Assert.Equal(2, 1 + 1);
     }
 }
+
+*/

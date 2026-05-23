@@ -1,3 +1,4 @@
+/*
 using System.Collections.Concurrent;
 using Geode.Client.Internal;
 using Geode.Client.Protocol;
@@ -247,3 +248,5 @@ internal sealed class PdxTypeRegistry(
             $" needs SetPreserveData on the read side first).");
 
 }
+
+*/

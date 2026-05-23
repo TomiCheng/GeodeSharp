@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Protocol.Serialization;
 
 namespace Geode.Client.Internal;
@@ -220,3 +221,5 @@ internal sealed class RegionView<TKey, TValue> : IRegion<TKey, TValue>
     Task<object?> IRegion.SelectValueAsync(string predicate, CancellationToken ct)
         => _inner.SelectValueAsync(predicate, ct);
 }
+
+*/

@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Services;
 
 /// <summary>
@@ -111,3 +112,5 @@ internal sealed class EventIdGenerator
         return (ThreadId, end - count + 1);
     }
 }
+
+*/

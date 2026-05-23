@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Protocol;
 using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -159,3 +160,5 @@ internal sealed class RemoteQuery<T>(
     }
 
 }
+
+*/

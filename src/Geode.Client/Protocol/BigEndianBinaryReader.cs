@@ -1,3 +1,4 @@
+/*
 using System.Buffers.Binary;
 using System.Text;
 
@@ -420,3 +421,5 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
         }
     }
 }
+
+*/

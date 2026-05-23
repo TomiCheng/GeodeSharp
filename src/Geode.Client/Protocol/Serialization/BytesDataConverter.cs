@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Services;
 
 namespace Geode.Client.Protocol.Serialization;
@@ -80,3 +81,5 @@ internal sealed class BytesDataConverter(CacheScopeContext cacheScopeContext)
         return reader.ReadBytesOnly(length).ToArray();
     }
 }
+
+*/

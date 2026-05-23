@@ -1,3 +1,4 @@
+/*
 using System.Threading.Channels;
 using Geode.Client.Protocol;
 using Geode.Client.Services;
@@ -228,11 +229,11 @@ internal abstract class ThinClientBaseDM : IAsyncDisposable
     public virtual void IncConnectedEndpoints() { }
     public virtual void DecConnectedEndpoints() { }
 
-    public virtual Task<int /*GfErrType*/> RegisterInterestForRegionAsync(
+    public virtual Task<int /*GfErrType* /> RegisterInterestForRegionAsync(
         TcrEndpoint endpoint,
         object? region = null,
         CancellationToken ct = default)
-        => Task.FromResult(/*GF_NOERR*/ 0);
+        => Task.FromResult(/*GF_NOERR* / 0);
 
     /// <summary>
     /// Push a chunked-response context onto <see cref="Chunks"/> for
@@ -269,3 +270,5 @@ internal abstract class ThinClientBaseDM : IAsyncDisposable
         ChunkCts.Dispose();
     }
 }
+
+*/

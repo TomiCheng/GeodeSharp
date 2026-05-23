@@ -1,3 +1,4 @@
+/*
 using Microsoft.Extensions.Logging;
 
 namespace Geode.Client.Protocol;
@@ -56,3 +57,5 @@ internal sealed class DiskVersionTag(
             "DiskVersionTag.ReadMembers pending Phase 4+ (persistent regions).");
     }
 }
+
+*/

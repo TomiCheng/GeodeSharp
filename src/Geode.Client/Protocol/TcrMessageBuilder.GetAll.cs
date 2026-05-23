@@ -1,3 +1,4 @@
+/*
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol;
@@ -150,3 +151,5 @@ partial class TcrMessageBuilder
     /// </summary>
     private const string GetAllJavaObjectClassName = "java.lang.Object";
 }
+
+*/

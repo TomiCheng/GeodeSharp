@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Options;
 using Xunit;
 
@@ -59,3 +60,5 @@ public class CacheHostPortOptionsTests
         Assert.Contains(failures, f => f.Contains("hp.Port") && f.Contains(port.ToString()));
     }
 }
+
+*/

@@ -1,3 +1,4 @@
+/*
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -241,3 +242,5 @@ internal class VersionTag(
         }
     }
 }
+
+*/

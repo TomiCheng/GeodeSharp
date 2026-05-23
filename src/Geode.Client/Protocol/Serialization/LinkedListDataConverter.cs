@@ -1,3 +1,4 @@
+/*
 using System.Collections;
 
 namespace Geode.Client.Protocol.Serialization;
@@ -95,3 +96,5 @@ internal sealed class LinkedListDataConverter : IDataConverter
         return list;
     }
 }
+
+*/

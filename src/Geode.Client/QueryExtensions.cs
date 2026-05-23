@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client;
 
 /// <summary>
@@ -60,3 +61,5 @@ public static class QueryExtensions
         return query;
     }
 }
+
+*/

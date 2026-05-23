@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client;
 
 /// <summary>
@@ -25,3 +26,5 @@ public class AllConnectionsInUseException : GeodeException
     public AllConnectionsInUseException(string message, Exception innerException)
         : base(message, innerException) { }
 }
+
+*/

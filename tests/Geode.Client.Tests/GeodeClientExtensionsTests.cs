@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Options;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -330,3 +331,5 @@ public class GeodeClientExtensionsTests
         Assert.Throws<ArgumentNullException>(() => services.AddGeodeFactory(null!));
     }
 }
+
+*/

@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Internal;
 using Geode.Client.Options;
 using Xunit;
@@ -199,3 +200,5 @@ public class GeodeClientOptionsValidatorTests
         Assert.True(v.Validate(name: null, opts).Succeeded);
     }
 }
+
+*/

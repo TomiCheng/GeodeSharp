@@ -1,3 +1,4 @@
+/*
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using Geode.Client.Internal;
@@ -221,3 +222,5 @@ internal sealed class GeodeCacheFactory(
     /// </summary>
     private readonly record struct ScopedCacheEntry(IGeodeCache Cache, AsyncServiceScope Scope);
 }
+
+*/

@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Protocol;
 
 namespace Geode.Client.Internal;
@@ -58,3 +59,5 @@ internal sealed record LocatorListResponse(
         return new LocatorListResponse(locators, isBalanced);
     }
 }
+
+*/

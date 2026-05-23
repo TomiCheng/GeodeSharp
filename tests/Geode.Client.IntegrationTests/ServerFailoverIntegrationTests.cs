@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Options;
 using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -135,3 +136,5 @@ public class ServerFailoverIntegrationTests(GeodeFixture fx)
         await cache.CloseAsync(cts.Token);
     }
 }
+
+*/

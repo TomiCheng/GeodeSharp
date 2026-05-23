@@ -1,3 +1,4 @@
+/*
 using System;
 using Geode.Client.Internal;
 using Geode.Client.Services;
@@ -309,3 +310,5 @@ internal sealed class SerializationRegistry
     }
 
 }
+
+*/

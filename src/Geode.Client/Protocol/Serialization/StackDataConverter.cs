@@ -1,3 +1,4 @@
+/*
 using System.Collections;
 
 namespace Geode.Client.Protocol.Serialization;
@@ -103,3 +104,5 @@ internal sealed class StackDataConverter : IDataConverter
         return stack;
     }
 }
+
+*/

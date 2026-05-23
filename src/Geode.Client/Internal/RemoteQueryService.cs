@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Protocol.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -163,3 +164,5 @@ internal sealed class RemoteQueryService : IQueryService
         _logger.LogTrace("RemoteQueryService::close: completed");
     }
 }
+
+*/

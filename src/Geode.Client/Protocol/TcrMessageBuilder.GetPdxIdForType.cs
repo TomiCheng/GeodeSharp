@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Protocol.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -58,3 +59,5 @@ partial class TcrMessageBuilder
             MetaTransactionId, (byte)0, parts);
     }
 }
+
+*/

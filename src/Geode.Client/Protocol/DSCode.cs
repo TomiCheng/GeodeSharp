@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Protocol;
 
 /// <summary>
@@ -109,3 +110,5 @@ internal static class DSCode
     public const byte PDX = 93;
     public const byte PdxEnum = 94;
 }
+
+*/

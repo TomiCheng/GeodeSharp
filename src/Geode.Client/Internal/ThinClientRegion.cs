@@ -1,3 +1,4 @@
+/*
 using System.Text.RegularExpressions;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
@@ -836,3 +837,5 @@ internal sealed partial class ThinClientRegion(
     }
 
 }
+
+*/

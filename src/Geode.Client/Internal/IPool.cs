@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Internal;
 
 /// <summary>
@@ -57,3 +58,5 @@ internal interface IPool : IAsyncDisposable
     //   createAuthenticatedView()       — Phase 3
     //   getPendingEventCount()          — bucket 1, Meter counter
 }
+
+*/

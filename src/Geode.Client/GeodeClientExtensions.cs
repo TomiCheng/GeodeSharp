@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Pdx;
@@ -175,3 +176,5 @@ public static class GeodeClientExtensions
             sp.GetRequiredService<IGeodeCacheFactory>().Get(""));
     }
 }
+
+*/

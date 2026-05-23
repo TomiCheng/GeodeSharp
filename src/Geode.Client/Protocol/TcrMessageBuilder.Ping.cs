@@ -1,3 +1,4 @@
+/*
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol;
@@ -15,3 +16,5 @@ partial class TcrMessageBuilder
             EarlyAck: 0,
             Parts: [], ServiceProvider: _serviceProvider);
 }
+
+*/

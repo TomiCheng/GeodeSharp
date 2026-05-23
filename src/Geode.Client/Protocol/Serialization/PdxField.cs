@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -114,3 +115,5 @@ internal sealed record PdxField(
         output.WriteBool(IsIdentityField);
     }
 }
+
+*/

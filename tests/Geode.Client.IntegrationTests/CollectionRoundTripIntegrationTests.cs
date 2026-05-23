@@ -1,3 +1,4 @@
+/*
 using System.Text.RegularExpressions;
 using Geode.Client.Options;
 using Microsoft.Extensions.DependencyInjection;
@@ -591,3 +592,5 @@ public class CollectionRoundTripIntegrationTests(GeodeFixture fx)
         }
     }
 }
+
+*/

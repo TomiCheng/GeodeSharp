@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Internal;
 using Geode.Client.Protocol.Serialization;
 using Microsoft.Extensions.DependencyInjection;
@@ -592,3 +593,5 @@ internal sealed class VersionedCacheableObjectPartList(
     /// </summary>
     private readonly Lock _responseLock = new();
 }
+
+*/

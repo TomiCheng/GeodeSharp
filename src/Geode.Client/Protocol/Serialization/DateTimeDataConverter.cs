@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -72,3 +73,5 @@ internal sealed class DateTimeDataConverter : DataConverter<DateTime>
         return DateTime.UnixEpoch.AddTicks(ms * TimeSpan.TicksPerMillisecond);
     }
 }
+
+*/

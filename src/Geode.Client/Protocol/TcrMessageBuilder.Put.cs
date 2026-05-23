@@ -1,3 +1,4 @@
+/*
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol;
@@ -101,3 +102,5 @@ partial class TcrMessageBuilder
         return ActivatorUtilities.CreateInstance<TcrMessage>(_serviceProvider, MessageType.Put, transactionId, (byte)0, parts);
     }
 }
+
+*/

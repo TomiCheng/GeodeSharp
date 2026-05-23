@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client;
 
 /// <summary>
@@ -28,3 +29,5 @@ public class GeodeException : Exception
     public GeodeException(string message, Exception innerException)
         : base(message, innerException) { }
 }
+
+*/

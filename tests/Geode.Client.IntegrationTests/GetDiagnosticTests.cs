@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Protocol;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -142,3 +143,5 @@ public class GetDiagnosticTests(GeodeFixture fx, ITestOutputHelper output)
         }
     }
 }
+
+*/

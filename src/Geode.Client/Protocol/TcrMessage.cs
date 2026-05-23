@@ -1,3 +1,4 @@
+/*
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol;
@@ -183,3 +184,5 @@ internal sealed record TcrMessage(
         throw new NotImplementedException(
             "Phase 3 ??TcrMessage.IsUserInitiativeOps (auth / multi-user dispatch)");
 }
+
+*/

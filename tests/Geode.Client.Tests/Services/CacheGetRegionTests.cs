@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Protocol.Serialization;
@@ -138,3 +139,5 @@ public class CacheGetRegionTests
             () => cache.GetRegion<string, byte[]>("anything"));
     }
 }
+
+*/

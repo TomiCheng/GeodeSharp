@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Options;
 using Geode.Client.Services;
 using Xunit;
@@ -121,3 +122,5 @@ public class CacheResolvePoolsToBuildTests
         Assert.Same(cache.Pools, resolved);
     }
 }
+
+*/

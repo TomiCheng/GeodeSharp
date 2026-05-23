@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -29,3 +30,5 @@ internal sealed class CharacterDataConverter : DataConverter<char>
     public override char Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>
         (char)reader.ReadUInt16();
 }
+
+*/

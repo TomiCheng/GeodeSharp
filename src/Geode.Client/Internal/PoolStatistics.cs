@@ -1,3 +1,4 @@
+/*
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
@@ -514,3 +515,5 @@ internal class PoolStatistics(string poolName)
     public Activity? StartClientConnectionRequest() =>
         _activitySource.StartActivity("ClientConnectionRequest", ActivityKind.Client)?.SetTag("poolName", poolName);
 }
+
+*/

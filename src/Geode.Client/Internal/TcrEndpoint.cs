@@ -1,3 +1,4 @@
+/*
 using System.Net;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
@@ -341,7 +342,7 @@ internal class TcrEndpoint(
     /// (3) flip <c>_isActiveEndpoint</c> for redundancy manager &#x2014;
     /// Phase 2+ (HA).
     /// </remarks>
-    public Task<int /*GfErrType*/> RegisterDMAsync(
+    public Task<int /*GfErrType* /> RegisterDMAsync(
         bool clientNotification,
         bool isSecondary,
         bool isActiveEndpoint,
@@ -364,7 +365,7 @@ internal class TcrEndpoint(
 
         if (distributionManager is null)
         {
-            return Task.FromResult(/*GF_NOERR*/ 0);
+            return Task.FromResult(/*GF_NOERR* / 0);
         }
 
         // Dedupe under the lock so repeated AddRefToTcrEndpoint calls
@@ -377,7 +378,7 @@ internal class TcrEndpoint(
             }
         }
 
-        return Task.FromResult(/*GF_NOERR*/ 0);
+        return Task.FromResult(/*GF_NOERR* / 0);
     }
 
     /// <summary>
@@ -385,7 +386,7 @@ internal class TcrEndpoint(
     /// <c>_opConnections</c>. Mirrors cppcache
     /// <c>TcrEndpoint::send(request, reply)</c>.
     /// </summary>
-    public Task<int /*GfErrType*/> SendAsync(
+    public Task<int /*GfErrType* /> SendAsync(
         object request,                   // TcrMessage
         object reply,                     // TcrMessageReply
         CancellationToken ct = default)
@@ -400,7 +401,7 @@ internal class TcrEndpoint(
     /// Send with retries against this endpoint's pool. Mirrors cppcache
     /// <c>TcrEndpoint::sendRequestWithRetry</c>.
     /// </summary>
-    public Task<int /*GfErrType*/> SendRequestWithRetryAsync(
+    public Task<int /*GfErrType* /> SendRequestWithRetryAsync(
         object request,
         object reply,
         int maxSendRetries,
@@ -545,3 +546,5 @@ internal class TcrEndpoint(
 
 
 }
+
+*/

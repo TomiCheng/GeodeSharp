@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Services;
@@ -502,3 +503,5 @@ public class CacheConnectionIntegrationTests(GeodeFixture fx)
         Assert.True(cache.IsClosed);
     }
 }
+
+*/

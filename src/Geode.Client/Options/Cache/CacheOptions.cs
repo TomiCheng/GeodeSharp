@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Options;
 
 /// <summary>Declarative cache configuration (pools, regions, PDX) — the per-cache half of the options tree.</summary>
@@ -75,3 +76,5 @@ public class CacheOptions : ICloneable
         }
     }
 }
+
+*/

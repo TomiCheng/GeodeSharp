@@ -1,3 +1,4 @@
+/*
 using System.Collections;
 
 namespace Geode.Client.Protocol.Serialization;
@@ -116,3 +117,5 @@ internal sealed class HashSetDataConverter : IDataConverter
         return set;
     }
 }
+
+*/

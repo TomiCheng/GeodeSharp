@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -21,3 +22,5 @@ internal sealed class Int16DataConverter : DataConverter<short>
     public override short Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>
         reader.ReadInt16();
 }
+
+*/

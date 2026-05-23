@@ -1,3 +1,4 @@
+/*
 using System.Collections;
 
 namespace Geode.Client.Protocol.Serialization;
@@ -112,3 +113,5 @@ internal sealed class ListDataConverter : IDataConverter
         return list;
     }
 }
+
+*/

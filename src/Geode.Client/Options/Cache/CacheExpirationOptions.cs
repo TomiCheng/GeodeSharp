@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Options;
 
 /// <summary>
@@ -30,3 +31,5 @@ public class CacheExpirationOptions : ICloneable
         yield break;
     }
 }
+
+*/

@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -13,3 +14,5 @@ internal sealed class PdxWriterWithTypeCollector(IServiceProvider serviceProvide
 
     public PdxType GetPdxLocalType() => BuildSchema(className);
 }
+
+*/

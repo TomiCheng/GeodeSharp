@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -21,3 +22,5 @@ internal sealed class BooleanDataConverter : DataConverter<bool>
     public override bool Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>
         reader.ReadByte() != 0;
 }
+
+*/

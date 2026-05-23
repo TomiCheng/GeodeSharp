@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -46,3 +47,5 @@ internal sealed class PdxRemoteWriter : PdxLocalWriter
     /// <summary>前次 deserialize 留下來的 unread fields;沒有就 null。</summary>
     public PdxRemotePreservedData? PreservedData { get; }
 }
+
+*/

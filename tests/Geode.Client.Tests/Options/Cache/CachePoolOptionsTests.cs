@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Options;
 using Xunit;
 
@@ -171,3 +172,5 @@ public class CachePoolOptionsTests
         Assert.Contains(failures, f => f.Contains("p.Locators[1].Port"));
     }
 }
+
+*/

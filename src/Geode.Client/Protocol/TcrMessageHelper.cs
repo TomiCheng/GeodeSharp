@@ -1,3 +1,4 @@
+/*
 using System.Text;
 using Microsoft.Extensions.Logging;
 
@@ -215,3 +216,5 @@ internal sealed class TcrMessageHelper(ILogger<TcrMessageHelper> logger)
         return sb.ToString();
     }
 }
+
+*/

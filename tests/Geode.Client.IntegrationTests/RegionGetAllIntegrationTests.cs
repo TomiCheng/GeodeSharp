@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -160,3 +161,5 @@ public class RegionGetAllIntegrationTests(GeodeFixture fx)
         }
     }
 }
+
+*/

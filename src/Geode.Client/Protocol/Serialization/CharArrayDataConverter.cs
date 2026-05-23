@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Services;
 
 namespace Geode.Client.Protocol.Serialization;
@@ -68,3 +69,5 @@ internal sealed class CharArrayDataConverter(CacheScopeContext cacheScopeContext
         return array;
     }
 }
+
+*/

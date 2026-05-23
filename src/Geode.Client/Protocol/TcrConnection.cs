@@ -1,3 +1,4 @@
+/*
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Diagnostics;
@@ -936,3 +937,5 @@ internal sealed class TcrConnection(
         }
     }
 }
+
+*/

@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Options;
 
 /// <summary>
@@ -107,3 +108,5 @@ public class GeodeClientOptions: ICloneable
             foreach (var f in Cache.Validate($"{prefix}.Cache")) yield return f;
     }
 }
+
+*/

@@ -1,3 +1,4 @@
+/*
 using Microsoft.Extensions.DependencyInjection;
 
 using Geode.Client.Protocol.Serialization;
@@ -51,3 +52,5 @@ internal sealed partial class TcrMessageBuilder(
     // guards with central registry lookup as each op is reworked.
     private readonly SerializationRegistry _serializationRegistry = serializationRegistry;
 }
+
+*/

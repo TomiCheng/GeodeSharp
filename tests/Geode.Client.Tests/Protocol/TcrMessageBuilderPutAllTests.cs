@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Protocol;
 using Geode.Client.Tests.Protocol.Serialization;
 using Microsoft.Extensions.DependencyInjection;
@@ -186,3 +187,5 @@ public class TcrMessageBuilderPutAllTests
         Assert.Equal("map", ex.ParamName);
     }
 }
+
+*/

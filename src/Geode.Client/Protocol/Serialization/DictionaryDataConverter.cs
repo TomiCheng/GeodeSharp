@@ -1,3 +1,4 @@
+/*
 using System.Collections;
 
 namespace Geode.Client.Protocol.Serialization;
@@ -125,3 +126,5 @@ internal sealed class DictionaryDataConverter : IDataConverter
         return dict;
     }
 }
+
+*/

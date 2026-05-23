@@ -1,3 +1,4 @@
+/*
 using System.Buffers;
 using System.Net;
 using System.Security.Cryptography;
@@ -184,3 +185,5 @@ internal sealed class ClientProxyMembershipIdBuilder(CacheScopeContext scopeCont
         return sb.ToString();
     }
 }
+
+*/

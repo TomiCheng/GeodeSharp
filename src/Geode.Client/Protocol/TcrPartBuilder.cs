@@ -1,3 +1,4 @@
+/*
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol;
@@ -214,3 +215,5 @@ internal sealed class TcrPartBuilder(IServiceProvider serviceProvider)
         return new TcrPart(isObject, output.WrittenSpan.ToArray());
     }
 }
+
+*/

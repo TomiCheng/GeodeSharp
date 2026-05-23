@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -132,3 +133,5 @@ internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
         return array;
     }
 }
+
+*/

@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Options;
 
 /// <summary>
@@ -55,3 +56,5 @@ public class SecurityOptions : ICloneable
         yield break;
     }
 }
+
+*/

@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -28,3 +29,5 @@ internal interface IDataConverter<T> : IDataConverter
     /// <summary>Typed async 版,no boxing。</summary>
     new ValueTask<T?> ReadAsync(BigEndianBinaryReader reader, byte dsCode, int depth, CancellationToken ct);
 }
+
+*/

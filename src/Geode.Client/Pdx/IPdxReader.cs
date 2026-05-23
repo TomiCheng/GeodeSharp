@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Pdx;
 
 /// <summary>Reads PDX fields during deserialization.</summary>
@@ -33,3 +34,5 @@ public interface IPdxReader
     /// <summary>Read a date field (Java <c>java.util.Date</c>).</summary>
     DateTime ReadDate(string fieldName);
 }
+
+*/

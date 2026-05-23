@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Protocol;
 
 /// <summary>
@@ -69,3 +70,5 @@ internal readonly record struct ProtocolVersion(short Ordinal)
         }
     }
 }
+
+*/

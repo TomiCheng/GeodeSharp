@@ -1,3 +1,4 @@
+/*
 using System.Buffers.Binary;
 using System.Net;
 using System.Text;
@@ -307,3 +308,5 @@ public class ClientProxyMembershipIdBuilderTests
         }
     }
 }
+
+*/

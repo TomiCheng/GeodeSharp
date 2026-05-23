@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Protocol;
 using Geode.Client.Tests.Protocol.Serialization;
 using Microsoft.Extensions.DependencyInjection;
@@ -150,3 +151,5 @@ public class TcrMessageBuilderRemoveAllTests
         Assert.Equal("keys", ex.ParamName);
     }
 }
+
+*/

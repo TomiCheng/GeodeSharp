@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Options;
 using Xunit;
 
@@ -100,3 +101,5 @@ public class CacheRegionAttributesOptionsTests
         Assert.Empty(new CacheRegionAttributesOptions().Validate("attrs"));
     }
 }
+
+*/

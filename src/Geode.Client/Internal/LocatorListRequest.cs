@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Protocol;
 
 namespace Geode.Client.Internal;
@@ -30,3 +31,5 @@ internal sealed record LocatorListRequest(string ServerGroup = "")
         writer.WriteString(ServerGroup);
     }
 }
+
+*/

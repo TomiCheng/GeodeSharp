@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Options;
 
 namespace Geode.Client.Internal;
@@ -64,3 +65,5 @@ internal abstract class RegionInternal(CacheRegionAttributesOptions attributes)
     //   Phase 4:   single-hop / partitioned-region helpers
     //   Sub-region phase: createSubRegion / getSubRegion / subRegions
 }
+
+*/

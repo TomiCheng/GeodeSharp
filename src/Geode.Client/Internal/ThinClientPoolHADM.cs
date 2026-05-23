@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Options;
 using Geode.Client.Services;
 using Microsoft.Extensions.Logging;
@@ -44,3 +45,5 @@ internal sealed class ThinClientPoolHADM(
         return Task.CompletedTask;
     }
 }
+
+*/

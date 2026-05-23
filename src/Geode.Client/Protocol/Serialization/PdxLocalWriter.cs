@@ -1,3 +1,4 @@
+/*
 using System.Buffers.Binary;
 using Geode.Client.Pdx;
 using Geode.Client.Services;
@@ -227,3 +228,5 @@ internal class PdxLocalWriter(IServiceProvider serviceProvider)
             // so Count-1 = the slot id just claimed for this field.
             VarLenFieldIdx: _varLenOffsets.Count - 1));
 }
+
+*/

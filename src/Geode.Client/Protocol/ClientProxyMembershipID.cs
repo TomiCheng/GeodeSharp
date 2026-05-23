@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Protocol.Serialization;
 
 namespace Geode.Client.Protocol;
@@ -117,3 +118,5 @@ internal sealed class ClientProxyMembershipID(SerializationRegistry serializatio
         _ = DC_PORT;         // reserved for the full initObjectVars port (Phase 4+)
     }
 }
+
+*/

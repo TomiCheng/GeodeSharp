@@ -1,3 +1,4 @@
+/*
 using System.Collections.Concurrent;
 using Geode.Client.Internal;
 
@@ -141,3 +142,5 @@ internal sealed class PoolManager : IAsyncDisposable
     // separate PoolFactory type is needed at all is undecided —
     // tracked in PORTING.md.
 }
+
+*/

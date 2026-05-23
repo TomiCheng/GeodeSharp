@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -108,3 +109,5 @@ internal sealed class StringArrayDataConverter(SerializationRegistry registry)
         return array;
     }
 }
+
+*/

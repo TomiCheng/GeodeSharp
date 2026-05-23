@@ -1,3 +1,4 @@
+/*
 using System.Diagnostics.CodeAnalysis;
 using Geode.Client.Options;
 
@@ -41,3 +42,5 @@ public interface IGeodeCacheFactory
     /// <exception cref="ObjectDisposedException">Factory has been disposed.</exception>
     ValueTask<bool> RemoveAsync(string cacheName);
 }
+
+*/

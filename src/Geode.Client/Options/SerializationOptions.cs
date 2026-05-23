@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Options;
 
 /// <summary>
@@ -189,3 +190,5 @@ public class SerializationOptions : ICloneable
             yield return $"{prefix}.MaxStringLength must be >= 0 (got {MaxStringLength}).";
     }
 }
+
+*/

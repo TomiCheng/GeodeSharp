@@ -1,3 +1,4 @@
+/*
 using System.Buffers;
 using System.Buffers.Binary;
 using Geode.Client.Internal;
@@ -384,3 +385,5 @@ internal sealed class DataOutput(SerializationRegistry registry, IPool? pool = n
     public ReadOnlySpan<byte> WrittenSpan => _bytes.AsSpan(0, _writtenCount);
 
 }
+
+*/

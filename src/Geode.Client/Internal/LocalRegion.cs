@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Options;
 
 namespace Geode.Client.Internal;
@@ -67,3 +68,5 @@ internal abstract class LocalRegion : RegionInternal
     //   m_destroyPending                  — Phase 1.5 lifecycle
     //   m_attachedPool                    — Phase 1.2.e wiring
 }
+
+*/

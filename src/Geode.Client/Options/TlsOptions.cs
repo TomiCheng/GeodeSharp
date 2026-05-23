@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Options;
 
 /// <summary>
@@ -52,3 +53,5 @@ public class TlsOptions : ICloneable
         yield break;
     }
 }
+
+*/

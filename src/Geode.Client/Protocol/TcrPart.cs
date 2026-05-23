@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Protocol;
 
 /// <summary>
@@ -80,3 +81,5 @@ internal sealed record TcrPart(byte IsObject, ReadOnlyMemory<byte> Payload)
         return hash.ToHashCode();
     }
 }
+
+*/

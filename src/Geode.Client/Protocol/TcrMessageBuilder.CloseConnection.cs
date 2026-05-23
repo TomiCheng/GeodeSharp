@@ -1,3 +1,4 @@
+/*
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol;
@@ -29,3 +30,5 @@ partial class TcrMessageBuilder
             Parts: [partBuilder.RawBytes(new byte[] { keepAlive ? (byte)1 : (byte)0 })],
             ServiceProvider: _serviceProvider);
 }
+
+*/

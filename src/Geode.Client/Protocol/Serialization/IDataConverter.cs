@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -124,3 +125,5 @@ internal interface IDataConverter
     ValueTask<object?> ReadAsync(BigEndianBinaryReader reader, byte dsCode, int depth, CancellationToken ct) =>
         ValueTask.FromResult(Read(reader, dsCode, depth));
 }
+
+*/

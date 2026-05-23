@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Options;
 using Geode.Client.Services;
 using Microsoft.Extensions.Logging;
@@ -37,3 +38,5 @@ internal sealed class ThinClientPoolStickyDM(
     protected override Task CleanStickyConnectionsAsync(CancellationToken ct)
         => _stickyManager?.CleanStaleStickyConnectionAsync(ct) ?? Task.CompletedTask;
 }
+
+*/

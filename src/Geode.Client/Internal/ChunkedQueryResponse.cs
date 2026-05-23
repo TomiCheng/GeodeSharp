@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Protocol;
 using Geode.Client.Protocol.Serialization;
 using Microsoft.Extensions.DependencyInjection;
@@ -552,3 +553,5 @@ internal sealed class ChunkedQueryResponse<T>(
         reader.AdvanceCursor(classLen);
     }
 }
+
+*/

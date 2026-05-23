@@ -1,3 +1,4 @@
+/*
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
@@ -866,17 +867,17 @@ internal class ThinClientPoolDM(
         if (_connManageLoop is not null)
         {
             try { await _connManageLoop.ConfigureAwait(false); }
-            catch (OperationCanceledException) { /* expected */ }
+            catch (OperationCanceledException) { /* expected * / }
         }
         if (_pingLoop is not null)
         {
             try { await _pingLoop.ConfigureAwait(false); }
-            catch (OperationCanceledException) { /* expected */ }
+            catch (OperationCanceledException) { /* expected * / }
         }
         if (_updateLocatorLoop is not null)
         {
             try { await _updateLocatorLoop.ConfigureAwait(false); }
-            catch (OperationCanceledException) { /* expected */ }
+            catch (OperationCanceledException) { /* expected * / }
         }
 
         // 3b. Stop the client metadata service. cppcache
@@ -1580,7 +1581,7 @@ internal class ThinClientPoolDM(
                 await Task.Delay(interval, ct).ConfigureAwait(false);
             }
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { /* graceful shutdown */ }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { /* graceful shutdown * / }
     }
 
     /// <summary>
@@ -2026,5 +2027,7 @@ internal class ThinClientPoolDM(
 
     // ── HA subscription (Phase 2+) ──
     private int _primaryServerQueueSize = -1;                     // m_primaryServerQueueSize (PRIMARY_QUEUE_NOT_AVAILABLE = -1)
-*/
+* /
 }
+
+*/

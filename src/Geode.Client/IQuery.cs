@@ -1,3 +1,4 @@
+/*
 namespace Geode.Client;
 
 /// <summary>
@@ -27,3 +28,5 @@ public interface IQuery<T>
     /// </exception>
     Task<IReadOnlyList<T>> ExecuteAsync(CancellationToken ct = default);
 }
+
+*/

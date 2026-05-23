@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
@@ -86,3 +87,5 @@ internal static class SerializationTestHelpers
     public static T RoundTrip<T>(T value) =>
         (T)Decode(Encode(value!))!;
 }
+
+*/

@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -287,3 +288,5 @@ public class GeodeCacheFactoryTests
         await sp.DisposeAsync();
     }
 }
+
+*/

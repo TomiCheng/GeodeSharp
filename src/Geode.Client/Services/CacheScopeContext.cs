@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Options;
 
 namespace Geode.Client.Services;
@@ -63,3 +64,5 @@ internal sealed class CacheScopeContext
         _initialized = true;
     }
 }
+
+*/

@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Protocol;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -274,3 +275,5 @@ internal sealed class ChunkedGetAllResponse(
         // get replaced rather than removed.
     }
 }
+
+*/

@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Options;
 using Xunit;
 
@@ -200,3 +201,5 @@ public class PrimitiveOptionsTests
         public void Validate_empty() => Assert.Empty(new CachePdxOptions().Validate("px"));
     }
 }
+
+*/

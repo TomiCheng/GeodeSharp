@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Protocol;
 using Xunit;
 
@@ -54,3 +55,5 @@ public class BooleanArrayDataConverterTests
     public void RoundTrip_small(bool[] value) =>
         Assert.Equal(value, SerializationTestHelpers.RoundTrip(value));
 }
+
+*/

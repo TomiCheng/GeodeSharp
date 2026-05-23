@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Protocol;
 
 namespace Geode.Client.Internal;
@@ -35,3 +36,5 @@ internal sealed record ClientConnectionRequest(
         }
     }
 }
+
+*/

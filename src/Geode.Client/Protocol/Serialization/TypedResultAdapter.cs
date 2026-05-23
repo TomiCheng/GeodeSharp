@@ -1,3 +1,4 @@
+/*
 using System.Collections;
 
 namespace Geode.Client.Protocol.Serialization;
@@ -353,3 +354,5 @@ internal sealed class TypedResultAdapter
         return array;
     }
 }
+
+*/

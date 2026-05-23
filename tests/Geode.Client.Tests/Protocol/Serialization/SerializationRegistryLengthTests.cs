@@ -1,3 +1,4 @@
+/*
 using System.Buffers;
 using Geode.Client.Protocol;
 using Geode.Client.Protocol.Serialization;
@@ -228,3 +229,5 @@ public class SerializationRegistryLengthTests
         // assertion here. Validator-default test covers the 10M value.
     }
 }
+
+*/

@@ -1,3 +1,4 @@
+/*
 using Geode.Client.Pdx;
 
 namespace Geode.Client;
@@ -31,3 +32,5 @@ public interface IGeodeCache : IRegionService
     /// <summary>Keep PDX values serialised on read.</summary>
     bool PdxReadSerialized { get; }
 }
+
+*/

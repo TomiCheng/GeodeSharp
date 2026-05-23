@@ -1,5 +1,6 @@
 
 using System.Collections.Concurrent;
+using Microsoft.Extensions.DependencyInjection;
 //using Geode.Client.Internal;
 
 namespace Geode.Client.Services;
@@ -28,11 +29,12 @@ namespace Geode.Client.Services;
 /// pick how / whether to mirror <c>PoolFactory</c>.
 /// </para>
 /// </remarks>
-internal sealed class PoolManager : IPoolManager// IAsyncDisposable
+internal sealed class PoolManager(IServiceProvider serviceProvider)
+
+    : IPoolManager// IAsyncDisposable
 {
-    //private readonly ConcurrentDictionary<string, IPool> _pools =
-    //    new(StringComparer.Ordinal);
-    //private IPool? _defaultPool;
+    private readonly ConcurrentDictionary<string, IPool> _pools = new(StringComparer.Ordinal);
+    private IPool? _defaultPool;
     //private int _disposed;
 
     ///// <summary>
@@ -80,22 +82,15 @@ internal sealed class PoolManager : IPoolManager// IAsyncDisposable
     ///// <exception cref="InvalidOperationException">
     ///// Thrown when a pool with the same name is already registered.
     ///// </exception>
-    //internal void AddPool(string name, IPool pool)
-    //{
-    //    ArgumentNullException.ThrowIfNull(name);
-    //    ArgumentNullException.ThrowIfNull(pool);
-    //    ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-
-    //    if (!_pools.TryAdd(name, pool))
-    //    {
-    //        throw new InvalidOperationException(
-    //            $"Pool '{name}' is already registered.");
-    //    }
-
-    //    // CompareExchange = "set only if still null". Loser of the
-    //    // race keeps its slot; winner becomes the default forever.
-    //    Interlocked.CompareExchange(ref _defaultPool, pool, null);
-    //}
+    internal void AddPool(string name, IPool pool)
+    {
+        if (!_pools.TryAdd(name, pool))
+        {
+            throw new InvalidOperationException(
+                $"Pool '{name}' is already registered.");
+        }
+        Interlocked.CompareExchange(ref _defaultPool, pool, null);
+    }
 
     ///// <summary>
     ///// Deregister a pool. Mirrors cppcache
@@ -141,5 +136,12 @@ internal sealed class PoolManager : IPoolManager// IAsyncDisposable
     //// ported: pools are not constructed off the manager. Whether a
     //// separate PoolFactory type is needed at all is undecided —
     //// tracked in PORTING.md.
+    ///
+
+    private ObjectFactory<PoolFactory> _poolFactory = ActivatorUtilities.CreateFactory<PoolFactory>([typeof(IPoolManager)]);
+    public PoolFactory CreateFactory()
+    {
+        return _poolFactory(serviceProvider, [this]);
+    }
 }
 

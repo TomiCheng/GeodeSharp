@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Options;
 
 /// <summary>
@@ -251,4 +250,3 @@ public class CachePoolOptions : ICloneable
 
 }
 
-*/

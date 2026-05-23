@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Options;
 
 /// <summary>
@@ -41,5 +40,3 @@ public class CacheHostPortOptions : ICloneable
             yield return $"{prefix}.Port must be in the range [1, 65535] (got {Port}).";
     }
 }
-
-*/

@@ -6,4 +6,5 @@ namespace Geode.Client;
 
 public interface IPoolManager
 {
+    PoolFactory CreateFactory();
 }

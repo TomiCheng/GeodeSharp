@@ -142,7 +142,7 @@ internal class ThinClientPoolDM(
     /// cppcache <c>ThinClientPoolDM::init</c> called from the tail of
     /// <c>PoolFactory::create</c>. No-op until the wire layer lands.
     /// </summary>
-    internal async Task InitAsync(CancellationToken ct = default)
+    public async override Task InitAsync(CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _isDestroyed) != 0, typeof(ThinClientPoolDM));
@@ -180,13 +180,13 @@ internal class ThinClientPoolDM(
     /// </summary>
     private async Task StartBackgroundThreads(CancellationToken ct)
     {
-        //SchedulePingLoop();
+        SchedulePingLoop();
 
-        //ScheduleUpdateLocatorLoop();
+        ScheduleUpdateLocatorLoop();
 
         _connManageLoop = ConnManageLoopAsync(_backgroundCts.Token);
 
-        //await base.InitAsync(ct).ConfigureAwait(false);
+        await base.InitAsync(ct).ConfigureAwait(false);
 
         if (attributes.PrSingleHopEnabled)
         {
@@ -252,27 +252,27 @@ internal class ThinClientPoolDM(
         //_queryService?.Close();
 
         //// 2. Signal every background loop to stop.
-        //_backgroundCts.Cancel();
+        _backgroundCts.Cancel();
 
-        //// 3. Await each loop's graceful exit. OperationCanceledException
-        ////    is expected here — that IS the graceful exit signal.
-        //if (_connManageLoop is not null)
-        //{
-        //    try { await _connManageLoop.ConfigureAwait(false); }
-        //    catch (OperationCanceledException)
-        //    {
-        //    }
-        //}
-        //if (_pingLoop is not null)
-        //{
-        //    try { await _pingLoop.ConfigureAwait(false); }
-        //    catch (OperationCanceledException) {  }
-        //}
-        //if (_updateLocatorLoop is not null)
-        //{
-        //    try { await _updateLocatorLoop.ConfigureAwait(false); }
-        //    catch (OperationCanceledException) {  }
-        //}
+        // 3. Await each loop's graceful exit. OperationCanceledException
+        //    is expected here — that IS the graceful exit signal.
+        if (_connManageLoop is not null)
+        {
+            try { await _connManageLoop.ConfigureAwait(false); }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+        if (_pingLoop is not null)
+        {
+            try { await _pingLoop.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+        }
+        if (_updateLocatorLoop is not null)
+        {
+            try { await _updateLocatorLoop.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+        }
 
         //// 3b. Stop the client metadata service. cppcache
         //// ThinClientPoolDM::destroy (L820-823): after loops, before
@@ -282,53 +282,53 @@ internal class ThinClientPoolDM(
         //    await _clientMetadataService.StopAsync(ct).ConfigureAwait(false);
         //}
 
-        //// 4. Dispose timers + sync primitives owned by this pool.
-        //_pingTimer?.Dispose();
-        //_updateLocatorTimer?.Dispose();
-        //_pingSignal.Dispose();
-        //_connManageSignal.Dispose();
-        //_updateLocatorSignal.Dispose();
-        //_backgroundCts.Dispose();
-        //_capSlots?.Dispose();
+        // 4. Dispose timers + sync primitives owned by this pool.
+        _pingTimer?.Dispose();
+        _updateLocatorTimer?.Dispose();
+        _pingSignal.Dispose();
+        _connManageSignal.Dispose();
+        _updateLocatorSignal.Dispose();
+        _backgroundCts.Dispose();
+        _capSlots?.Dispose();
 
-        //// 5a. Drain _opConnections — every idle conn gets a polite
-        ////     CloseConnection(18) before its socket goes away. Mirrors
-        ////     cppcache ConnectionQueue::close (ConnectionQueue.hpp:87)
-        ////     invoked from ThinClientPoolDM::destroy (L829).
-        ////     Snapshot-and-clear under lock so CloseAsync's await isn't
-        ////     held under the lock (close I/O may be slow).
-        //List<TcrConnection> drained;
-        //lock (_opConnLock)
-        //{
-        //    drained = [.. _opConnections];
-        //    _opConnections.Clear();
-        //}
-        //foreach (var conn in drained)
-        //{
-        //    // CloseAsync sends MessageType.CloseConnection(18) then
-        //    // disposes the socket. Currently NIE — until the leaf lands,
-        //    // any drained conn here will throw and bubble out of
-        //    // DestroyAsync. Top-down: call site is in place, leaf next.
-        //    await conn.CloseAsync(_keepAlive, ct).ConfigureAwait(false);
-        //}
+        // 5a. Drain _opConnections — every idle conn gets a polite
+        //     CloseConnection(18) before its socket goes away. Mirrors
+        //     cppcache ConnectionQueue::close (ConnectionQueue.hpp:87)
+        //     invoked from ThinClientPoolDM::destroy (L829).
+        //     Snapshot-and-clear under lock so CloseAsync's await isn't
+        //     held under the lock (close I/O may be slow).
+        List<TcrConnection> drained;
+        lock (_opConnLock)
+        {
+            drained = [.. _opConnections];
+            _opConnections.Clear();
+        }
+        foreach (var conn in drained)
+        {
+            // CloseAsync sends MessageType.CloseConnection(18) then
+            // disposes the socket. Currently NIE — until the leaf lands,
+            // any drained conn here will throw and bubble out of
+            // DestroyAsync. Top-down: call site is in place, leaf next.
+            await conn.CloseAsync(_keepAlive, ct).ConfigureAwait(false);
+        }
 
-        //// 5b. TODO Phase 1.5: release pool's TCCM refs to endpoints in
-        ////   _endpoints (ConnManager.RemoveRefToTcrEndpointAsync). Phase
-        ////   1.1: rely on cache-scope dispose to cascade.
-        //_endpoints.Clear();
+        // 5b. TODO Phase 1.5: release pool's TCCM refs to endpoints in
+        //   _endpoints (ConnManager.RemoveRefToTcrEndpointAsync). Phase
+        //   1.1: rely on cache-scope dispose to cascade.
+        _endpoints.Clear();
 
-        //// 5c. Unregister gauge readers so the static registries in
-        //// PoolStatistics don't leak this pool's entries.
-        //// TODO: full _stats.Close() to match cppcache getStats().close()
-        ////   (L835) — drop static-registry entries for every instrument,
-        ////   not just these gauges. forceSample (L836) is not needed for
-        ////   Meter (listeners pull on their own cadence).
-        //_stats.ClearPoolConnectionsReader();
-        //_stats.ClearLocatorsReader();
-        //_stats.ClearServersReader();
-        //_stats.ClearConnectedServersReader();
-        //_stats.ClearConnectionWaitsInProgressReader();
-        //_stats.ClearClientOpsInProgressReader();
+        // 5c. Unregister gauge readers so the static registries in
+        // PoolStatistics don't leak this pool's entries.
+        // TODO: full _stats.Close() to match cppcache getStats().close()
+        //   (L835) — drop static-registry entries for every instrument,
+        //   not just these gauges. forceSample (L836) is not needed for
+        //   Meter (listeners pull on their own cadence).
+        _stats.ClearPoolConnectionsReader();
+        _stats.ClearLocatorsReader();
+        _stats.ClearServersReader();
+        _stats.ClearConnectedServersReader();
+        _stats.ClearConnectionWaitsInProgressReader();
+        _stats.ClearClientOpsInProgressReader();
 
         //// 5d. TODO: PoolManager.RemovePool(name) — cppcache L838
         ////     `cacheImpl->getPoolManager().removePool(m_poolName)`
@@ -411,7 +411,7 @@ internal class ThinClientPoolDM(
         {
 
             var reply = await conn.SendRequestAsync(request, ct).ConfigureAwait(false);
-               
+
             //var reply = chunkedResult is null
             //    ? await conn.SendRequestAsync(request, ct).ConfigureAwait(false)
             //    : await conn.SendRequestAsync(request, chunkedResult, ct).ConfigureAwait(false);
@@ -446,27 +446,27 @@ internal class ThinClientPoolDM(
 
             if (putConnInPool)
             {
-                //        await PutInQueueAsync(conn, ct).ConfigureAwait(false);
+                await PutInQueueAsync(conn, ct).ConfigureAwait(false);
             }
             else
             {
-                //        await conn.DisposeAsync().ConfigureAwait(false);
+                await conn.DisposeAsync().ConfigureAwait(false);
             }
 
             return reply;
         }
         catch (Exception ex)
         {
-        //    // cppcache: setConnectionStatus(false) + removeEPConnections(1)
-        //    // + removeEPFromMetadataIfError. Phase 1.5 will refine via
-        //    // GfErrType classification (retry vs. mark-down).
-        //    endpoint.SetConnected(false);
-        //    if (putConnInPool)
-        //    {
-        //        Interlocked.Decrement(ref _poolSize); _capSlots?.Release();
-        //    }
-        //    await conn.DisposeAsync().ConfigureAwait(false);
-        //    RemoveEPFromMetadataIfError(endpoint, ex);
+            // cppcache: setConnectionStatus(false) + removeEPConnections(1)
+            // + removeEPFromMetadataIfError. Phase 1.5 will refine via
+            // GfErrType classification (retry vs. mark-down).
+            endpoint.SetConnected(false);
+            if (putConnInPool)
+            {
+                Interlocked.Decrement(ref _poolSize); _capSlots?.Release();
+            }
+            await conn.DisposeAsync().ConfigureAwait(false);
+            RemoveEPFromMetadataIfError(endpoint, ex);
             throw;
         }
     }
@@ -508,8 +508,7 @@ internal class ThinClientPoolDM(
     /// </summary>
     internal void RecordReceivedBytes(long bytes)
     {
-        // todo 
-        //_stats.ReceivedBytes(bytes);
+        _stats.ReceivedBytes(bytes);
     }
 
     /// <summary>
@@ -653,6 +652,40 @@ internal class ThinClientPoolDM(
         {
             throw new AllConnectionsInUseException(
                 $"Pool '{name}': MaxConnections={attributes.MaxConnections} reached.");
+        }
+    }
+
+    /// <summary>
+    /// Return a borrowed <see cref="TcrConnection"/> to the pool queue.
+    /// Mirrors cppcache <c>ThinClientPoolDM::put(conn, isTransaction)</c>
+    /// (the <c>false</c> overload — sticky-tx routing is Phase 6).
+    /// </summary>
+    private async ValueTask PutInQueueAsync(TcrConnection conn, CancellationToken ct)
+    {
+        // Stamp last-access (under lock) so CleanStaleConnectionsAsync
+        // sees the same order as the enqueue. destroyed-guard test is
+        // deferred — see PROGRESS.md Phase 1.5 "PutInQueueAsync tests".
+        // Phase 6 (sticky-tx isTransaction overload, cppcache
+        // ThinClientPoolDM.cpp:2293-2300) is the other still-open branch.
+        ct.ThrowIfCancellationRequested();
+        bool destroyed;
+        lock (_opConnLock)
+        {
+            destroyed = Volatile.Read(ref _isDestroyed) != 0;
+            if (!destroyed)
+            {
+                conn.Touch();
+                _opConnections.AddLast(conn);
+            }
+        }
+        if (destroyed)
+        {
+            // Pool already destroyed (and its queue drained) — close this
+            // late-returning conn so its socket / stats don't leak.
+            // Mirrors cppcache `put` closed_ branch
+            // (ConnectionQueue.hpp:62-67): when the queue refuses the
+            // conn, close + delete instead of enqueue.
+            await conn.CloseAsync(_keepAlive, ct).ConfigureAwait(false);
         }
     }
 
@@ -937,9 +970,8 @@ internal class ThinClientPoolDM(
                     // endpoint's connected_ bit to false → drop pool's
                     // references on its conns + HA subscription channel.
                     logger.LogDebug("Ping flipped endpoint {Endpoint} to disconnected; cleaning up.", endpoint.Name);
-                    // todo 
-                    //            await RemoveEPConnectionsAsync(endpoint, ct).ConfigureAwait(false);
-                    //            await RemoveCallbackConnectionAsync(endpoint, ct).ConfigureAwait(false);
+                    await RemoveEPConnectionsAsync(endpoint, ct).ConfigureAwait(false);
+                    await RemoveCallbackConnectionAsync(endpoint, ct).ConfigureAwait(false);
                 }
             }
         }
@@ -1666,39 +1698,7 @@ internal class ThinClientPoolDM(
 
 
 
-    /// <summary>
-    /// Return a borrowed <see cref="TcrConnection"/> to the pool queue.
-    /// Mirrors cppcache <c>ThinClientPoolDM::put(conn, isTransaction)</c>
-    /// (the <c>false</c> overload — sticky-tx routing is Phase 6).
-    /// </summary>
-    private async ValueTask PutInQueueAsync(TcrConnection conn, CancellationToken ct)
-    {
-        // Stamp last-access (under lock) so CleanStaleConnectionsAsync
-        // sees the same order as the enqueue. destroyed-guard test is
-        // deferred — see PROGRESS.md Phase 1.5 "PutInQueueAsync tests".
-        // Phase 6 (sticky-tx isTransaction overload, cppcache
-        // ThinClientPoolDM.cpp:2293-2300) is the other still-open branch.
-        ct.ThrowIfCancellationRequested();
-        bool destroyed;
-        lock (_opConnLock)
-        {
-            destroyed = Volatile.Read(ref _isDestroyed) != 0;
-            if (!destroyed)
-            {
-                conn.Touch();
-                _opConnections.AddLast(conn);
-            }
-        }
-        if (destroyed)
-        {
-            // Pool already destroyed (and its queue drained) — close this
-            // late-returning conn so its socket / stats don't leak.
-            // Mirrors cppcache `put` closed_ branch
-            // (ConnectionQueue.hpp:62-67): when the queue refuses the
-            // conn, close + delete instead of enqueue.
-            await conn.CloseAsync(_keepAlive, ct).ConfigureAwait(false);
-        }
-    }
+
 
 
     public override async Task InitAsync(CancellationToken ct = default)

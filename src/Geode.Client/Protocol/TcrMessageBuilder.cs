@@ -66,8 +66,12 @@ internal sealed partial class TcrMessageBuilder
             parts.Add(await builder.BuildAsync(ct));
         }
 
-        return ActivatorUtilities.CreateInstance<TcrMessage>(
-           _serviceProvider, _messageType, _transactionId, _earlyAck, parts);
+        // Direct construction (record positional ctor) rather than
+        // ActivatorUtilities — BuildAsync is called from CloseAsync on the
+        // sp-teardown path, and ActivatorUtilities would re-enter the
+        // disposing ServiceProvider to resolve `IServiceProvider`, throwing
+        // ObjectDisposedException. We already hold every ctor arg.
+        return new TcrMessage(_serviceProvider, _messageType, _transactionId, _earlyAck, parts);
 
     }
 }

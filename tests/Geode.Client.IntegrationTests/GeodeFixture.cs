@@ -1,4 +1,3 @@
-/*
 using System.Diagnostics.CodeAnalysis;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
@@ -223,5 +222,3 @@ public sealed class GeodeFixture : IAsyncLifetime
 public sealed class GeodeCollection : ICollectionFixture<GeodeFixture>
 {
 }
-
-*/

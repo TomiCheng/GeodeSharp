@@ -12,6 +12,7 @@ using Microsoft.Extensions.Logging;
 internal sealed class TcrConnection(
     IServiceProvider serviceProvider,
     ILogger<TcrConnection> logger)
+    : IAsyncDisposable
 {
     readonly TcpClient _tcpClient = new();
     Stream? _stream;
@@ -534,8 +535,12 @@ internal sealed class TcrConnection(
 
         // Builder is ctor-injected; cppcache pulls it lazily off DataOutput.
 
-        var builder = ActivatorUtilities
-            .CreateInstance<TcrMessageBuilder>(serviceProvider, MessageType.CloseConnection)
+        // Use TcrMessageBuilder.Create (direct new) rather than ActivatorUtilities:
+        // CloseAsync runs on the sp-teardown path, and ActivatorUtilities would
+        // re-enter the (already disposing) ServiceProvider to resolve other deps,
+        // throwing ObjectDisposedException. The static factory doesn't query DI.
+        var builder = TcrMessageBuilder
+            .Create(serviceProvider, MessageType.CloseConnection)
             .AddKeepAlivePart(keepAlive);
         var closeMsg = await builder.BuildAsync(ct);
 
@@ -560,6 +565,16 @@ internal sealed class TcrConnection(
 
         await DisposeAsync().ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Stamp this connection's last-access time. Mirrors cppcache
+    /// <c>TcrConnection::touch()</c>
+    /// (<c>cppcache/src/TcrConnection.cpp:1201</c>) ??pool managers call
+    /// it on borrow / return so <c>cleanStaleConnections</c> /
+    /// <see cref="IsIdle"/> can distinguish idle conns from active ones.
+    /// </summary>
+    public void Touch()
+        => Volatile.Write(ref _lastAccessed, Stopwatch.GetTimestamp());
 }
 
 /*
@@ -621,15 +636,7 @@ internal sealed class TcrConnection(
 
 #pragma warning restore CS0169, CS0414, CS0649
 
-    /// <summary>
-    /// Stamp this connection's last-access time. Mirrors cppcache
-    /// <c>TcrConnection::touch()</c>
-    /// (<c>cppcache/src/TcrConnection.cpp:1201</c>) ??pool managers call
-    /// it on borrow / return so <c>cleanStaleConnections</c> /
-    /// <see cref="IsIdle"/> can distinguish idle conns from active ones.
-    /// </summary>
-    public void Touch()
-        => Volatile.Write(ref _lastAccessed, Stopwatch.GetTimestamp());
+
 
 
 

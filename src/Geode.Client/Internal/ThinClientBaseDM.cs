@@ -29,7 +29,7 @@ internal abstract class ThinClientBaseDM : IAsyncDisposable
 {
     //protected readonly TcrConnectionManager ConnManager;     // m_connManager
     //protected readonly object? Region;                        // m_region (ThinClientRegion*)
-    //protected bool InitDone;                                  // m_initDone
+    protected bool InitDone;                                  // m_initDone
     //protected bool ClientNotification;                        // m_clientNotification
 
     ///// <summary>
@@ -56,18 +56,18 @@ internal abstract class ThinClientBaseDM : IAsyncDisposable
 
     //// ── Lifecycle ──────────────────────────────────────────────
 
-    ///// <summary>
-    ///// One-time init. Mirrors cppcache <c>ThinClientBaseDM::init()</c>:
-    ///// optionally start the chunk-processor task, set
-    ///// <see cref="InitDone"/>. Derived classes call <c>base.InitAsync</c>
-    ///// at the end of their own init.
-    ///// </summary>
-    //public virtual Task InitAsync(CancellationToken ct = default)
-    //{
-    //    // TODO: if options.EnableChunkHandlerThread → StartChunkProcessor.
-    //    InitDone = true;
-    //    return Task.CompletedTask;
-    //}
+    /// <summary>
+    /// One-time init. Mirrors cppcache <c>ThinClientBaseDM::init()</c>:
+    /// optionally start the chunk-processor task, set
+    /// <see cref="InitDone"/>. Derived classes call <c>base.InitAsync</c>
+    /// at the end of their own init.
+    /// </summary>
+    public virtual Task InitAsync(CancellationToken ct = default)
+    {
+        // TODO: if options.EnableChunkHandlerThread → StartChunkProcessor.
+        InitDone = true;
+        return Task.CompletedTask;
+    }
 
     ///// <summary>
     ///// Mirrors cppcache <c>destroy(keepalive)</c>: stop chunk

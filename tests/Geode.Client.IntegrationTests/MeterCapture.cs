@@ -1,4 +1,3 @@
-/*
 using System.Diagnostics.Metrics;
 
 namespace Geode.Client.IntegrationTests;
@@ -79,5 +78,3 @@ internal sealed class MeterCapture : IDisposable
 
     public void Dispose() => _listener.Dispose();
 }
-
-*/

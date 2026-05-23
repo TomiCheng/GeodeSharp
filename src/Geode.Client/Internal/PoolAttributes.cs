@@ -36,8 +36,11 @@ internal sealed class PoolAttributes
     // PoolFactory.hpp:121 — DEFAULT_RETRY_ATTEMPTS = -1 (pool decides)
     public int RetryAttempts { get; set; } = -1;
 
-    // PoolFactory.cpp:47-48 — std::chrono::seconds{10}
-    public TimeSpan PingInterval { get; set; } = TimeSpan.FromSeconds(10);
+    // Per-pool override; null falls back to SystemProperties.PingInterval
+    // (cppcache PoolFactory.cpp:47-48 keeps 10s baked into PoolAttributes;
+    // we lift the default to SystemProperties so cache-wide config can win
+    // when no pool-level value is set).
+    public TimeSpan? PingInterval { get; set; }
 
     // PoolFactory.cpp:50-51 — std::chrono::seconds{5}
     public TimeSpan UpdateLocatorListInterval { get; set; } = TimeSpan.FromSeconds(5);

@@ -93,6 +93,15 @@ internal class ThinClientPoolDM(
     /// <see cref="DestroyAsync"/> cancels it to signal graceful shutdown.
     /// </summary>
     private readonly CancellationTokenSource _backgroundCts = new();
+    /// <summary>
+    /// cppcache <c>m_isSecurityOn</c> — true when the cache has any security-* property set (proxy until Phase 3 auth callback lands).
+    /// </summary>
+    private bool _isSecurityOn;
+    /// <summary>
+    /// <c>keepAlive</c> intent stashed in <see cref="DestroyAsync"/> for
+    /// each conn's <see cref="TcrConnection.CloseAsync"/>.
+    /// </summary>
+    private bool _keepAlive;
 
     /// <summary>
     /// Open sockets + handshake with the configured locators/servers. Mirrors
@@ -117,8 +126,8 @@ internal class ThinClientPoolDM(
         {
             logger.LogInformation("Multiuser authentication is enabled for pool {PoolName}", name);
         }
-        //_isSecurityOn = options.Security.Properties.Count > 0;
-        //logger.LogDebug("ThinClientPoolDM.InitAsync: security on/off = {IsSecurityOn}", _isSecurityOn);
+        _isSecurityOn = poolManager.Cache.CacheProperties.SecurityProperties.Count > 0;
+        logger.LogDebug("ThinClientPoolDM.InitAsync: security on/off = {IsSecurityOn}", _isSecurityOn);
 
         //_stickyManager = ActivatorUtilities.CreateInstance<ThinClientStickyManager>(serviceProvider, this);
         //_clearPdxRegistry = options.Pdx.ClearTypeIdsOnDisconnect;
@@ -129,8 +138,6 @@ internal class ThinClientPoolDM(
 
         // ── Lazy conn opening — first conn opens via ConnManageLoop (RestoreMinConnections) or SendRequestToEndpointAsync.
     }
-
-    public ValueTask DisposeAsync() => throw new NotImplementedException();
 
     /// <summary>
     /// Launch the pool's background machinery. Mirrors cppcache
@@ -198,9 +205,9 @@ internal class ThinClientPoolDM(
             return;
         }
 
-        //// Stash the caller's keepAlive intent for Step 5a's CloseAsync calls.
-        //// cppcache: m_keepAlive = keepAlive (ThinClientPoolDM.cpp:789).
-        //_keepAlive = keepAlive;
+        // Stash the caller's keepAlive intent for Step 5a's CloseAsync calls.
+        // cppcache: m_keepAlive = keepAlive (ThinClientPoolDM.cpp:789).
+        _keepAlive = keepAlive;
 
         //// 1b. Close pool-owned RemoteQueryService if it was ever
         //// accessed. Mirrors cppcache CacheImpl::close() →
@@ -502,17 +509,17 @@ internal class ThinClientPoolDM(
     /// </remarks>
     private void SchedulePingLoop()
     {
-        //var pingInterval = attributes.PingInterval ?? options.Pool.PingInterval;
-        //if (pingInterval > TimeSpan.Zero)
-        //{
-        //    logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Scheduling ping task at {Interval}", pingInterval);
-        //    _pingTimer = new PeriodicTimer(pingInterval);
-        //    _pingLoop = PingLoopAsync(_backgroundCts.Token);
-        //}
-        //else
-        //{
-        //    logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Not scheduling ping task as ping interval {Interval}", pingInterval);
-        //}
+        var pingInterval = attributes.PingInterval ?? poolManager.Cache.CacheProperties.PingInterval;
+        if (pingInterval > TimeSpan.Zero)
+        {
+            logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Scheduling ping task at {Interval}", pingInterval);
+            _pingTimer = new PeriodicTimer(pingInterval);
+            _pingLoop = PingLoopAsync(_backgroundCts.Token);
+        }
+        else
+        {
+            logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Not scheduling ping task as ping interval {Interval}", pingInterval);
+        }
     }
 
     /// <summary>
@@ -523,31 +530,31 @@ internal class ThinClientPoolDM(
     /// </summary>
     private async Task PingLoopAsync(CancellationToken ct)
     {
-        //var initialDelay = TimeSpan.FromSeconds(1);
-        //logger.LogDebug("Starting ping loop for pool {Pool}", Name);
-        //try
-        //{
-        //    await Task.Delay(initialDelay, ct).ConfigureAwait(false);
+        var initialDelay = TimeSpan.FromSeconds(1);
+        logger.LogDebug("Starting ping loop for pool {Pool}", name);
+        try
+        {
+            await Task.Delay(initialDelay, ct).ConfigureAwait(false);
 
-        //    do
-        //    {
-        //        try
-        //        {
-        //            await PingServerLocalAsync(ct).ConfigureAwait(false);
-        //        }
-        //        catch (Exception ex) when (!ct.IsCancellationRequested)
-        //        {
-        //            // One bad tick must not kill the loop — next tick retries.
-        //            logger.LogWarning(ex, "Ping tick failed for pool {Pool}", Name);
-        //        }
-        //    }
-        //    while (await _pingTimer!.WaitForNextTickAsync(ct).ConfigureAwait(false));
-        //}
-        //catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        //{
-        //    // graceful shutdown via _backgroundCts.Cancel().
-        //}
-        //logger.LogDebug("Ending ping loop for pool {Pool}", Name);
+            do
+            {
+                try
+                {
+                    await PingServerLocalAsync(ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    // One bad tick must not kill the loop — next tick retries.
+                    logger.LogWarning(ex, "Ping tick failed for pool {Pool}", name);
+                }
+            }
+            while (await _pingTimer!.WaitForNextTickAsync(ct).ConfigureAwait(false));
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // graceful shutdown via _backgroundCts.Cancel().
+        }
+        logger.LogDebug("Ending ping loop for pool {Pool}", name);
     }
     /// <summary>
     /// One ping sweep: probe every connected endpoint and prune the
@@ -564,44 +571,44 @@ internal class ThinClientPoolDM(
     /// </remarks>
     private async Task PingServerLocalAsync(CancellationToken ct)
     {
-        //var sweepStopwatch = Stopwatch.StartNew();
-        //try
-        //{
-        //    logger.LogTrace("Ping sweep for pool {Pool}: {Count} endpoint(s)", Name, _endpoints.Count);
+        var sweepStopwatch = Stopwatch.StartNew();
+        try
+        {
+            logger.LogTrace("Ping sweep for pool {Pool}: {Count} endpoint(s)", name, _endpoints.Count);
 
-        //    foreach (var (_, endpoint) in _endpoints)
-        //    {
-        //        ct.ThrowIfCancellationRequested();
+            foreach (var (_, endpoint) in _endpoints)
+            {
+                ct.ThrowIfCancellationRequested();
 
-        //        if (!endpoint.IsConnected)
-        //        {
-        //            // cppcache: pingServerLocal skips disconnected endpoints
-        //            // (the test is inside the loop body at L2032).
-        //            continue;
-        //        }
+                if (!endpoint.IsConnected)
+                {
+                    // cppcache: pingServerLocal skips disconnected endpoints
+                    // (the test is inside the loop body at L2032).
+                    continue;
+                }
 
-        //        var endpointStopwatch = Stopwatch.StartNew();
-        //        await endpoint.PingAsync(this, ct).ConfigureAwait(false);
+                var endpointStopwatch = Stopwatch.StartNew();
+                await endpoint.PingAsync(this, ct).ConfigureAwait(false);
 
-        //        if (endpoint.IsConnected)
-        //        {
-        //            _stats.EndpointPing(endpointStopwatch.Elapsed);
-        //        }
-        //        else
-        //        {
-        //            // cppcache (ThinClientPoolDM.cpp:2034-2037): ping flipped
-        //            // endpoint's connected_ bit to false → drop pool's
-        //            // references on its conns + HA subscription channel.
-        //            logger.LogDebug("Ping flipped endpoint {Endpoint} to disconnected; cleaning up.", endpoint.Name);
-        //            await RemoveEPConnectionsAsync(endpoint, ct).ConfigureAwait(false);
-        //            await RemoveCallbackConnectionAsync(endpoint, ct).ConfigureAwait(false);
-        //        }
-        //    }
-        //}
-        //finally
-        //{
-        //    _stats.PingSweep(sweepStopwatch.Elapsed);
-        //}
+                if (endpoint.IsConnected)
+                {
+                    _stats.EndpointPing(endpointStopwatch.Elapsed);
+                }
+                else
+                {
+                    // cppcache (ThinClientPoolDM.cpp:2034-2037): ping flipped
+                    // endpoint's connected_ bit to false → drop pool's
+                    // references on its conns + HA subscription channel.
+                    logger.LogDebug("Ping flipped endpoint {Endpoint} to disconnected; cleaning up.", endpoint.Name);
+                    //            await RemoveEPConnectionsAsync(endpoint, ct).ConfigureAwait(false);
+                    //            await RemoveCallbackConnectionAsync(endpoint, ct).ConfigureAwait(false);
+                }
+            }
+        }
+        finally
+        {
+            _stats.PingSweep(sweepStopwatch.Elapsed);
+        }
     }
 
     #endregion
@@ -730,10 +737,6 @@ internal class ThinClientPoolDM(
 
 
 
-    /// <summary>
-    /// cppcache <c>m_isSecurityOn</c> — true when the cache has any security-* property set (proxy until Phase 3 auth callback lands).
-    /// </summary>
-    private bool _isSecurityOn;
 
     /// <inheritdoc/>
     public override bool IsMultiUserMode => _isMultiUserMode;
@@ -779,11 +782,7 @@ internal class ThinClientPoolDM(
         //   cppcache ThinClientPoolDM.cpp:2065-2067.
     }
 
-    /// <summary>
-    /// <c>keepAlive</c> intent stashed in <see cref="DestroyAsync"/> for
-    /// each conn's <see cref="TcrConnection.CloseAsync"/>.
-    /// </summary>
-    private bool _keepAlive;
+
 
     /// <summary>
     /// Idle conn queue. Inlined mirror of cppcache

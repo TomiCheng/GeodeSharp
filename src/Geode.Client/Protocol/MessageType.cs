@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Protocol;
 
 /// <summary>
@@ -146,5 +145,3 @@ internal enum MessageType
     PutAllWithCallback = 108,
     RemoveAll = 109,
 }
-
-*/

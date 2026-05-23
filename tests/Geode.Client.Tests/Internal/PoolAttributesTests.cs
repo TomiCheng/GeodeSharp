@@ -20,7 +20,7 @@ public class PoolAttributesTests
         Assert.Equal(-1, a.MaxConnections);
         Assert.Equal(TimeSpan.FromSeconds(5), a.IdleTimeout);
         Assert.Equal(-1, a.RetryAttempts);
-        Assert.Equal(TimeSpan.FromSeconds(10), a.PingInterval);
+        Assert.Null(a.PingInterval);   // per-pool override; null = inherit from SystemProperties
         Assert.Equal(TimeSpan.FromSeconds(5), a.UpdateLocatorListInterval);
         Assert.Equal(TimeSpan.Zero, a.StatisticInterval);
         Assert.False(a.SubscriptionEnabled);

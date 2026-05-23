@@ -1,3 +1,4 @@
+using Geode.Client.Internal;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Services;
@@ -6,6 +7,26 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
 {
     private readonly Lazy<PoolManager> _poolManager;
     private readonly string _name;
+    /// <summary>
+    /// <c>SemaphoreSlim</c>-gated double-checked init. cppcache
+    /// equivalent is the <c>m_initDone</c> + <c>m_initDoneLock</c>
+    /// guard inside <c>CacheImpl::createRegion</c> /
+    /// <c>getQueryService</c>. Chosen over <c>Lazy&lt;Task&gt;(EAP)</c>
+    /// so:
+    /// <list type="bullet">
+    ///   <item>the first caller's ct reaches
+    ///         <see cref="InitializeCoreAsync"/>;</item>
+    ///   <item>each later caller awaits via
+    ///         <see cref="Task.WaitAsync(CancellationToken)"/> using
+    ///         their own ct &#x2014; cancelling that wait does not
+    ///         cancel the underlying init;</item>
+    ///   <item>on failure, <c>_initTask</c> can be reset to null to
+    ///         allow retry (cppcache <c>m_initDone</c> stays false on
+    ///         throw — same semantics).</item>
+    /// </list>
+    /// </summary>
+    private readonly SemaphoreSlim _initLock = new(1, 1);
+    private readonly SystemProperties _systemProperties = new();
 
     public GeodeCache(IServiceProvider serviceProvider, string name)
     {
@@ -19,30 +40,22 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
 
     public IPoolManager PoolManager => _poolManager.Value;
 
-    public ValueTask DisposeAsync()
+    internal SystemProperties CacheProperties => _systemProperties;
+
+    public async ValueTask DisposeAsync()
     {
-        return ValueTask.CompletedTask;
+        // Forward to CloseAsync; idempotent until connection logic lands.
+        await CloseAsync().ConfigureAwait(false);
+
+        // TCCM is now DI-Scoped — the per-cache AsyncServiceScope
+        // disposes it for us in reverse-resolve order, after Cache.
+        // PoolManager / ClientProxyMembershipIdBuilder / CacheScopeContext
+        // ride the same cascade.
+
+        _initLock.Dispose();
     }
 
-    //    /// <summary>
-    //    /// <c>SemaphoreSlim</c>-gated double-checked init. cppcache
-    //    /// equivalent is the <c>m_initDone</c> + <c>m_initDoneLock</c>
-    //    /// guard inside <c>CacheImpl::createRegion</c> /
-    //    /// <c>getQueryService</c>. Chosen over <c>Lazy&lt;Task&gt;(EAP)</c>
-    //    /// so:
-    //    /// <list type="bullet">
-    //    ///   <item>the first caller's ct reaches
-    //    ///         <see cref="InitializeCoreAsync"/>;</item>
-    //    ///   <item>each later caller awaits via
-    //    ///         <see cref="Task.WaitAsync(CancellationToken)"/> using
-    //    ///         their own ct &#x2014; cancelling that wait does not
-    //    ///         cancel the underlying init;</item>
-    //    ///   <item>on failure, <c>_initTask</c> can be reset to null to
-    //    ///         allow retry (cppcache <c>m_initDone</c> stays false on
-    //    ///         throw — same semantics).</item>
-    //    /// </list>
-    //    /// </summary>
-    //    private readonly SemaphoreSlim _initLock = new(1, 1);
+
     //    private Task? _initTask;
     //    private readonly GeodeClientOptions _options = scopeContext.Options;
 
@@ -366,46 +379,44 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
     //        ];
     //    }
 
-    //    /// <summary>
-    //    /// Test-only escape hatch: expose the scoped <see cref="PoolManager"/>
-    //    /// so integration tests can reach <see cref="ThinClientPoolDM"/>
-    //    /// internals (e.g. <c>PoolSize</c>) without DI scope wrangling. Not
-    //    /// part of the public API — gated by <c>InternalsVisibleTo</c>.
-    //    /// </summary>
-    //    internal PoolManager PoolManager => poolManager;
+    ///// <summary>
+    ///// Test-only escape hatch: expose the scoped <see cref="PoolManager"/>
+    ///// so integration tests can reach <see cref="ThinClientPoolDM"/>
+    ///// internals (e.g. <c>PoolSize</c>) without DI scope wrangling. Not
+    ///// part of the public API — gated by <c>InternalsVisibleTo</c>.
+    ///// </summary>
+    //internal PoolManager PoolManager => poolManager;
 
-    //    public async Task CloseAsync(CancellationToken ct = default)
-    //    {
-    //        if (IsClosed) return;   // idempotent
+    public async Task CloseAsync(CancellationToken ct = default)
+    {
+        if (IsClosed) return;   // idempotent
 
-    //        // Mirror cppcache CacheImpl::close() ordering:
-    //        //   TODO Phase 1.5: TCCM.CloseAsync — stop background workers
-    //        //     (m_tcrConnectionManager->close() comes first in cppcache so
-    //        //     scheduled ping tasks can't fire on torn-down state).
-    //        //   TODO Phase 1.2: destroy regions (region drop happens between
-    //        //     TCCM stop and pool close in cppcache).
-    //        //
-    //        // Pool drain — cascades pool.DestroyAsync into each
-    //        // ThinClientPoolDM (cancels its conn-management loop, releases
-    //        // timers, drains connections). PoolManager.CloseAsync is
-    //        // internally idempotent so a later DI-scope dispose is safe.
-    //        await poolManager.CloseAsync(keepAlive: false, ct).ConfigureAwait(false);
+        // Mirror cppcache CacheImpl::close() ordering:
+        //   TODO Phase 1.5: TCCM.CloseAsync — stop background workers
+        //     (m_tcrConnectionManager->close() comes first in cppcache so
+        //     scheduled ping tasks can't fire on torn-down state).
+        //   TODO Phase 1.2: destroy regions (region drop happens between
+        //     TCCM stop and pool close in cppcache).
+        //
+        // Pool drain — cascades pool.DestroyAsync into each
+        // ThinClientPoolDM (cancels its conn-management loop, releases
+        // timers, drains connections). PoolManager.CloseAsync is
+        // internally idempotent so a later DI-scope dispose is safe.
+        //
+        // IsValueCreated guard: if no one ever read `PoolManager`, the
+        // Lazy never materialised, so there's nothing to drain — skip
+        // force-building one on the dispose path. (Critical when
+        // DisposeAsync fires during ServiceProvider teardown: the SP is
+        // already disposed and ActivatorUtilities.CreateInstance would
+        // throw ObjectDisposedException.)
+        if (_poolManager.IsValueCreated)
+        {
+            await _poolManager.Value.CloseAsync(keepAlive: false, ct).ConfigureAwait(false);
+        }
+        IsClosed = true;
+    }
 
-    //        IsClosed = true;
-    //    }
 
-    //    public async ValueTask DisposeAsync()
-    //    {
-    //        // Forward to CloseAsync; idempotent until connection logic lands.
-    //        await CloseAsync().ConfigureAwait(false);
-
-    //        // TCCM is now DI-Scoped — the per-cache AsyncServiceScope
-    //        // disposes it for us in reverse-resolve order, after Cache.
-    //        // PoolManager / ClientProxyMembershipIdBuilder / CacheScopeContext
-    //        // ride the same cascade.
-
-    //        _initLock.Dispose();
-    //    }
 
     //    public async Task EnsureInitializedAsync(CancellationToken ct = default)
     //    {
@@ -552,7 +563,7 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
     //        return region;
     //    }
 
-    //    public bool IsClosed { get; private set; }
+    public bool IsClosed { get; private set; }
     //    public string Name { get; } = scopeContext.Name;
     //    public ITypeRegistry TypeRegistry { get; } = typeRegistry;
 

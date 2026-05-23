@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Protocol;
 
 namespace Geode.Client.Internal;
@@ -25,7 +24,7 @@ internal sealed record ClientConnectionResponse(
     ServerLocation? Server)
 {
     /// <summary>Mirrors cppcache <c>ClientConnectionResponse::fromData</c> (<c>ClientConnectionResponse.cpp:28-33</c>).</summary>
-    public static ClientConnectionResponse ReadFrom(BigEndianBinaryReader reader)
+    public static ClientConnectionResponse ReadFrom(DataInput reader)
     {
         ArgumentNullException.ThrowIfNull(reader);
 
@@ -44,4 +43,3 @@ internal sealed record ClientConnectionResponse(
     }
 }
 
-*/

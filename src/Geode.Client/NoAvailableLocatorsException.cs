@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client;
 
 /// <summary>
@@ -21,5 +20,3 @@ public class NoAvailableLocatorsException : GeodeException
     public NoAvailableLocatorsException(string message, Exception innerException)
         : base(message, innerException) { }
 }
-
-*/

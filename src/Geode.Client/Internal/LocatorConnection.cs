@@ -1,4 +1,3 @@
-/*
 using System.Net.Sockets;
 using Microsoft.Extensions.Logging;
 
@@ -123,5 +122,3 @@ internal sealed class LocatorConnection(ILogger<LocatorConnection> logger) : IAs
 
     public ValueTask DisposeAsync() => new(CloseAsync());
 }
-
-*/

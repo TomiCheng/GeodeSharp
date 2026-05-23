@@ -17,9 +17,9 @@ public class IPoolManagerTests
         return services.BuildServiceProvider();
     }
 
-    private static IPoolManager BuildManager(ServiceProvider sp)
+    private static async Task<IPoolManager> BuildManagerAsync(ServiceProvider sp, CancellationToken ct)
     {
-        var cache = sp.GetRequiredService<IGeodeCacheFactory>().Create("c");
+        var cache = await sp.GetRequiredService<IGeodeCacheFactory>().CreateAsync("c", ct);
         return cache.PoolManager;
     }
 
@@ -32,7 +32,7 @@ public class IPoolManagerTests
     public async Task DefaultPool_Initially_IsNull()
     {
         await using var sp = BuildSp();
-        var mgr = BuildManager(sp);
+        var mgr = await BuildManagerAsync(sp, TestContext.Current.CancellationToken);
 
         Assert.Null(mgr.DefaultPool);
     }
@@ -41,7 +41,7 @@ public class IPoolManagerTests
     public async Task DefaultPool_AfterBuild_ReturnsFirstPool()
     {
         await using var sp = BuildSp();
-        var mgr = BuildManager(sp);
+        var mgr = await BuildManagerAsync(sp, TestContext.Current.CancellationToken);
         var p1 = await BuildPoolAsync(mgr, "p1", TestContext.Current.CancellationToken);
 
         Assert.Same(p1, mgr.DefaultPool);
@@ -51,7 +51,7 @@ public class IPoolManagerTests
     public async Task DefaultPool_StaysFirst_AfterSecondBuild()
     {
         await using var sp = BuildSp();
-        var mgr = BuildManager(sp);
+        var mgr = await BuildManagerAsync(sp, TestContext.Current.CancellationToken);
         var p1 = await BuildPoolAsync(mgr, "p1", TestContext.Current.CancellationToken);
         var p2 = await BuildPoolAsync(mgr, "p2", TestContext.Current.CancellationToken);
 
@@ -65,7 +65,7 @@ public class IPoolManagerTests
     public async Task Find_NullName_NoPools_ReturnsNull()
     {
         await using var sp = BuildSp();
-        var mgr = BuildManager(sp);
+        var mgr = await BuildManagerAsync(sp, TestContext.Current.CancellationToken);
 
         Assert.Null(mgr.Find());
     }
@@ -74,7 +74,7 @@ public class IPoolManagerTests
     public async Task Find_NullName_AfterBuild_ReturnsDefaultPool()
     {
         await using var sp = BuildSp();
-        var mgr = BuildManager(sp);
+        var mgr = await BuildManagerAsync(sp, TestContext.Current.CancellationToken);
         var p1 = await BuildPoolAsync(mgr, "p1", TestContext.Current.CancellationToken);
 
         Assert.Same(p1, mgr.Find());
@@ -84,7 +84,7 @@ public class IPoolManagerTests
     public async Task Find_UnknownName_ReturnsNull()
     {
         await using var sp = BuildSp();
-        var mgr = BuildManager(sp);
+        var mgr = await BuildManagerAsync(sp, TestContext.Current.CancellationToken);
         await BuildPoolAsync(mgr, "p1", TestContext.Current.CancellationToken);
 
         Assert.Null(mgr.Find("nope"));
@@ -94,7 +94,7 @@ public class IPoolManagerTests
     public async Task Find_KnownName_ReturnsThatPool()
     {
         await using var sp = BuildSp();
-        var mgr = BuildManager(sp);
+        var mgr = await BuildManagerAsync(sp, TestContext.Current.CancellationToken);
         var p1 = await BuildPoolAsync(mgr, "p1", TestContext.Current.CancellationToken);
         var p2 = await BuildPoolAsync(mgr, "p2", TestContext.Current.CancellationToken);
 
@@ -108,7 +108,7 @@ public class IPoolManagerTests
     public async Task GetAll_Empty_Initially()
     {
         await using var sp = BuildSp();
-        var mgr = BuildManager(sp);
+        var mgr = await BuildManagerAsync(sp, TestContext.Current.CancellationToken);
 
         Assert.Empty(mgr.GetAll());
     }
@@ -117,7 +117,7 @@ public class IPoolManagerTests
     public async Task GetAll_AfterBuild_ContainsPools()
     {
         await using var sp = BuildSp();
-        var mgr = BuildManager(sp);
+        var mgr = await BuildManagerAsync(sp, TestContext.Current.CancellationToken);
         var p1 = await BuildPoolAsync(mgr, "p1", TestContext.Current.CancellationToken);
         var p2 = await BuildPoolAsync(mgr, "p2", TestContext.Current.CancellationToken);
 
@@ -132,7 +132,7 @@ public class IPoolManagerTests
     public async Task GetAll_ReturnsSnapshot_NotLiveView()
     {
         await using var sp = BuildSp();
-        var mgr = BuildManager(sp);
+        var mgr = await BuildManagerAsync(sp, TestContext.Current.CancellationToken);
         await BuildPoolAsync(mgr, "p1", TestContext.Current.CancellationToken);
 
         var snapshot = mgr.GetAll();
@@ -149,7 +149,7 @@ public class IPoolManagerTests
     public async Task CloseAsync_Empty_DoesNotThrow()
     {
         await using var sp = BuildSp();
-        var mgr = BuildManager(sp);
+        var mgr = await BuildManagerAsync(sp, TestContext.Current.CancellationToken);
 
         await mgr.CloseAsync(ct: TestContext.Current.CancellationToken);
     }
@@ -158,7 +158,7 @@ public class IPoolManagerTests
     public async Task CloseAsync_AfterBuild_ClearsRegistry()
     {
         await using var sp = BuildSp();
-        var mgr = BuildManager(sp);
+        var mgr = await BuildManagerAsync(sp, TestContext.Current.CancellationToken);
         await BuildPoolAsync(mgr, "p1", TestContext.Current.CancellationToken);
 
         await mgr.CloseAsync(ct: TestContext.Current.CancellationToken);
@@ -172,7 +172,7 @@ public class IPoolManagerTests
     public async Task CloseAsync_Idempotent()
     {
         await using var sp = BuildSp();
-        var mgr = BuildManager(sp);
+        var mgr = await BuildManagerAsync(sp, TestContext.Current.CancellationToken);
 
         await mgr.CloseAsync(ct: TestContext.Current.CancellationToken);
         await mgr.CloseAsync(ct: TestContext.Current.CancellationToken);

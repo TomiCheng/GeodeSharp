@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Protocol;
 
 namespace Geode.Client.Internal;
@@ -32,7 +31,7 @@ internal sealed record LocatorListResponse(
     /// readInt32(port)</c> per cppcache <c>ServerLocation::fromData</c>
     /// (<c>ServerLocation.hpp:73-77</c>).
     /// </summary>
-    public static LocatorListResponse ReadFrom(BigEndianBinaryReader reader)
+    public static LocatorListResponse ReadFrom(DataInput reader)
     {
         ArgumentNullException.ThrowIfNull(reader);
 
@@ -59,5 +58,3 @@ internal sealed record LocatorListResponse(
         return new LocatorListResponse(locators, isBalanced);
     }
 }
-
-*/

@@ -47,7 +47,7 @@ internal class TcrEndpoint(
     /// connected_ (atomic<bool> → Interlocked 0/1)
     /// </summary>
     private int _connected;
-
+    private int _numRegions;
     //    private int _disposed;
 
     /// <summary>
@@ -106,15 +106,15 @@ internal class TcrEndpoint(
         return await _slots.WaitAsync(timeout, ct).ConfigureAwait(false);
     }
 
-    //    /// <summary>
-    //    /// Atomically increment the region / DM reference count. Mirrors
-    //    /// cppcache <c>setNumRegions(numRegions() + 1)</c> performed inside
-    //    /// <c>TcrConnectionManager::addRefToTcrEndpoint</c>; we hoist the
-    //    /// +1 into a dedicated method so the bump is atomic without
-    //    /// holding the map lock.
-    //    /// </summary>
-    //    /// <returns>The new reference count.</returns>
-    //    internal int IncrementNumRegions() => Interlocked.Increment(ref _numRegions);
+    /// <summary>
+    /// Atomically increment the region / DM reference count. Mirrors
+    /// cppcache <c>setNumRegions(numRegions() + 1)</c> performed inside
+    /// <c>TcrConnectionManager::addRefToTcrEndpoint</c>; we hoist the
+    /// +1 into a dedicated method so the bump is atomic without
+    /// holding the map lock.
+    /// </summary>
+    /// <returns>The new reference count.</returns>
+    internal int IncrementNumRegions() => Interlocked.Increment(ref _numRegions);
 
     /// <summary>
     /// Release a slot reserved via <see cref="AcquireSlotAsync"/>.
@@ -323,60 +323,60 @@ internal class TcrEndpoint(
     //        throw new NotImplementedException("TODO: TcrEndpoint.ReceiveNotificationsAsync");
     //    }
 
-    //    /// <summary>
-    //    /// Register a DM as a user of this endpoint; opens the dedicated
-    //    /// subscription connection if <paramref name="clientNotification"/>
-    //    /// and not already running. Mirrors cppcache
-    //    /// <c>TcrEndpoint::registerDM</c>.
-    //    /// </summary>
-    //    /// <remarks>
-    //    /// cppcache bundles three concerns; we implement them per phase:
-    //    /// (1) bind dm into <c>_distMgrs</c> &#x2014; Phase 1.1 (used by
-    //    /// Phase 1.5's failover broadcast: a dying endpoint signals every
-    //    /// DM in this list to re-route);
-    //    /// (2) open notification connection + receiver Task &#x2014;
-    //    /// Phase 2+ (subscription / CQ / register-interest);
-    //    /// (3) flip <c>_isActiveEndpoint</c> for redundancy manager &#x2014;
-    //    /// Phase 2+ (HA).
-    //    /// </remarks>
-    //    public Task<int /*GfErrType* /> RegisterDMAsync(
-    //        bool clientNotification,
-    //        bool isSecondary,
-    //        bool isActiveEndpoint,
-    //        ThinClientBaseDM? distributionManager = null,
-    //        CancellationToken ct = default)
-    //    {
-    //        ct.ThrowIfCancellationRequested();
+    /// <summary>
+    /// Register a DM as a user of this endpoint; opens the dedicated
+    /// subscription connection if <paramref name="clientNotification"/>
+    /// and not already running. Mirrors cppcache
+    /// <c>TcrEndpoint::registerDM</c>.
+    /// </summary>
+    /// <remarks>
+    /// cppcache bundles three concerns; we implement them per phase:
+    /// (1) bind dm into <c>_distMgrs</c> &#x2014; Phase 1.1 (used by
+    /// Phase 1.5's failover broadcast: a dying endpoint signals every
+    /// DM in this list to re-route);
+    /// (2) open notification connection + receiver Task &#x2014;
+    /// Phase 2+ (subscription / CQ / register-interest);
+    /// (3) flip <c>_isActiveEndpoint</c> for redundancy manager &#x2014;
+    /// Phase 2+ (HA).
+    /// </remarks>
+    public Task<int> RegisterDMAsync(
+            bool clientNotification,
+            bool isSecondary,
+            bool isActiveEndpoint,
+            ThinClientBaseDM? distributionManager = null,
+            CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
 
-    //        if (clientNotification)
-    //        {
-    //            throw new NotImplementedException(
-    //                "TODO Phase 2+: subscription / notification channel.");
-    //        }
-    //        if (isActiveEndpoint)
-    //        {
-    //            throw new NotImplementedException(
-    //                "TODO Phase 2+: redundancy / active endpoint flag.");
-    //        }
-    //        _ = isSecondary;   // only meaningful when clientNotification.
+        if (clientNotification)
+        {
+            throw new NotImplementedException(
+                "TODO Phase 2+: subscription / notification channel.");
+        }
+        if (isActiveEndpoint)
+        {
+            throw new NotImplementedException(
+                "TODO Phase 2+: redundancy / active endpoint flag.");
+        }
+        _ = isSecondary;   // only meaningful when clientNotification.
 
-    //        if (distributionManager is null)
-    //        {
-    //            return Task.FromResult(/*GF_NOERR* / 0);
-    //        }
+        if (distributionManager is null)
+        {
+            return Task.FromResult(0);
+        }
 
-    //        // Dedupe under the lock so repeated AddRefToTcrEndpoint calls
-    //        // from the same pool don't multiply the broadcast list.
-    //        lock (_distMgrsLock)
-    //        {
-    //            if (!_distMgrs.Contains(distributionManager))
-    //            {
-    //                _distMgrs.Add(distributionManager);
-    //            }
-    //        }
+        // Dedupe under the lock so repeated AddRefToTcrEndpoint calls
+        // from the same pool don't multiply the broadcast list.
+        lock (_distMgrsLock)
+        {
+            if (!_distMgrs.Contains(distributionManager))
+            {
+                _distMgrs.Add(distributionManager);
+            }
+        }
 
-    //        return Task.FromResult(/*GF_NOERR* / 0);
-    //    }
+        return Task.FromResult(0);
+    }
 
     //    /// <summary>
     //    /// Send a request and wait for reply, choosing a connection from
@@ -469,11 +469,11 @@ internal class TcrEndpoint(
     /// <summary>Canonical <c>"host:port"</c> rendering for logs / registry keys.</summary>
     public string Name => $"{endpoint.Host}:{endpoint.Port}";
 
-    //    public int NumRegions
-    //    {
-    //        get => Volatile.Read(ref _numRegions);
-    //        set => Volatile.Write(ref _numRegions, value);
-    //    }
+    public int NumRegions
+    {
+        get => Volatile.Read(ref _numRegions);
+        set => Volatile.Write(ref _numRegions, value);
+    }
 
     //    public long UniqueId => Interlocked.Read(ref _uniqueId);
 

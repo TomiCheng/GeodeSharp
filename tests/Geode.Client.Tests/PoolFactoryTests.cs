@@ -18,9 +18,9 @@ public class PoolFactoryTests
         return services.BuildServiceProvider();
     }
 
-    private static PoolFactory BuildFactory(ServiceProvider sp)
+    private static async Task<PoolFactory> BuildFactoryAsync(ServiceProvider sp, CancellationToken ct)
     {
-        var cache = sp.GetRequiredService<IGeodeCacheFactory>().Create("c");
+        var cache = await sp.GetRequiredService<IGeodeCacheFactory>().CreateAsync("c", ct);
         return cache.PoolManager.CreateFactory();
     }
 
@@ -28,7 +28,7 @@ public class PoolFactoryTests
     public async Task Setters_ReturnSameFactoryInstance()
     {
         await using var sp = BuildSp();
-        var f = BuildFactory(sp);
+        var f = (await BuildFactoryAsync(sp, TestContext.Current.CancellationToken));
 
         Assert.Same(f, f.SetMinConnections(1));
         Assert.Same(f, f.SetMaxConnections(10));
@@ -41,7 +41,7 @@ public class PoolFactoryTests
     public async Task AddLocator_AfterAddServer_ThrowsArgumentException()
     {
         await using var sp = BuildSp();
-        var f = BuildFactory(sp);
+        var f = (await BuildFactoryAsync(sp, TestContext.Current.CancellationToken));
         f.AddServer("h", 40404);
 
         Assert.Throws<ArgumentException>(() => f.AddLocator("h", 10334));
@@ -51,7 +51,7 @@ public class PoolFactoryTests
     public async Task AddServer_AfterAddLocator_ThrowsArgumentException()
     {
         await using var sp = BuildSp();
-        var f = BuildFactory(sp);
+        var f = (await BuildFactoryAsync(sp, TestContext.Current.CancellationToken));
         f.AddLocator("h", 10334);
 
         Assert.Throws<ArgumentException>(() => f.AddServer("h", 40404));
@@ -61,7 +61,7 @@ public class PoolFactoryTests
     public async Task BuildAsync_WithoutEndpoints_ThrowsOptionsValidationException()
     {
         await using var sp = BuildSp();
-        var f = BuildFactory(sp);
+        var f = (await BuildFactoryAsync(sp, TestContext.Current.CancellationToken));
 
         await Assert.ThrowsAsync<OptionsValidationException>(() => f.BuildAsync("p", TestContext.Current.CancellationToken));
     }
@@ -70,7 +70,7 @@ public class PoolFactoryTests
     public async Task BuildAsync_MaxConnectionsLessThanMin_ThrowsOptionsValidationException()
     {
         await using var sp = BuildSp();
-        var f = BuildFactory(sp)
+        var f = (await BuildFactoryAsync(sp, TestContext.Current.CancellationToken))
             .AddServer("h", 40404)
             .SetMinConnections(10)
             .SetMaxConnections(5);
@@ -82,7 +82,7 @@ public class PoolFactoryTests
     public async Task BuildAsync_NegativeIdleTimeout_ThrowsOptionsValidationException()
     {
         await using var sp = BuildSp();
-        var f = BuildFactory(sp)
+        var f = (await BuildFactoryAsync(sp, TestContext.Current.CancellationToken))
             .AddServer("h", 40404)
             .SetIdleTimeout(TimeSpan.FromSeconds(-1));
 
@@ -93,7 +93,7 @@ public class PoolFactoryTests
     public async Task BuildAsync_InvalidPort_ThrowsOptionsValidationException()
     {
         await using var sp = BuildSp();
-        var f = BuildFactory(sp).AddServer("h", 0);
+        var f = (await BuildFactoryAsync(sp, TestContext.Current.CancellationToken)).AddServer("h", 0);
 
         await Assert.ThrowsAsync<OptionsValidationException>(() => f.BuildAsync("p", TestContext.Current.CancellationToken));
     }
@@ -102,7 +102,7 @@ public class PoolFactoryTests
     public async Task BuildAsync_EmptyHost_ThrowsOptionsValidationException()
     {
         await using var sp = BuildSp();
-        var f = BuildFactory(sp).AddServer("", 40404);
+        var f = (await BuildFactoryAsync(sp, TestContext.Current.CancellationToken)).AddServer("", 40404);
 
         await Assert.ThrowsAsync<OptionsValidationException>(() => f.BuildAsync("p", TestContext.Current.CancellationToken));
     }
@@ -111,7 +111,7 @@ public class PoolFactoryTests
     public async Task Reset_ClearsEndpoints()
     {
         await using var sp = BuildSp();
-        var f = BuildFactory(sp);
+        var f = (await BuildFactoryAsync(sp, TestContext.Current.CancellationToken));
         f.AddLocator("h", 10334);
 
         // Sanity check: mutual exclusion is active before Reset.

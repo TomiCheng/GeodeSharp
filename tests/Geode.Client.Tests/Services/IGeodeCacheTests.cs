@@ -18,12 +18,12 @@ public class IGeodeCacheTests
     }
 
     [Fact]
-    public async Task Name_MatchesFactoryCreateArgument()
+    public async Task Name_MatchesCreateArgument()
     {
         await using var sp = BuildSp();
         var factory = sp.GetRequiredService<IGeodeCacheFactory>();
 
-        var cache = factory.Create("foo");
+        var cache = await factory.CreateAsync("foo", TestContext.Current.CancellationToken);
 
         Assert.Equal("foo", cache.Name);
     }
@@ -33,7 +33,7 @@ public class IGeodeCacheTests
     {
         await using var sp = BuildSp();
         var factory = sp.GetRequiredService<IGeodeCacheFactory>();
-        var cache = factory.Create("foo");
+        var cache = await factory.CreateAsync("foo", TestContext.Current.CancellationToken);
 
         Assert.NotNull(cache.PoolManager);
     }
@@ -43,7 +43,7 @@ public class IGeodeCacheTests
     {
         await using var sp = BuildSp();
         var factory = sp.GetRequiredService<IGeodeCacheFactory>();
-        var cache = factory.Create("foo");
+        var cache = await factory.CreateAsync("foo", TestContext.Current.CancellationToken);
 
         var first = cache.PoolManager;
         var second = cache.PoolManager;
@@ -56,9 +56,11 @@ public class IGeodeCacheTests
     {
         await using var sp = BuildSp();
         var factory = sp.GetRequiredService<IGeodeCacheFactory>();
-        var cacheA = factory.Create("a");
-        var cacheB = factory.Create("b");
+        var ct = TestContext.Current.CancellationToken;
+        var cacheA = await factory.CreateAsync("a", ct);
+        var cacheB = await factory.CreateAsync("b", ct);
 
         Assert.NotSame(cacheA.PoolManager, cacheB.PoolManager);
     }
+
 }

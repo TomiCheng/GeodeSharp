@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client;
 
 /// <summary>
@@ -23,5 +22,3 @@ public class AuthenticationFailedException : GeodeException
     public AuthenticationFailedException(string message, Exception innerException)
         : base(message, innerException) { }
 }
-
-*/

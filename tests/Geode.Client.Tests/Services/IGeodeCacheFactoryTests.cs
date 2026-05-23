@@ -17,37 +17,39 @@ public class IGeodeCacheFactoryTests
         return services.BuildServiceProvider();
     }
 
-    // ── Create ────────────────────────────────────────────────────
+    // ── CreateAsync ───────────────────────────────────────────────
 
     [Fact]
-    public async Task Create_NewName_ReturnsNonNullCache()
+    public async Task CreateAsync_NewName_ReturnsNonNullCache()
     {
         await using var sp = BuildSp();
         var factory = sp.GetRequiredService<IGeodeCacheFactory>();
 
-        var cache = factory.Create("foo");
+        var cache = await factory.CreateAsync("foo", TestContext.Current.CancellationToken);
 
         Assert.NotNull(cache);
     }
 
     [Fact]
-    public async Task Create_DuplicateName_ThrowsInvalidOperationException()
+    public async Task CreateAsync_DuplicateName_ThrowsInvalidOperationException()
     {
         await using var sp = BuildSp();
         var factory = sp.GetRequiredService<IGeodeCacheFactory>();
-        factory.Create("foo");
+        await factory.CreateAsync("foo", TestContext.Current.CancellationToken);
 
-        Assert.Throws<InvalidOperationException>(() => factory.Create("foo"));
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => factory.CreateAsync("foo", TestContext.Current.CancellationToken));
     }
 
     [Fact]
-    public async Task Create_AfterDispose_ThrowsObjectDisposedException()
+    public async Task CreateAsync_AfterDispose_ThrowsObjectDisposedException()
     {
         await using var sp = BuildSp();
         var factory = sp.GetRequiredService<IGeodeCacheFactory>();
         await factory.DisposeAsync();
 
-        Assert.Throws<ObjectDisposedException>(() => factory.Create("foo"));
+        await Assert.ThrowsAsync<ObjectDisposedException>(
+            () => factory.CreateAsync("foo", TestContext.Current.CancellationToken));
     }
 
     // ── Get / TryGet ──────────────────────────────────────────────
@@ -57,7 +59,7 @@ public class IGeodeCacheFactoryTests
     {
         await using var sp = BuildSp();
         var factory = sp.GetRequiredService<IGeodeCacheFactory>();
-        var created = factory.Create("foo");
+        var created = await factory.CreateAsync("foo", TestContext.Current.CancellationToken);
 
         var retrieved = factory.Get("foo");
 
@@ -78,7 +80,7 @@ public class IGeodeCacheFactoryTests
     {
         await using var sp = BuildSp();
         var factory = sp.GetRequiredService<IGeodeCacheFactory>();
-        var created = factory.Create("foo");
+        var created = await factory.CreateAsync("foo", TestContext.Current.CancellationToken);
 
         var found = factory.TryGet("foo", out var cache);
 
@@ -114,8 +116,8 @@ public class IGeodeCacheFactoryTests
     {
         await using var sp = BuildSp();
         var factory = sp.GetRequiredService<IGeodeCacheFactory>();
-        factory.Create("foo");
-        factory.Create("bar");
+        await factory.CreateAsync("foo", TestContext.Current.CancellationToken);
+        await factory.CreateAsync("bar", TestContext.Current.CancellationToken);
 
         Assert.Equal(new[] { "bar", "foo" }, factory.CacheNames.OrderBy(n => n));
     }
@@ -137,7 +139,7 @@ public class IGeodeCacheFactoryTests
     {
         await using var sp = BuildSp();
         var factory = sp.GetRequiredService<IGeodeCacheFactory>();
-        factory.Create("foo");
+        await factory.CreateAsync("foo", TestContext.Current.CancellationToken);
 
         var removed = await factory.DisposeCacheAsync("foo");
 

@@ -460,6 +460,106 @@ internal sealed class TcrConnection(
             OwnsEndpointSlot = false;
         }
     }
+
+    /// <summary>
+    /// Reset both the creation clock and the last-access clock. Mirrors
+    /// cppcache <c>TcrConnection::updateCreationTime()</c>
+    /// (<c>cppcache/src/TcrConnection.cpp:1222</c>) ??the pool calls this
+    /// when load-conditioning replacement fails but the conn isn't
+    /// expired yet, so the same conn isn't immediately re-elected on
+    /// the next <c>cleanStaleConnections</c> sweep.
+    /// </summary>
+    public void UpdateCreationTime()
+    {
+        var now = Stopwatch.GetTimestamp();
+        Volatile.Write(ref _createdAt, now);
+        Volatile.Write(ref _lastAccessed, now);
+    }
+
+    /// <summary>
+    /// Has this connection been unused longer than <paramref name="idleTimeout"/>?
+    /// Mirrors cppcache <c>TcrConnection::isIdle</c>
+    /// (<c>cppcache/src/TcrConnection.cpp:1193</c>).
+    /// </summary>
+    public bool IsIdle(TimeSpan idleTimeout)
+    {
+        if (idleTimeout <= TimeSpan.Zero) return false;
+        var elapsed = Stopwatch.GetElapsedTime(Volatile.Read(ref _lastAccessed));
+        return elapsed > idleTimeout;
+    }
+
+    /// <summary>
+    /// Has this connection lived longer than <paramref name="loadConditioningInterval"/>
+    /// since it was opened? Mirrors cppcache <c>TcrConnection::hasExpired</c>
+    /// (<c>cppcache/src/TcrConnection.cpp:1183</c>).
+    /// </summary>
+    /// <remarks>
+    /// Applies the <see cref="_expiryTimeVariancePercentage"/> jitter from
+    /// cppcache (default 0 = exact threshold; non-zero spreads expiry
+    /// across a pool to avoid synchronised mass-rotation).
+    /// </remarks>
+    public bool HasExpired(TimeSpan loadConditioningInterval)
+    {
+        if (loadConditioningInterval <= TimeSpan.Zero) return false;
+        var jitter = loadConditioningInterval * _expiryTimeVariancePercentage / 100;
+        var threshold = loadConditioningInterval + jitter;
+        return Stopwatch.GetElapsedTime(Volatile.Read(ref _createdAt)) > threshold;
+    }
+
+    /// <summary>
+    /// Polite shutdown: send <see cref="MessageType.CloseConnection"/>
+    /// (18) so the server frees this socket's session immediately, then
+    /// <see cref="DisposeAsync"/> the underlying transport. Mirrors
+    /// cppcache <c>TcrConnection::close()</c>
+    /// (<c>cppcache/src/TcrConnection.cpp:933-951</c>).
+    /// </summary>
+    /// <param name="keepAlive">
+    /// Tells the server whether to keep this client's subscription queue
+    /// (Phase 2+ HA / durable client). Phase 1.1 callers always pass
+    /// <c>false</c> ??we have no subscription state worth preserving.
+    /// </param>
+    /// <remarks>
+    /// Fire-and-forget: cppcache does not await any reply (the server
+    /// just closes its side after receiving the frame) and swallows
+    /// every exception (<c>LOGINFO</c> only) ??by definition this is
+    /// the destruction path, so a half-dead socket failing the write is
+    /// not an error worth propagating.
+    /// </remarks>
+    public async Task CloseAsync(bool keepAlive, CancellationToken ct = default)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        // Builder is ctor-injected; cppcache pulls it lazily off DataOutput.
+
+        var builder = ActivatorUtilities
+            .CreateInstance<TcrMessageBuilder>(serviceProvider, MessageType.CloseConnection)
+            .AddKeepAlivePart(keepAlive);
+        var closeMsg = await builder.BuildAsync(ct);
+
+        // 2-second send budget mirrors cppcache TcrConnection.cpp:944
+        // (`send(..., std::chrono::seconds(2), false)`). The connection is
+        // dying anyway ??don't let a slow / half-dead socket hold up shutdown.
+        using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        sendCts.CancelAfter(TimeSpan.FromSeconds(2));
+
+        try
+        {
+            await SendAsync(closeMsg.Encode(), sendCts.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // cppcache LOGINFO("Close connection message failed with msg: %s")
+            // (TcrConnection.cpp:947). By definition we're tearing down ??a
+            // failed write isn't actionable, just informational. Caller's ct
+            // cancellation flows through but we still dispose below.
+            logger.LogInformation(ex, "Close connection message failed");
+        }
+
+        await DisposeAsync().ConfigureAwait(false);
+    }
 }
 
 /*
@@ -531,50 +631,9 @@ internal sealed class TcrConnection(
     public void Touch()
         => Volatile.Write(ref _lastAccessed, Stopwatch.GetTimestamp());
 
-    /// <summary>
-    /// Reset both the creation clock and the last-access clock. Mirrors
-    /// cppcache <c>TcrConnection::updateCreationTime()</c>
-    /// (<c>cppcache/src/TcrConnection.cpp:1222</c>) ??the pool calls this
-    /// when load-conditioning replacement fails but the conn isn't
-    /// expired yet, so the same conn isn't immediately re-elected on
-    /// the next <c>cleanStaleConnections</c> sweep.
-    /// </summary>
-    public void UpdateCreationTime()
-    {
-        var now = Stopwatch.GetTimestamp();
-        Volatile.Write(ref _createdAt, now);
-        Volatile.Write(ref _lastAccessed, now);
-    }
 
-    /// <summary>
-    /// Has this connection been unused longer than <paramref name="idleTimeout"/>?
-    /// Mirrors cppcache <c>TcrConnection::isIdle</c>
-    /// (<c>cppcache/src/TcrConnection.cpp:1193</c>).
-    /// </summary>
-    public bool IsIdle(TimeSpan idleTimeout)
-    {
-        if (idleTimeout <= TimeSpan.Zero) return false;
-        var elapsed = Stopwatch.GetElapsedTime(Volatile.Read(ref _lastAccessed));
-        return elapsed > idleTimeout;
-    }
 
-    /// <summary>
-    /// Has this connection lived longer than <paramref name="loadConditioningInterval"/>
-    /// since it was opened? Mirrors cppcache <c>TcrConnection::hasExpired</c>
-    /// (<c>cppcache/src/TcrConnection.cpp:1183</c>).
-    /// </summary>
-    /// <remarks>
-    /// Applies the <see cref="_expiryTimeVariancePercentage"/> jitter from
-    /// cppcache (default 0 = exact threshold; non-zero spreads expiry
-    /// across a pool to avoid synchronised mass-rotation).
-    /// </remarks>
-    public bool HasExpired(TimeSpan loadConditioningInterval)
-    {
-        if (loadConditioningInterval <= TimeSpan.Zero) return false;
-        var jitter = loadConditioningInterval * _expiryTimeVariancePercentage / 100;
-        var threshold = loadConditioningInterval + jitter;
-        return Stopwatch.GetElapsedTime(Volatile.Read(ref _createdAt)) > threshold;
-    }
+
 
 
 
@@ -788,56 +847,7 @@ internal sealed class TcrConnection(
         }
     }
 
-    /// <summary>
-    /// Polite shutdown: send <see cref="MessageType.CloseConnection"/>
-    /// (18) so the server frees this socket's session immediately, then
-    /// <see cref="DisposeAsync"/> the underlying transport. Mirrors
-    /// cppcache <c>TcrConnection::close()</c>
-    /// (<c>cppcache/src/TcrConnection.cpp:933-951</c>).
-    /// </summary>
-    /// <param name="keepAlive">
-    /// Tells the server whether to keep this client's subscription queue
-    /// (Phase 2+ HA / durable client). Phase 1.1 callers always pass
-    /// <c>false</c> ??we have no subscription state worth preserving.
-    /// </param>
-    /// <remarks>
-    /// Fire-and-forget: cppcache does not await any reply (the server
-    /// just closes its side after receiving the frame) and swallows
-    /// every exception (<c>LOGINFO</c> only) ??by definition this is
-    /// the destruction path, so a half-dead socket failing the write is
-    /// not an error worth propagating.
-    /// </remarks>
-    public async Task CloseAsync(bool keepAlive, CancellationToken ct = default)
-    {
-        if (_disposed)
-        {
-            return;
-        }
 
-        // Builder is ctor-injected; cppcache pulls it lazily off DataOutput.
-        var closeMsg = messageBuilder.CloseConnection(keepAlive);
-
-        // 2-second send budget mirrors cppcache TcrConnection.cpp:944
-        // (`send(..., std::chrono::seconds(2), false)`). The connection is
-        // dying anyway ??don't let a slow / half-dead socket hold up shutdown.
-        using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        sendCts.CancelAfter(TimeSpan.FromSeconds(2));
-
-        try
-        {
-            await SendAsync(closeMsg.Encode(), sendCts.Token).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            // cppcache LOGINFO("Close connection message failed with msg: %s")
-            // (TcrConnection.cpp:947). By definition we're tearing down ??a
-            // failed write isn't actionable, just informational. Caller's ct
-            // cancellation flows through but we still dispose below.
-            logger.LogInformation(ex, "Close connection message failed");
-        }
-
-        await DisposeAsync().ConfigureAwait(false);
-    }
 
 
 }

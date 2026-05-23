@@ -15,7 +15,7 @@ internal sealed class GeodeCacheFactory(
 
     private int _disposed;
 
-    public IGeodeCache Create(string cacheName)
+    public async Task<IGeodeCache> CreateAsync(string cacheName, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
@@ -34,12 +34,14 @@ internal sealed class GeodeCacheFactory(
                 && stored.IsValueCreated
                 && (object)stored.Value is IAsyncDisposable d)
             {
-                d.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                await d.DisposeAsync().ConfigureAwait(false);
             }
             throw new ObjectDisposedException(nameof(GeodeCacheFactory));
         }
 
-        return lazy.Value;
+        var cache = lazy.Value;
+        await cache.InitializeAsync(ct).ConfigureAwait(false);
+        return cache;
     }
 
     public async ValueTask DisposeAsync()
@@ -82,7 +84,7 @@ internal sealed class GeodeCacheFactory(
     {
         if (TryGet(cacheName, out var cache)) return cache;
         throw new KeyNotFoundException(
-            $"No cache named '{cacheName}'. Call {nameof(Create)}(\"{cacheName}\") first.");
+            $"No cache named '{cacheName}'. Call {nameof(CreateAsync)}(\"{cacheName}\") first.");
     }
 
     public bool TryGet(string cacheName, [NotNullWhen(true)] out IGeodeCache? cache)

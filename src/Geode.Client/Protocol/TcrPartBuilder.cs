@@ -1,3 +1,21 @@
+using Geode.Client.Protocol;
+
+internal sealed class TcrPartBuilder(Func<CancellationToken, ValueTask<TcrPart>> func)
+{
+    public async ValueTask<TcrPart> BuildAsync(CancellationToken ct = default)
+    {
+        return await func.Invoke(ct);
+    }
+
+    public static TcrPartBuilder RawBytes(ReadOnlyMemory<byte> bytes)
+        => new((_) => ValueTask.FromResult(new TcrPart(0, bytes)));
+
+
+    public static TcrPartBuilder KeepAlive(bool value)
+        => RawBytes(new byte[] { (byte)(value ? 1 : 0) });
+
+}
+
 /*
 using Microsoft.Extensions.DependencyInjection;
 

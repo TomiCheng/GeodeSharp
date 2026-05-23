@@ -7,33 +7,18 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
 {
     private readonly Lazy<PoolManager> _poolManager;
     private readonly string _name;
-    /// <summary>
-    /// <c>SemaphoreSlim</c>-gated double-checked init. cppcache
-    /// equivalent is the <c>m_initDone</c> + <c>m_initDoneLock</c>
-    /// guard inside <c>CacheImpl::createRegion</c> /
-    /// <c>getQueryService</c>. Chosen over <c>Lazy&lt;Task&gt;(EAP)</c>
-    /// so:
-    /// <list type="bullet">
-    ///   <item>the first caller's ct reaches
-    ///         <see cref="InitializeCoreAsync"/>;</item>
-    ///   <item>each later caller awaits via
-    ///         <see cref="Task.WaitAsync(CancellationToken)"/> using
-    ///         their own ct &#x2014; cancelling that wait does not
-    ///         cancel the underlying init;</item>
-    ///   <item>on failure, <c>_initTask</c> can be reset to null to
-    ///         allow retry (cppcache <c>m_initDone</c> stays false on
-    ///         throw — same semantics).</item>
-    /// </list>
-    /// </summary>
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private readonly SystemProperties _systemProperties = new();
-
+    private readonly Lazy<TcrConnectionManager> _tcrConnectionManager;
     public GeodeCache(IServiceProvider serviceProvider, string name)
     {
         _name = name;
         _poolManager = new Lazy<PoolManager>(
                     () => ActivatorUtilities.CreateInstance<PoolManager>(serviceProvider, this),
                     LazyThreadSafetyMode.ExecutionAndPublication);
+        _tcrConnectionManager = new Lazy<TcrConnectionManager>(
+                   () => ActivatorUtilities.CreateInstance<TcrConnectionManager>(serviceProvider, this),
+                   LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     public string Name => _name;
@@ -41,6 +26,8 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
     public IPoolManager PoolManager => _poolManager.Value;
 
     internal SystemProperties CacheProperties => _systemProperties;
+
+    internal TcrConnectionManager ConnectionManager => _tcrConnectionManager.Value;
 
     public async ValueTask DisposeAsync()
     {
@@ -56,72 +43,45 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
     }
 
 
-    //    private Task? _initTask;
-    //    private readonly GeodeClientOptions _options = scopeContext.Options;
+    private Task? _initTask;
 
+    private async Task InitializeCoreAsync(CancellationToken ct)
+    {
+        ObjectDisposedException.ThrowIf(IsClosed, this);
+        // ── 2. TCCM init ────────────────────────────────────────
+        // Sets _isDurable from options.Subscription. In pool mode
+        // (our MVP) the three background workers stay parked; this
+        // is essentially a flag flip. Must complete before any pool
+        // queries TCCM.IsDurable / haEnabled.
+        await _tcrConnectionManager.Value.InitAsync(isPool: true, ct).ConfigureAwait(false);
 
-    //    /// <summary>
-    //    /// Runs once via <see cref="EnsureInitializedAsync"/>. Two config
-    //    /// sources converge on the same in-memory pool / region registry.
-    //    /// cppcache splits them by sync timing
-    //    /// (<c>CacheFactory::create</c> body); we unify under one async
-    //    /// method so ctor never blocks on I/O.
-    //    /// </summary>
-    //    /// <remarks>
-    //    /// <para>
-    //    /// <b>Path (b)</b>: caller used <see cref="PoolOptions"/> /
-    //    /// <c>Action&lt;GeodeClientOptions&gt;</c> — equivalent to
-    //    /// cppcache programmatic API. <c>_options.Cache is null</c>.
-    //    /// </para>
-    //    /// <para>
-    //    /// <b>Path (a)</b>: caller supplied declarative cache.xml-style
-    //    /// config — equivalent to cppcache
-    //    /// <c>initializeDeclarativeCache()</c>.
-    //    /// <c>_options.Cache is not null</c>.
-    //    /// </para>
-    //    /// </remarks>
-    //    private async Task InitializeCoreAsync(CancellationToken ct)
-    //    {
-    //        // ── 1. Pre-check ────────────────────────────────────────
-    //        if (IsClosed)
-    //        {
-    //            throw new ObjectDisposedException(nameof(Cache));
-    //        }
+        // ── 3-5. Build and init pools ───────────────────────────
+        // Both paths produce a sequence of CachePoolOptions; the
+        // foreach below builds + inits each one uniformly. Multi-pool /
+        // multi-server / locator gating now lives inside
+        // ThinClientPoolDM's ctor, so Cache stays generic. Required-
+        // field validation is the Options layer's job (Phase 1.1 收尾);
+        // here we trust the input.
+        //if (_options.Cache is null)
+        //{
+        //    // path (b) — Options-based (programmatic, the default).
+        //    // TODO step 3.b: enumerate a yet-to-be-added programmatic
+        //    //   pool-config surface (e.g. _options.Pools) and project
+        //    //   into CachePoolOptions-shape items.
+        //    throw new NotImplementedException(
+        //        "TODO: Cache.InitializeCoreAsync step 3.b (path b — Options-based)");
+        //}
+        //else
+        //{
+        //    // path (a) — Declarative cache.xml-style. Mirrors cppcache
+        //    // CacheImpl::initializeDeclarativeCache(xml).
+        //    await InitializeDeclarativeCacheAsync(_options.Cache, ct).ConfigureAwait(false);
+        //}
 
-    //        // ── 2. TCCM init ────────────────────────────────────────
-    //        // Sets _isDurable from options.Subscription. In pool mode
-    //        // (our MVP) the three background workers stay parked; this
-    //        // is essentially a flag flip. Must complete before any pool
-    //        // queries TCCM.IsDurable / haEnabled.
-    //        await tcrConnectionManager.InitAsync(isPool: true, ct).ConfigureAwait(false);
-
-    //        // ── 3-5. Build and init pools ───────────────────────────
-    //        // Both paths produce a sequence of CachePoolOptions; the
-    //        // foreach below builds + inits each one uniformly. Multi-pool /
-    //        // multi-server / locator gating now lives inside
-    //        // ThinClientPoolDM's ctor, so Cache stays generic. Required-
-    //        // field validation is the Options layer's job (Phase 1.1 收尾);
-    //        // here we trust the input.
-    //        if (_options.Cache is null)
-    //        {
-    //            // path (b) — Options-based (programmatic, the default).
-    //            // TODO step 3.b: enumerate a yet-to-be-added programmatic
-    //            //   pool-config surface (e.g. _options.Pools) and project
-    //            //   into CachePoolOptions-shape items.
-    //            throw new NotImplementedException(
-    //                "TODO: Cache.InitializeCoreAsync step 3.b (path b — Options-based)");
-    //        }
-    //        else
-    //        {
-    //            // path (a) — Declarative cache.xml-style. Mirrors cppcache
-    //            // CacheImpl::initializeDeclarativeCache(xml).
-    //            await InitializeDeclarativeCacheAsync(_options.Cache, ct).ConfigureAwait(false);
-    //        }
-
-    //        // ── 7. PDX / serialization registration (Phase 2+) ──────
-    //        // TODO: if (_options.Cache?.Pdx is { } pdx) apply pdx
-    //        //   ignoreUnreadFields / readSerialized to _pdxTypeRegistry.
-    //    }
+        // ── 7. PDX / serialization registration (Phase 2+) ──────
+        // TODO: if (_options.Cache?.Pdx is { } pdx) apply pdx
+        //   ignoreUnreadFields / readSerialized to _pdxTypeRegistry.
+    }
 
     //    /// <summary>
     //    /// Build pools and regions from an already-bound
@@ -418,39 +378,29 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
 
 
 
-    //    public async Task EnsureInitializedAsync(CancellationToken ct = default)
-    //    {
-    //        // Outer fast-path: once init started, every caller awaits the
-    //        // shared Task. Volatile.Read pairs with the Volatile.Write
-    //        // inside the lock so the publish is observable without
-    //        // re-acquiring the semaphore.
-    //        var task = Volatile.Read(ref _initTask);
-    //        if (task is null)
-    //        {
-    //            await _initLock.WaitAsync(ct).ConfigureAwait(false);
-    //            try
-    //            {
-    //                // Double-check: a concurrent caller may have set it
-    //                // while we waited on the semaphore.
-    //                task = _initTask;
-    //                if (task is null)
-    //                {
-    //                    // Start the init under the lock. The first caller's
-    //                    // ct flows into InitializeCoreAsync; later callers
-    //                    // observe their own ct only via WaitAsync below.
-    //                    task = InitializeCoreAsync(ct);
-    //                    Volatile.Write(ref _initTask, task);
-    //                }
-    //            }
-    //            finally
-    //            {
-    //                _initLock.Release();
-    //            }
-    //        }
-    //        // Per-caller cancellation: WaitAsync(ct) cancels *this* await,
-    //        // not the underlying init Task. Other callers keep waiting.
-    //        await task.WaitAsync(ct).ConfigureAwait(false);
-    //    }
+    internal async Task InitializeAsync(CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(IsClosed, this);
+        var task = Volatile.Read(ref _initTask);
+        if (task is null)
+        {
+            await _initLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                task = _initTask;
+                if (task is null)
+                {
+                    task = InitializeCoreAsync(ct);
+                    Volatile.Write(ref _initTask, task);
+                }
+            }
+            finally
+            {
+                _initLock.Release();
+            }
+        }
+        await task.WaitAsync(ct).ConfigureAwait(false);
+    }
 
     //    /// <summary>
     //    /// Delegates to <c>PoolManager.DefaultPool.QueryService</c> (or the

@@ -1,5 +1,7 @@
+using System.Collections.ObjectModel;
 using Geode.Client.Internal;
 using Geode.Client.Services;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol;
 
@@ -34,11 +36,10 @@ namespace Geode.Client.Protocol;
 internal sealed partial class TcrMessageBuilder
 {
     IServiceProvider _serviceProvider;
-    GeodeCache? _cache;
-    ThinClientBaseDM? _dm;
     MessageType _messageType;
     int _transactionId = -1;
     byte _earlyAck = 0;
+    readonly List<TcrPartBuilder> _tcrPartBuilders = [];
 
     private TcrMessageBuilder(IServiceProvider serviceProvider, MessageType messageType)
     {
@@ -51,41 +52,23 @@ internal sealed partial class TcrMessageBuilder
         return new TcrMessageBuilder(serviceProvider, messageType);
     }
 
-    public TcrMessageBuilder SetPool(ThinClientBaseDM dm)
+    public TcrMessageBuilder AddKeepAlivePart(bool value)
     {
-        _dm = dm;
+        _tcrPartBuilders.Add(TcrPartBuilder.KeepAlive(value));
         return this;
     }
 
-    public TcrMessageBuilder SetCache(GeodeCache cache)
+    public async ValueTask<TcrMessage> BuildAsync(CancellationToken ct = default)
     {
-        _cache = cache;
-        return this;
-    }
-
-    public ValueTask<TcrMessage> BuildAsync(CancellationToken ct = default)
-    {
-        return _messageType switch
+        var parts = new List<TcrPart>();
+        foreach (var builder in _tcrPartBuilders)
         {
-            MessageType.Ping => BuildPingAsync(ct),
-            _ => throw new NotSupportedException($"{_messageType} not yet implemented")
-        };
+            parts.Add(await builder.BuildAsync(ct));
+        }
+
+        return ActivatorUtilities.CreateInstance<TcrMessage>(
+           _serviceProvider, _messageType, _transactionId, _earlyAck, parts);
+
     }
-
-
-
-    //private readonly IServiceProvider _serviceProvider = serviceProvider;
-
-    ///// <summary>
-    ///// Sentinel used for any request that isn't part of a Geode
-    ///// transaction. Geode transactions land in Phase 11+.
-    ///// </summary>
-    //public const int MetaTransactionId = -1;
-
-    //// partBuilder is consumed positionally by the operation partials
-    //// (.Put / .Get / .ContainsKey / ...). serializationRegistry is the
-    //// key/value codec dispatch ??partials use it to replace inline type
-    //// guards with central registry lookup as each op is reworked.
-    //private readonly SerializationRegistry _serializationRegistry = serializationRegistry;
 }
 

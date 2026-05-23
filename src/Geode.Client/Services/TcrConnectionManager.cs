@@ -1,101 +1,15 @@
-/*
 using System.Collections.Concurrent;
 using System.Net;
-using System.Threading.Channels;
 using Geode.Client.Internal;
-using Geode.Client.Options;
+using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-namespace Geode.Client.Services;
-
-/// <summary>
-/// Owns the live TCP/TLS endpoint connections and the background
-/// orchestration that keeps them healthy (failover, cleanup, HA
-/// redundancy, periodic ping). Mirrors cppcache
-/// <c>TcrConnectionManager</c>
-/// (<c>cppcache/src/TcrConnectionManager.hpp/.cpp</c>).
-/// </summary>
-/// <remarks>
-/// <para>
-/// Heaviest member of <see cref="Geode.Client.Services.Cache"/>:
-/// the only one that spawns its own threads. cppcache gates the
-/// three background workers (failover / cleanup / redundancy) and
-/// the ping schedule by <c>if (!isPool)</c> &#x2014; pool-mode
-/// caches push that work into <c>ThinClientPoolDM</c> instead. Our
-/// MVP runs pool-only, so most fields below stay null until a
-/// non-pool / HA / CQ phase.
-/// </para>
-/// <para>
-/// Member fields mirror cppcache <c>TcrConnectionManager.hpp</c>
-/// 1:1 per CLAUDE.md "mirror then prune". Owning types not built
-/// yet are typed as <c>object?</c> placeholders &#x2014; replace
-/// with the real type when its phase ships, or delete if never
-/// used. The cppcache back-pointer <c>m_cache</c> is omitted
-/// (Pimpl collapsed; this class lives as a field on
-/// <c>Cache</c> and gets options through DI).
-/// </para>
-/// </remarks>
 internal sealed class TcrConnectionManager(
-    CacheScopeContext scopeContext,
+    IServiceProvider serviceProvider,
     ILogger<TcrConnectionManager> logger,
-    IServiceProvider serviceProvider) : IAsyncDisposable
+    GeodeCache cache)
 {
-    private readonly GeodeClientOptions _options = scopeContext.Options;
-    private readonly ILogger<TcrConnectionManager> _logger = logger;
-    private readonly IServiceProvider _serviceProvider = serviceProvider;
-
-#pragma warning disable CS0169, CS0414, CS0649, CS9113 // placeholder fields mirroring TcrConnectionManager; wired up phase by phase
-
-    // ── Endpoint registry (TcrConnectionManager.hpp m_endpoints) ──
-    // Cache-wide canonical owner of TcrEndpoint instances. Value is
-    // Lazy<TcrEndpoint> so the get-or-create race in
-    // AddRefToTcrEndpoint constructs exactly one endpoint per
-    // host:port even under concurrent first-sight callers
-    // (LazyThreadSafetyMode.ExecutionAndPublication). Key uses
-    // DnsEndPoint's default equality (Host string + Port + AddressFamily);
-    // upstream callers normalise host case at SelectEndpointAsync if
-    // locator vs static-server names can disagree.
-    private readonly ConcurrentDictionary<DnsEndPoint, Lazy<TcrEndpoint>> _endpoints =
-        new();                                      // m_endpoints
-
-    // ── Distribution-manager registry (m_distMngrs) ──
-    private readonly List<object?> _distributionManagers = new(); // m_distMngrs (value: ThinClientBaseDM)
-    private readonly ReaderWriterLockSlim _distributionManagersLock = new();
-
-    // ── Background workers (m_failoverTask / m_cleanupTask / m_redundancyTask) ──
-    // cppcache: three unique_ptr<Task> + binary_semaphore each.
-    // .NET: Task + SemaphoreSlim. All null until InitAsync(isPool: false).
-    private Task? _failoverTask;                    // m_failoverTask
-    private Task? _cleanupTask;                     // m_cleanupTask
-    private Task? _redundancyTask;                  // m_redundancyTask
-    private readonly SemaphoreSlim _failoverSignal = new(0, int.MaxValue);     // failover_semaphore_
-    private readonly SemaphoreSlim _cleanupSignal = new(0, int.MaxValue);      // cleanup_semaphore_
-    private readonly SemaphoreSlim _redundancySignal = new(0, int.MaxValue);   // redundancy_semaphore_
-    private readonly CancellationTokenSource _backgroundCts = new();           // unify shutdown
-
-    // ── Periodic ping (cppcache ping_task_id_ via ExpiryTaskManager) ──
-    private PeriodicTimer? _pingTimer;              // bucket-1 replacement
-    private Task? _pingLoop;
-
-    // ── HA subscription / redundancy (m_redundancyManager) ──
-    private object? _redundancyManager;             // ThinClientRedundancyManager (Phase 2+)
-
-    // ── Runtime flags (m_isDurable / m_isNetDown) ──
-    private bool _isDurable;                        // m_isDurable
-    private int _isNetDown;                         // m_isNetDown (Interlocked 0/1)
-
-    // ── Deferred cleanup queues ──
-    // cppcache: Queue<TcrConnection*>, Queue<EventReceiver*>, Queue<binary_semaphore*>
-    private Channel<object?>? _connectionReleaseQueue;     // m_connectionReleaseList
-    private Channel<object?>? _receiverReleaseQueue;       // m_receiverReleaseList
-    private Channel<SemaphoreSlim>? _notifyCleanupSemaphoreQueue; // notify_cleanup_semaphore_list_
-
-    // ── Disposal flag ──
-    private int _disposed;
-
-#pragma warning restore CS0169, CS0414, CS0649
-
     /// <summary>
     /// 0 = <see cref="InitAsync"/> not run, 1 = ran.
     /// Mirrors cppcache <c>m_initGuard</c>; gated by
@@ -103,25 +17,39 @@ internal sealed class TcrConnectionManager(
     /// idempotency.
     /// </summary>
     private int _initGuard;
+    private bool _isDurable;
+    private readonly ConcurrentDictionary<DnsEndPoint, Lazy<TcrEndpoint>> _endpoints = new();
 
-    public bool IsDurable => Volatile.Read(ref _isDurable);
+    public Task InitAsync(bool isPool, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
 
-    public bool IsHaEnabled => _redundancyManager is not null;
+        // Idempotent (cppcache m_initGuard). First caller wins; later
+        // calls are a no-op even with a different `isPool` argument —
+        // matches cppcache, which only honours the first init's mode.
+        if (Interlocked.Exchange(ref _initGuard, 1) != 0)
+        {
+            return Task.CompletedTask;
+        }
 
-    public bool IsNetDown => Volatile.Read(ref _isNetDown) != 0;
+        // Pool mode keepalive lives in ThinClientPoolDM, so the only
+        // thing this branch does is publish the durable flag for
+        // anyone who later reads IsDurable / haEnabled. Non-pool mode
+        // additionally launches three background workers + the ping
+        // PeriodicTimer (Phase 2+).
+        Volatile.Write(
+            ref _isDurable,
+            !string.IsNullOrEmpty(cache.CacheProperties.DurableClientId));
 
-    /// <summary>
-    /// Snapshot of registered endpoints. Mirrors cppcache
-    /// <c>TcrConnectionManager::getGlobalEndpoints()</c>. Lazy entries
-    /// are materialised on iteration &#x2014; safe because by the
-    /// time an entry is in the map,
-    /// <see cref="AddRefToTcrEndpoint"/> has already forced
-    /// <c>Lazy.Value</c> at least once.
-    /// </summary>
-    public IReadOnlyDictionary<DnsEndPoint, TcrEndpoint> GetGlobalEndpoints()
-        => _endpoints.ToDictionary(
-            static kv => kv.Key,
-            static kv => kv.Value.Value);
+        if (!isPool)
+        {
+            // TODO Phase 2+: start _failoverTask / _cleanupTask /
+            // _redundancyTask, schedule the ping PeriodicTimer.
+            throw new NotImplementedException("TODO: non-pool TcrConnectionManager.InitAsync (Phase 2+)");
+        }
+
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// Get-or-create the cache-wide <see cref="TcrEndpoint"/> for
@@ -171,7 +99,7 @@ internal sealed class TcrConnectionManager(
             static (ep, sp) => new Lazy<TcrEndpoint>(
                 () => ActivatorUtilities.CreateInstance<TcrEndpoint>(sp, ep),
                 LazyThreadSafetyMode.ExecutionAndPublication),
-            _serviceProvider);
+            serviceProvider);
 
         // 2. Force the ctor (winner constructs; subsequent callers
         //    hit the cached value).
@@ -182,8 +110,7 @@ internal sealed class TcrConnectionManager(
         //    critical section by making it interlocked instead.
         var refs = endpoint.IncrementNumRegions();
 
-        // cppcache: LOGFINER("TCCM: incremented region reference count for endpoint %s to %d", ...)
-        _logger.LogTrace(
+        logger.LogTrace(
             "TCCM: incremented region reference count for endpoint {Endpoint} to {Refs}",
             endpoint.Name, refs);
 
@@ -200,50 +127,120 @@ internal sealed class TcrConnectionManager(
 
         return endpoint;
     }
+}
+
+/*
+using System.Collections.Concurrent;
+using System.Net;
+using System.Threading.Channels;
+using Geode.Client.Internal;
+using Geode.Client.Options;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+
+namespace Geode.Client.Services;
+
+/// <summary>
+/// Owns the live TCP/TLS endpoint connections and the background
+/// orchestration that keeps them healthy (failover, cleanup, HA
+/// redundancy, periodic ping). Mirrors cppcache
+/// <c>TcrConnectionManager</c>
+/// (<c>cppcache/src/TcrConnectionManager.hpp/.cpp</c>).
+/// </summary>
+/// <remarks>
+/// <para>
+/// Heaviest member of <see cref="Geode.Client.Services.Cache"/>:
+/// the only one that spawns its own threads. cppcache gates the
+/// three background workers (failover / cleanup / redundancy) and
+/// the ping schedule by <c>if (!isPool)</c> &#x2014; pool-mode
+/// caches push that work into <c>ThinClientPoolDM</c> instead. Our
+/// MVP runs pool-only, so most fields below stay null until a
+/// non-pool / HA / CQ phase.
+/// </para>
+/// <para>
+/// Member fields mirror cppcache <c>TcrConnectionManager.hpp</c>
+/// 1:1 per CLAUDE.md "mirror then prune". Owning types not built
+/// yet are typed as <c>object?</c> placeholders &#x2014; replace
+/// with the real type when its phase ships, or delete if never
+/// used. The cppcache back-pointer <c>m_cache</c> is omitted
+/// (Pimpl collapsed; this class lives as a field on
+/// <c>Cache</c> and gets options through DI).
+/// </para>
+/// </remarks>
+internal sealed class TcrConnectionManager(
+    CacheScopeContext scopeContext,
+    ILogger<TcrConnectionManager> logger,
+    IServiceProvider serviceProvider) : IAsyncDisposable
+{
+    private readonly GeodeClientOptions _options = scopeContext.Options;
+    private readonly ILogger<TcrConnectionManager> _logger = logger;
+    private readonly IServiceProvider _serviceProvider = serviceProvider;
+
+#pragma warning disable CS0169, CS0414, CS0649, CS9113 // placeholder fields mirroring TcrConnectionManager; wired up phase by phase
+
+
+
+    // ── Distribution-manager registry (m_distMngrs) ──
+    private readonly List<object?> _distributionManagers = new(); // m_distMngrs (value: ThinClientBaseDM)
+    private readonly ReaderWriterLockSlim _distributionManagersLock = new();
+
+    // ── Background workers (m_failoverTask / m_cleanupTask / m_redundancyTask) ──
+    // cppcache: three unique_ptr<Task> + binary_semaphore each.
+    // .NET: Task + SemaphoreSlim. All null until InitAsync(isPool: false).
+    private Task? _failoverTask;                    // m_failoverTask
+    private Task? _cleanupTask;                     // m_cleanupTask
+    private Task? _redundancyTask;                  // m_redundancyTask
+    private readonly SemaphoreSlim _failoverSignal = new(0, int.MaxValue);     // failover_semaphore_
+    private readonly SemaphoreSlim _cleanupSignal = new(0, int.MaxValue);      // cleanup_semaphore_
+    private readonly SemaphoreSlim _redundancySignal = new(0, int.MaxValue);   // redundancy_semaphore_
+    private readonly CancellationTokenSource _backgroundCts = new();           // unify shutdown
+
+    // ── Periodic ping (cppcache ping_task_id_ via ExpiryTaskManager) ──
+    private PeriodicTimer? _pingTimer;              // bucket-1 replacement
+    private Task? _pingLoop;
+
+    // ── HA subscription / redundancy (m_redundancyManager) ──
+    private object? _redundancyManager;             // ThinClientRedundancyManager (Phase 2+)
+
+    // ── Runtime flags (m_isDurable / m_isNetDown) ──
+
+    private int _isNetDown;                         // m_isNetDown (Interlocked 0/1)
+
+    // ── Deferred cleanup queues ──
+    // cppcache: Queue<TcrConnection*>, Queue<EventReceiver*>, Queue<binary_semaphore*>
+    private Channel<object?>? _connectionReleaseQueue;     // m_connectionReleaseList
+    private Channel<object?>? _receiverReleaseQueue;       // m_receiverReleaseList
+    private Channel<SemaphoreSlim>? _notifyCleanupSemaphoreQueue; // notify_cleanup_semaphore_list_
+
+    // ── Disposal flag ──
+    private int _disposed;
+
+#pragma warning restore CS0169, CS0414, CS0649
+
+
+
+    public bool IsDurable => Volatile.Read(ref _isDurable);
+
+    public bool IsHaEnabled => _redundancyManager is not null;
+
+    public bool IsNetDown => Volatile.Read(ref _isNetDown) != 0;
 
     /// <summary>
-    /// Start background workers. Mirrors cppcache
-    /// <c>TcrConnectionManager::init(isPool)</c>.
+    /// Snapshot of registered endpoints. Mirrors cppcache
+    /// <c>TcrConnectionManager::getGlobalEndpoints()</c>. Lazy entries
+    /// are materialised on iteration &#x2014; safe because by the
+    /// time an entry is in the map,
+    /// <see cref="AddRefToTcrEndpoint"/> has already forced
+    /// <c>Lazy.Value</c> at least once.
     /// </summary>
-    /// <remarks>
-    /// When <paramref name="isPool"/> is <c>false</c>: start the
-    /// failover / cleanup / redundancy loops and the
-    /// <see cref="PeriodicTimer"/> ping task. When <c>true</c>: leave
-    /// background fields null; pool-mode keepalive is owned by
-    /// <c>ThinClientPoolDM</c>. Idempotent (cppcache uses
-    /// <c>m_initGuard</c>).
-    /// </remarks>
-    public Task InitAsync(bool isPool, CancellationToken ct = default)
-    {
-        ct.ThrowIfCancellationRequested();
+    public IReadOnlyDictionary<DnsEndPoint, TcrEndpoint> GetGlobalEndpoints()
+        => _endpoints.ToDictionary(
+            static kv => kv.Key,
+            static kv => kv.Value.Value);
 
-        // Idempotent (cppcache m_initGuard). First caller wins; later
-        // calls are a no-op even with a different `isPool` argument —
-        // matches cppcache, which only honours the first init's mode.
-        if (Interlocked.Exchange(ref _initGuard, 1) != 0)
-        {
-            return Task.CompletedTask;
-        }
 
-        // Pool mode keepalive lives in ThinClientPoolDM, so the only
-        // thing this branch does is publish the durable flag for
-        // anyone who later reads IsDurable / haEnabled. Non-pool mode
-        // additionally launches three background workers + the ping
-        // PeriodicTimer (Phase 2+).
-        Volatile.Write(
-            ref _isDurable,
-            !string.IsNullOrEmpty(_options.Subscription.DurableClientId));
 
-        if (!isPool)
-        {
-            // TODO Phase 2+: start _failoverTask / _cleanupTask /
-            // _redundancyTask, schedule the ping PeriodicTimer.
-            throw new NotImplementedException(
-                "TODO: non-pool TcrConnectionManager.InitAsync (Phase 2+)");
-        }
 
-        return Task.CompletedTask;
-    }
 
     /// <summary>
     /// Register a distribution manager with a set of endpoints.

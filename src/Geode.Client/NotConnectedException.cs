@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client;
 
 /// <summary>
@@ -24,5 +23,3 @@ public class NotConnectedException : GeodeException
     public NotConnectedException(string message, Exception innerException)
         : base(message, innerException) { }
 }
-
-*/

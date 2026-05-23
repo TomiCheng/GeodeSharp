@@ -9,7 +9,8 @@ public interface IGeodeCacheFactory : IAsyncDisposable
 {
 
     /// <summary>
-    /// Build and register a new cache under <paramref name="cacheName"/>.
+    /// Build, register, and initialise a new cache under <paramref name="cacheName"/>.
+    /// The returned cache is fully initialised (TCCM bootstrapped) and ready to use.
     /// </summary>
     /// <exception cref="InvalidOperationException">
     /// <paramref name="cacheName"/> already exists.
@@ -17,7 +18,7 @@ public interface IGeodeCacheFactory : IAsyncDisposable
     /// <exception cref="ObjectDisposedException">
     /// Factory has been disposed.
     /// </exception>
-    IGeodeCache Create(string cacheName);
+    Task<IGeodeCache> CreateAsync(string cacheName, CancellationToken ct = default);
 
     /// <summary>
     /// Close and remove a single cache; <see langword="false"/> if no such cache.

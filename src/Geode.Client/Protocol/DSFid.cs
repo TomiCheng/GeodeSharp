@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Protocol;
 
 /// <summary>
@@ -54,5 +53,3 @@ internal enum DSFid : int
     DiskVersionTag = 2131,
     DiskStoreId = 2133,
 }
-
-*/

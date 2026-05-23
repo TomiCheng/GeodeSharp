@@ -1,7 +1,5 @@
-/*
-using Microsoft.Extensions.DependencyInjection;
-
-using Geode.Client.Protocol.Serialization;
+using Geode.Client.Internal;
+using Geode.Client.Services;
 
 namespace Geode.Client.Protocol;
 
@@ -33,24 +31,61 @@ namespace Geode.Client.Protocol;
 /// <c>TxState</c> is present.
 /// </para>
 /// </remarks>
-internal sealed partial class TcrMessageBuilder(
-    TcrPartBuilder partBuilder,
-    SerializationRegistry serializationRegistry,
-    IServiceProvider serviceProvider)
+internal sealed partial class TcrMessageBuilder
 {
-    private readonly IServiceProvider _serviceProvider = serviceProvider;
+    IServiceProvider _serviceProvider;
+    GeodeCache? _cache;
+    ThinClientBaseDM? _dm;
+    MessageType _messageType;
+    int _transactionId = -1;
+    byte _earlyAck = 0;
 
-    /// <summary>
-    /// Sentinel used for any request that isn't part of a Geode
-    /// transaction. Geode transactions land in Phase 11+.
-    /// </summary>
-    public const int MetaTransactionId = -1;
+    private TcrMessageBuilder(IServiceProvider serviceProvider, MessageType messageType)
+    {
+        _serviceProvider = serviceProvider;
+        _messageType = messageType;
+    }
 
-    // partBuilder is consumed positionally by the operation partials
-    // (.Put / .Get / .ContainsKey / ...). serializationRegistry is the
-    // key/value codec dispatch ??partials use it to replace inline type
-    // guards with central registry lookup as each op is reworked.
-    private readonly SerializationRegistry _serializationRegistry = serializationRegistry;
+    public static TcrMessageBuilder Create(IServiceProvider serviceProvider, MessageType messageType)
+    {
+        return new TcrMessageBuilder(serviceProvider, messageType);
+    }
+
+    public TcrMessageBuilder SetPool(ThinClientBaseDM dm)
+    {
+        _dm = dm;
+        return this;
+    }
+
+    public TcrMessageBuilder SetCache(GeodeCache cache)
+    {
+        _cache = cache;
+        return this;
+    }
+
+    public ValueTask<TcrMessage> BuildAsync(CancellationToken ct = default)
+    {
+        return _messageType switch
+        {
+            MessageType.Ping => BuildPingAsync(ct),
+            _ => throw new NotSupportedException($"{_messageType} not yet implemented")
+        };
+    }
+
+
+
+    //private readonly IServiceProvider _serviceProvider = serviceProvider;
+
+    ///// <summary>
+    ///// Sentinel used for any request that isn't part of a Geode
+    ///// transaction. Geode transactions land in Phase 11+.
+    ///// </summary>
+    //public const int MetaTransactionId = -1;
+
+    //// partBuilder is consumed positionally by the operation partials
+    //// (.Put / .Get / .ContainsKey / ...). serializationRegistry is the
+    //// key/value codec dispatch ??partials use it to replace inline type
+    //// guards with central registry lookup as each op is reworked.
+    //private readonly SerializationRegistry _serializationRegistry = serializationRegistry;
 }
 
-*/

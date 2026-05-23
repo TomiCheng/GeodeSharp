@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Protocol;
 
 /// <summary>
@@ -72,5 +71,3 @@ internal abstract class TcrChunkedResult
     /// </summary>
     public abstract void Reset();
 }
-
-*/

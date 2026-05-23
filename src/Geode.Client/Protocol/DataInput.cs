@@ -1,4 +1,3 @@
-/*
 using System.Buffers.Binary;
 using System.Text;
 
@@ -21,7 +20,7 @@ namespace Geode.Client.Protocol;
 /// Methods marked "prototype" throw <see cref="NotImplementedException"/>
 /// and will be filled in as later phases need them.
 /// </remarks>
-internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
+internal sealed class DataInput(ReadOnlyMemory<byte> buffer)
 {
     private int _position;
 
@@ -157,8 +156,7 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
             DSCode.CacheableASCIIStringHuge => throw new NotImplementedException(
                 "CacheableASCIIStringHuge (DSCode 88) ??Phase 4."),
             DSCode.CacheableStringHuge => ReadUtf16Huge(),
-            _ => throw new GeodeException(
-                $"BigEndianBinaryReader.ReadString: unexpected DSCode 0x{dscode:X2}."),
+            _ => throw new GeodeException($"DataInput.ReadString: unexpected DSCode 0x{dscode:X2}."),
         };
     }
 
@@ -167,8 +165,7 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
     {
         if (length < 0)
         {
-            throw new GeodeException(
-                $"BigEndianBinaryReader.ReadString: negative ASCII length {length}.");
+            throw new GeodeException($"DataInput.ReadString: negative ASCII length {length}.");
         }
         if (length == 0) return string.Empty;
 
@@ -217,7 +214,7 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
             0xFE => ReadUInt16(),
             0xFD => ReadInt32(),
             _ => throw new GeodeException(
-                $"BigEndianBinaryReader.ReadArrayLength: unexpected length code 0x{code:X2}."),
+                $"DataInput.ReadArrayLength: unexpected length code 0x{code:X2}."),
         };
     }
 
@@ -421,5 +418,3 @@ internal sealed class BigEndianBinaryReader(ReadOnlyMemory<byte> buffer)
         }
     }
 }
-
-*/

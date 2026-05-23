@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using Geode.Client.Protocol;
 using Geode.Client.Services;
 
 namespace Geode.Client.Internal;
@@ -133,31 +134,31 @@ internal abstract class ThinClientBaseDM : IAsyncDisposable
     //    bool isBackgroundThread = false,
     //    CancellationToken ct = default);
 
-    ///// <summary>
-    ///// Send to a specific endpoint, bypassing DM-level routing /
-    ///// load-balancing / failover. Mirrors cppcache pure-virtual
-    ///// <c>sendRequestToEP(request, reply, endpoint)</c>; same
-    ///// return-vs-mutate convention as
-    ///// <see cref="SendSyncRequestAsync(TcrMessage, bool, bool, CancellationToken)"/>.
-    ///// </summary>
-    //public abstract Task<TcrMessage> SendRequestToEndpointAsync(
-    //    TcrMessage request,
-    //    TcrEndpoint endpoint,
-    //    CancellationToken ct = default);
+    /// <summary>
+    /// Send to a specific endpoint, bypassing DM-level routing /
+    /// load-balancing / failover. Mirrors cppcache pure-virtual
+    /// <c>sendRequestToEP(request, reply, endpoint)</c>; same
+    /// return-vs-mutate convention as
+    /// <see cref="SendSyncRequestAsync(TcrMessage, bool, bool, CancellationToken)"/>.
+    /// </summary>
+    public abstract Task<TcrMessage> SendRequestToEndpointAsync(
+        TcrMessage request,
+        TcrEndpoint endpoint,
+        CancellationToken ct = default);
 
-    ///// <summary>
-    ///// Chunked-reply variant. Same endpoint-pinned dispatch as
-    ///// <see cref="SendRequestToEndpointAsync(TcrMessage, TcrEndpoint, CancellationToken)"/>
-    ///// but the wire-I/O leg uses
-    ///// <see cref="TcrConnection.SendRequestAsync(TcrMessage, TcrChunkedResult, CancellationToken)"/>
-    ///// so each arriving chunk flows into
-    ///// <paramref name="chunkedResult"/>.
-    ///// </summary>
-    //public abstract Task<TcrMessage> SendRequestToEndpointAsync(
-    //    TcrMessage request,
-    //    TcrChunkedResult chunkedResult,
-    //    TcrEndpoint endpoint,
-    //    CancellationToken ct = default);
+    /// <summary>
+    /// Chunked-reply variant. Same endpoint-pinned dispatch as
+    /// <see cref="SendRequestToEndpointAsync(TcrMessage, TcrEndpoint, CancellationToken)"/>
+    /// but the wire-I/O leg uses
+    /// <see cref="TcrConnection.SendRequestAsync(TcrMessage, TcrChunkedResult, CancellationToken)"/>
+    /// so each arriving chunk flows into
+    /// <paramref name="chunkedResult"/>.
+    /// </summary>
+    public abstract Task<TcrMessage> SendRequestToEndpointAsync(
+        TcrMessage request,
+        TcrChunkedResult chunkedResult,
+        TcrEndpoint endpoint,
+        CancellationToken ct = default);
 
     //// ── Template methods (concrete; delegate to derived) ───────
 
@@ -224,8 +225,8 @@ internal abstract class ThinClientBaseDM : IAsyncDisposable
     //public virtual int NumberOfEndpoints => 0;
 
     //public virtual bool IsEndpointAttached(TcrEndpoint endpoint) => false;
-    //public virtual void IncConnectedEndpoints() { }
-    //public virtual void DecConnectedEndpoints() { }
+    public virtual void IncConnectedEndpoints() { }
+    public virtual void DecConnectedEndpoints() { }
 
     //public virtual Task<int /*GfErrType* /> RegisterInterestForRegionAsync(
     //    TcrEndpoint endpoint,

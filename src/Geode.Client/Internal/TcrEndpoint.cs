@@ -1,4 +1,3 @@
-
 using System.Net;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
@@ -51,25 +50,25 @@ internal class TcrEndpoint(
 
     //    private int _disposed;
 
-    //    /// <summary>
-    //    /// DMs that have registered interest in this endpoint via
-    //    /// <see cref="RegisterDMAsync"/>. Mirrors cppcache <c>m_distMgrs</c>
-    //    /// (<c>TcrEndpoint.hpp:213</c>). Used as the broadcast list for
-    //    /// endpoint-wide state transitions (e.g. <see cref="SetConnected"/>
-    //    /// fans out <c>Inc/DecConnectedEndpoints</c> to every DM here);
-    //    /// cppcache simplifies by notifying only <c>m_baseDM</c>, but our
-    //    /// list-walk handles multi-pool endpoint sharing correctly. All
-    //    /// access guarded by <see cref="_distMgrsLock"/>.
-    //    /// </summary>
-    //    private readonly List<ThinClientBaseDM> _distMgrs = [];
+    /// <summary>
+    /// DMs that have registered interest in this endpoint via
+    /// <see cref="RegisterDMAsync"/>. Mirrors cppcache <c>m_distMgrs</c>
+    /// (<c>TcrEndpoint.hpp:213</c>). Used as the broadcast list for
+    /// endpoint-wide state transitions (e.g. <see cref="SetConnected"/>
+    /// fans out <c>Inc/DecConnectedEndpoints</c> to every DM here);
+    /// cppcache simplifies by notifying only <c>m_baseDM</c>, but our
+    /// list-walk handles multi-pool endpoint sharing correctly. All
+    /// access guarded by <see cref="_distMgrsLock"/>.
+    /// </summary>
+    private readonly List<ThinClientBaseDM> _distMgrs = [];
 
-    //    /// <summary>
-    //    /// Guards <see cref="_distMgrs"/>. Mirrors cppcache
-    //    /// <c>m_distMgrsLock</c> (<c>TcrEndpoint.hpp:215</c>). Held during
-    //    /// register / unregister and during transition broadcasts so a DM
-    //    /// can't be dropped mid-iteration.
-    //    /// </summary>
-    //    private readonly Lock _distMgrsLock = new();
+    /// <summary>
+    /// Guards <see cref="_distMgrs"/>. Mirrors cppcache
+    /// <c>m_distMgrsLock</c> (<c>TcrEndpoint.hpp:215</c>). Held during
+    /// register / unregister and during transition broadcasts so a DM
+    /// can't be dropped mid-iteration.
+    /// </summary>
+    private readonly Lock _distMgrsLock = new();
 
     //    /// <summary>
     //    /// cppcache <c>m_maxConnections</c> — per-endpoint conn cap from
@@ -85,27 +84,27 @@ internal class TcrEndpoint(
     private bool _pingSent;
     private int _pingTimeouts;
 
-    //    /// <summary>
-    //    /// Slot semaphore enforcing <see cref="_maxConnections"/>. Null when
-    //    /// <see cref="_maxConnections"/> is <c>0</c> (unlimited).
-    //    /// </summary>
-    //    private readonly SemaphoreSlim? _slots = MakeSlotSemaphore(cacheScopeContext.Options.Pool.ConnectionPoolSize);
+    /// <summary>
+    /// Slot semaphore enforcing <see cref="_maxConnections"/>. Null when
+    /// <see cref="_maxConnections"/> is <c>0</c> (unlimited).
+    /// </summary>
+    private readonly SemaphoreSlim? _slots = MakeSlotSemaphore(5); // todo
 
-    //    private static SemaphoreSlim? MakeSlotSemaphore(int size) =>
-    //        size > 0 ? new SemaphoreSlim(size, size) : null;
+    private static SemaphoreSlim? MakeSlotSemaphore(int size) =>
+        size > 0 ? new SemaphoreSlim(size, size) : null;
 
-    //    /// <summary>
-    //    /// Reserve one of this endpoint's <see cref="_maxConnections"/> slots,
-    //    /// waiting up to <paramref name="timeout"/>. Returns <c>false</c> if
-    //    /// the cap is hit and the wait expires; <c>true</c> when a slot is
-    //    /// acquired (caller must <see cref="ReleaseSlot"/> on conn close) or
-    //    /// the endpoint is in unlimited mode.
-    //    /// </summary>
-    //    internal async ValueTask<bool> AcquireSlotAsync(TimeSpan timeout, CancellationToken ct)
-    //    {
-    //        if (_slots is null) return true;
-    //        return await _slots.WaitAsync(timeout, ct).ConfigureAwait(false);
-    //    }
+    /// <summary>
+    /// Reserve one of this endpoint's <see cref="_maxConnections"/> slots,
+    /// waiting up to <paramref name="timeout"/>. Returns <c>false</c> if
+    /// the cap is hit and the wait expires; <c>true</c> when a slot is
+    /// acquired (caller must <see cref="ReleaseSlot"/> on conn close) or
+    /// the endpoint is in unlimited mode.
+    /// </summary>
+    internal async ValueTask<bool> AcquireSlotAsync(TimeSpan timeout, CancellationToken ct)
+    {
+        if (_slots is null) return true;
+        return await _slots.WaitAsync(timeout, ct).ConfigureAwait(false);
+    }
 
     //    /// <summary>
     //    /// Atomically increment the region / DM reference count. Mirrors
@@ -117,8 +116,10 @@ internal class TcrEndpoint(
     //    /// <returns>The new reference count.</returns>
     //    internal int IncrementNumRegions() => Interlocked.Increment(ref _numRegions);
 
-    //    /// <summary>Release a slot reserved via <see cref="AcquireSlotAsync"/>.</summary>
-    //    internal void ReleaseSlot() => _slots?.Release();
+    /// <summary>
+    /// Release a slot reserved via <see cref="AcquireSlotAsync"/>.
+    /// </summary>
+    internal void ReleaseSlot() => _slots?.Release();
 
     //    /// <summary>
     //    /// Run the auth handshake on a freshly-opened connection. Mirrors
@@ -130,70 +131,66 @@ internal class TcrEndpoint(
     //        throw new NotImplementedException("TODO: TcrEndpoint.AuthenticateEndpointAsync");
     //    }
 
-    //    /// <summary>
-    //    /// Open a fresh TCP/TLS connection and run the handshake. Mirrors
-    //    /// cppcache <c>TcrEndpoint::createNewConnection</c>. Linux-only
-    //    /// retry-under-lock variant <c>createNewConnectionWL</c> is bucket
-    //    /// 1 (modern .NET sockets don't need it).
-    //    /// </summary>
-    //    public async Task<TcrConnection> CreateNewConnectionAsync(
-    //        bool isClientNotification,
-    //        bool isSecondary,
-    //        TimeSpan? connectTimeout = null,
-    //        CancellationToken ct = default)
-    //    {
-    //        if (isClientNotification)
-    //        {
-    //            // cppcache: HandShake.cpp builds a different wire format for
-    //            // notification channels (port list, no read-timeout). Our
-    //            // TcrConnection.HandshakeAsync still throws NIE on that branch
-    //            // (Phase 2+ subscription / CQ).
-    //            throw new NotImplementedException(
-    //                "TODO Phase 2+: notification-channel handshake.");
-    //        }
-    //        _ = isSecondary;     // only meaningful with isClientNotification.
+    /// <summary>
+    /// Open a fresh TCP/TLS connection and run the handshake. Mirrors
+    /// cppcache <c>TcrEndpoint::createNewConnection</c>. Linux-only
+    /// retry-under-lock variant <c>createNewConnectionWL</c> is bucket
+    /// 1 (modern .NET sockets don't need it).
+    /// </summary>
+    public async Task<TcrConnection> CreateNewConnectionAsync(
+        bool isClientNotification,
+        bool isSecondary,
+        TimeSpan? connectTimeout = null,
+        CancellationToken ct = default)
+    {
+        if (isClientNotification)
+        {
+            // cppcache: HandShake.cpp builds a different wire format for
+            // notification channels (port list, no read-timeout). Our
+            // TcrConnection.HandshakeAsync still throws NIE on that branch
+            // (Phase 2+ subscription / CQ).
+            throw new NotImplementedException("TODO Phase 2+: notification-channel handshake.");
+        }
+        _ = isSecondary;     // only meaningful with isClientNotification.
 
-    //        ct.ThrowIfCancellationRequested();
+        ct.ThrowIfCancellationRequested();
 
-    //        // cppcache LOGFINE entry log (TcrEndpoint.cpp:188-191) — simplified:
-    //        // we don't have m_needToConnectInLock / appThreadRequest, so just
-    //        // log host:port and let TcrConnection log its own handshake steps.
-    //        logger.LogDebug("TcrEndpoint.CreateNewConnection: opening request/response connection to {Host}:{Port}",
-    //            endpoint.Host, endpoint.Port);
+        logger.LogDebug("TcrEndpoint.CreateNewConnection: opening request/response connection to {Host}:{Port}",
+            endpoint.Host, endpoint.Port);
 
-    //        // Pull TcrConnection through DI so its own deps (ILogger<TcrConnection>,
-    //        // IOptions<GeodeClientOptions>, ClientProxyMembershipIdBuilder)
-    //        // resolve cleanly. cppcache constructs TcrConnection directly with
-    //        // the TcrConnectionManager reference; we let DI compose instead.
-    //        var conn = ActivatorUtilities.CreateInstance<TcrConnection>(serviceProvider);
+        // Pull TcrConnection through DI so its own deps (ILogger<TcrConnection>,
+        // IOptions<GeodeClientOptions>, ClientProxyMembershipIdBuilder)
+        // resolve cleanly. cppcache constructs TcrConnection directly with
+        // the TcrConnectionManager reference; we let DI compose instead.
+        var conn = ActivatorUtilities.CreateInstance<TcrConnection>(serviceProvider);
 
-    //        try
-    //        {
-    //            // ConnectAsync bundles TCP connect (Nagle off) + the full
-    //            // client/server handshake (steps 1-14). Mirrors cppcache
-    //            // initTcrConnection: success or throw, no half-states.
-    //            //   • GeodeException — server refused the handshake (REPLY_OK
-    //            //     not received) or pointed at a locator port.
-    //            //   • SocketException / IOException — TCP failure.
-    //            //   • OperationCanceledException — ct cancelled.
-    //            await conn.ConnectAsync(endpoint.Host, endpoint.Port, connectTimeout, ct).ConfigureAwait(false);
-    //            conn.Endpoint = this;
+        try
+        {
+            // ConnectAsync bundles TCP connect (Nagle off) + the full
+            // client/server handshake (steps 1-14). Mirrors cppcache
+            // initTcrConnection: success or throw, no half-states.
+            //   • GeodeException — server refused the handshake (REPLY_OK
+            //     not received) or pointed at a locator port.
+            //   • SocketException / IOException — TCP failure.
+            //   • OperationCanceledException — ct cancelled.
+            await conn.ConnectAsync(endpoint.Host, endpoint.Port, connectTimeout, ct).ConfigureAwait(false);
+            conn.Endpoint = this;
 
-    //            // Endpoint state flags are caller-driven (mirror cppcache):
-    //            //   • SetConnected — ThinClientPoolDM::createPoolConnection
-    //            //     (pool path) / TcrEndpoint::pingServer (probe path).
-    //            //   • _isAuthenticated — set by authenticateEndpoint in
-    //            //     Phase 3 (security mode != NONE). NONE leaves it false.
-    //            return conn;
-    //        }
-    //        catch
-    //        {
-    //            // Don't leak a half-opened conn. cppcache: _GEODE_SAFE_DELETE(newConn)
-    //            // at the bottom of createNewConnection when err != GF_NOERR.
-    //            await conn.DisposeAsync().ConfigureAwait(false);
-    //            throw;
-    //        }
-    //    }
+            // Endpoint state flags are caller-driven (mirror cppcache):
+            //   • SetConnected — ThinClientPoolDM::createPoolConnection
+            //     (pool path) / TcrEndpoint::pingServer (probe path).
+            //   • _isAuthenticated — set by authenticateEndpoint in
+            //     Phase 3 (security mode != NONE). NONE leaves it false.
+            return conn;
+        }
+        catch
+        {
+            // Don't leak a half-opened conn. cppcache: _GEODE_SAFE_DELETE(newConn)
+            // at the bottom of createNewConnection when err != GF_NOERR.
+            await conn.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
 
     //    public ValueTask DisposeAsync()
     //    {
@@ -265,53 +262,53 @@ internal class TcrEndpoint(
             throw new NotImplementedException("TODO Phase 2+: standalone endpoint.send(ping) path (non-pool DM).");
         }
 
-        //var messageBuilder = serviceProvider.GetRequiredService<TcrMessageBuilder>();
-        //var pingRequest = messageBuilder.Ping();
+        var messageBuilder = TcrMessageBuilder.Create(serviceProvider, MessageType.Ping);
+        var pingRequest = await messageBuilder.BuildAsync(ct);
 
-        //logger.LogTrace("Sending ping message to endpoint {Endpoint}", Name);
+        logger.LogTrace("Sending ping message to endpoint {Endpoint}", Name);
 
-        //TcrMessage reply;
-        //try
-        //{
-        //    reply = await poolDM
-        //        .SendRequestToEndpointAsync(pingRequest, this, ct)
-        //        .ConfigureAwait(false);
-        //    _pingSent = true;
-        //}
-        //catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        //{
-        //    // Caller-driven shutdown — propagate; loop layer treats as graceful.
-        //    throw;
-        //}
-        //catch (Exception ex)
-        //{
-        //    // TODO Phase 1.5: classify as GF_TIMEOUT and tolerate up to 2
-        //    //   consecutive timeouts (++_pingTimeouts) before flipping
-        //    //   connected. cppcache TcrEndpoint.cpp:522-524.
-        //    //   Currently any error flips connected immediately.
-        //    _pingTimeouts = 0;
-        //    logger.LogWarning(ex, "Ping to endpoint {Endpoint} failed; marking disconnected", Name);
-        //    if (IsConnected)
-        //    {
-        //        SetConnected(false);
-        //    }
-        //    return;
-        //}
+        TcrMessage reply;
+        try
+        {
+            reply = await poolDM
+                .SendRequestToEndpointAsync(pingRequest, this, ct)
+                .ConfigureAwait(false);
+            _pingSent = true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Caller-driven shutdown — propagate; loop layer treats as graceful.
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // TODO Phase 1.5: classify as GF_TIMEOUT and tolerate up to 2
+            //   consecutive timeouts (++_pingTimeouts) before flipping
+            //   connected. cppcache TcrEndpoint.cpp:522-524.
+            //   Currently any error flips connected immediately.
+            _pingTimeouts = 0;
+            logger.LogWarning(ex, "Ping to endpoint {Endpoint} failed; marking disconnected", Name);
+            if (IsConnected)
+            {
+                SetConnected(false);
+            }
+            return;
+        }
 
         // Non-timeout outcome → reset tolerance counter (cppcache L525).
-        //_pingTimeouts = 0;
+        _pingTimeouts = 0;
 
         // cppcache (TcrEndpoint.cpp:532-534): connected iff the server
         // returned a proper Reply frame. Anything else (Exception reply,
         // unexpected MessageType) means the server is unhappy with us.
-        //var connected = reply.MessageType == MessageType.Reply;
-        //if (IsConnected != connected)
-        //{
-        //SetConnected(connected);
-        //}
+        var connected = reply.MessageType == MessageType.Reply;
+        if (IsConnected != connected)
+        {
+            SetConnected(connected);
+        }
 
-        //logger.LogTrace("Completed sending ping message to endpoint {Endpoint} (replyType={ReplyType})",
-        //    Name, reply.MessageType);
+        logger.LogTrace("Completed sending ping message to endpoint {Endpoint} (replyType={ReplyType})",
+            Name, reply.MessageType);
     }
 
     //    /// <summary>
@@ -410,43 +407,43 @@ internal class TcrEndpoint(
     //        throw new NotImplementedException("TODO: TcrEndpoint.SendRequestWithRetryAsync");
     //    }
 
-    //    /// <summary>
-    //    /// Flip <see cref="IsConnected"/> and, on a real 0&#x2194;1 transition,
-    //    /// broadcast <c>Inc/DecConnectedEndpoints</c> to every DM in
-    //    /// <see cref="_distMgrs"/>. Mirrors cppcache
-    //    /// <c>TcrEndpoint::setConnected</c> / <c>setConnectionStatus</c>
-    //    /// (<c>TcrEndpoint.cpp:1114-1123</c>) — cppcache uses
-    //    /// <c>compare_exchange_strong</c> to gate the inc/dec on a real flip;
-    //    /// we use <see cref="Interlocked.CompareExchange(ref int,int,int)"/>
-    //    /// for the same effect. Same-value writes are silent no-ops.
-    //    /// </summary>
-    //    /// <remarks>
-    //    /// Divergence from cppcache: cppcache notifies a single <c>m_baseDM</c>;
-    //    /// we walk <see cref="_distMgrs"/> so multi-pool endpoint sharing
-    //    /// (legal in our TCCM design) sees the transition on every interested
-    //    /// DM. Callees (<see cref="ThinClientBaseDM.IncConnectedEndpoints"/> /
-    //    /// <see cref="ThinClientBaseDM.DecConnectedEndpoints"/>) must stay
-    //    /// lock-free and non-reentrant w.r.t. this endpoint — they run under
-    //    /// <see cref="_distMgrsLock"/>.
-    //    /// </remarks>
-    //    public void SetConnected(bool connected)
-    //    {
-    //        var newVal = connected ? 1 : 0;
-    //        var oldVal = connected ? 0 : 1;
-    //        if (Interlocked.CompareExchange(ref _connected, newVal, oldVal) != oldVal)
-    //        {
-    //            // Same-value write, or another thread won the flip race.
-    //            return;
-    //        }
-    //        lock (_distMgrsLock)
-    //        {
-    //            foreach (var dm in _distMgrs)
-    //            {
-    //                if (connected) dm.IncConnectedEndpoints();
-    //                else dm.DecConnectedEndpoints();
-    //            }
-    //        }
-    //    }
+    /// <summary>
+    /// Flip <see cref="IsConnected"/> and, on a real 0&#x2194;1 transition,
+    /// broadcast <c>Inc/DecConnectedEndpoints</c> to every DM in
+    /// <see cref="_distMgrs"/>. Mirrors cppcache
+    /// <c>TcrEndpoint::setConnected</c> / <c>setConnectionStatus</c>
+    /// (<c>TcrEndpoint.cpp:1114-1123</c>) — cppcache uses
+    /// <c>compare_exchange_strong</c> to gate the inc/dec on a real flip;
+    /// we use <see cref="Interlocked.CompareExchange(ref int,int,int)"/>
+    /// for the same effect. Same-value writes are silent no-ops.
+    /// </summary>
+    /// <remarks>
+    /// Divergence from cppcache: cppcache notifies a single <c>m_baseDM</c>;
+    /// we walk <see cref="_distMgrs"/> so multi-pool endpoint sharing
+    /// (legal in our TCCM design) sees the transition on every interested
+    /// DM. Callees (<see cref="ThinClientBaseDM.IncConnectedEndpoints"/> /
+    /// <see cref="ThinClientBaseDM.DecConnectedEndpoints"/>) must stay
+    /// lock-free and non-reentrant w.r.t. this endpoint — they run under
+    /// <see cref="_distMgrsLock"/>.
+    /// </remarks>
+    public void SetConnected(bool connected)
+    {
+        var newVal = connected ? 1 : 0;
+        var oldVal = connected ? 0 : 1;
+        if (Interlocked.CompareExchange(ref _connected, newVal, oldVal) != oldVal)
+        {
+            // Same-value write, or another thread won the flip race.
+            return;
+        }
+        lock (_distMgrsLock)
+        {
+            foreach (var dm in _distMgrs)
+            {
+                if (connected) dm.IncConnectedEndpoints();
+                else dm.DecConnectedEndpoints();
+            }
+        }
+    }
 
     //    /// <summary>
     //    /// Drop a DM. Mirrors cppcache <c>TcrEndpoint::unregisterDM</c>.

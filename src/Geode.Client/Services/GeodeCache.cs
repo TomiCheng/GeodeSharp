@@ -11,6 +11,7 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private Task? _initTask;
     private readonly string _name;
+    private readonly IServiceProvider _serviceProvider;
     private readonly Lazy<PoolManager> _poolManager;
     private readonly ConcurrentDictionary<string, IRegion> _regions = new(StringComparer.Ordinal);
     private readonly SystemProperties _systemProperties = new();
@@ -20,6 +21,7 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
     public GeodeCache(IServiceProvider serviceProvider, string name)
     {
         _name = name;
+        _serviceProvider = serviceProvider;
         _poolManager = new Lazy<PoolManager>(
                     () => ActivatorUtilities.CreateInstance<PoolManager>(serviceProvider, this),
                     LazyThreadSafetyMode.ExecutionAndPublication);
@@ -479,6 +481,19 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
         // pure compile-time wrapper — TKey/TValue are not runtime-bound.
         var region = GetRegion(path);
         return region is null ? null : new RegionView<TKey, TValue>(region, _typedResultAdapter);
+    }
+
+    /// <summary>
+    /// Mirrors cppcache <c>Cache::createRegionFactory(RegionShortcut)</c>
+    /// (<c>cppcache/src/Cache.cpp</c> → <c>CacheImpl::createRegionFactory</c>).
+    /// Direct <see langword="new"/> rather than ActivatorUtilities — we
+    /// already hold every ctor arg, and the cache instance is the natural
+    /// back-pointer for the factory's eventual register-on-create step.
+    /// </summary>
+    public RegionFactory CreateRegionFactory(RegionShortcut shortcut)
+    {
+        ObjectDisposedException.ThrowIf(IsClosed, this);
+        return new RegionFactory(_serviceProvider, this, shortcut);
     }
 
     //    /// <summary>

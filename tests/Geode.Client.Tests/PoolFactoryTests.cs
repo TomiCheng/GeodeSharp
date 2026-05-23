@@ -58,16 +58,16 @@ public class PoolFactoryTests
     }
 
     [Fact]
-    public async Task Build_WithoutEndpoints_ThrowsOptionsValidationException()
+    public async Task BuildAsync_WithoutEndpoints_ThrowsOptionsValidationException()
     {
         await using var sp = BuildSp();
         var f = BuildFactory(sp);
 
-        Assert.Throws<OptionsValidationException>(() => f.Build("p"));
+        await Assert.ThrowsAsync<OptionsValidationException>(() => f.BuildAsync("p", TestContext.Current.CancellationToken));
     }
 
     [Fact]
-    public async Task Build_MaxConnectionsLessThanMin_ThrowsOptionsValidationException()
+    public async Task BuildAsync_MaxConnectionsLessThanMin_ThrowsOptionsValidationException()
     {
         await using var sp = BuildSp();
         var f = BuildFactory(sp)
@@ -75,36 +75,36 @@ public class PoolFactoryTests
             .SetMinConnections(10)
             .SetMaxConnections(5);
 
-        Assert.Throws<OptionsValidationException>(() => f.Build("p"));
+        await Assert.ThrowsAsync<OptionsValidationException>(() => f.BuildAsync("p", TestContext.Current.CancellationToken));
     }
 
     [Fact]
-    public async Task Build_NegativeIdleTimeout_ThrowsOptionsValidationException()
+    public async Task BuildAsync_NegativeIdleTimeout_ThrowsOptionsValidationException()
     {
         await using var sp = BuildSp();
         var f = BuildFactory(sp)
             .AddServer("h", 40404)
             .SetIdleTimeout(TimeSpan.FromSeconds(-1));
 
-        Assert.Throws<OptionsValidationException>(() => f.Build("p"));
+        await Assert.ThrowsAsync<OptionsValidationException>(() => f.BuildAsync("p", TestContext.Current.CancellationToken));
     }
 
     [Fact]
-    public async Task Build_InvalidPort_ThrowsOptionsValidationException()
+    public async Task BuildAsync_InvalidPort_ThrowsOptionsValidationException()
     {
         await using var sp = BuildSp();
         var f = BuildFactory(sp).AddServer("h", 0);
 
-        Assert.Throws<OptionsValidationException>(() => f.Build("p"));
+        await Assert.ThrowsAsync<OptionsValidationException>(() => f.BuildAsync("p", TestContext.Current.CancellationToken));
     }
 
     [Fact]
-    public async Task Build_EmptyHost_ThrowsOptionsValidationException()
+    public async Task BuildAsync_EmptyHost_ThrowsOptionsValidationException()
     {
         await using var sp = BuildSp();
         var f = BuildFactory(sp).AddServer("", 40404);
 
-        Assert.Throws<OptionsValidationException>(() => f.Build("p"));
+        await Assert.ThrowsAsync<OptionsValidationException>(() => f.BuildAsync("p", TestContext.Current.CancellationToken));
     }
 
     [Fact]

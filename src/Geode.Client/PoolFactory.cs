@@ -13,11 +13,19 @@ namespace Geode.Client;
 /// Setters mutate the internal <see cref="PoolAttributes"/>; <see cref="Build"/>
 /// snapshots them so further factory mutations don't affect already-built pools.
 /// </remarks>
-public class PoolFactory(
-    IServiceProvider serviceProvider,
-    IPoolManager poolManager)
+public class PoolFactory
 {
     private PoolAttributes _attrs = new();
+    private readonly IServiceProvider _serviceProvider;
+    private readonly PoolManager _poolManager;
+
+    internal PoolFactory(
+        IServiceProvider serviceProvider,
+        PoolManager poolManager)
+    {
+        _serviceProvider = serviceProvider;
+        _poolManager = poolManager;
+    }
 
     /// <summary>Reset all attributes back to defaults.</summary>
     public PoolFactory Reset()
@@ -189,10 +197,10 @@ public class PoolFactory(
         return this;
     }
 
-    /// <summary>Validate current attributes, snapshot them, and register a new pool under <paramref name="poolName"/>.</summary>
+    /// <summary>Validate, snapshot, register, and connect a new pool under <paramref name="poolName"/>.</summary>
     /// <exception cref="OptionsValidationException">Current attributes failed validation.</exception>
     /// <exception cref="InvalidOperationException">A pool is already registered under <paramref name="poolName"/>.</exception>
-    public IPool Build(string poolName)
+    public async Task<IPool> BuildAsync(string poolName, CancellationToken ct = default)
     {
         var errors = _attrs.Validate(nameof(PoolAttributes)).ToList();
         if (errors.Count > 0)
@@ -202,8 +210,9 @@ public class PoolFactory(
         }
 
         var snapshot = _attrs.Clone();
-        var pool = ActivatorUtilities.CreateInstance<Pool>(serviceProvider, snapshot);
-        ((PoolManager)poolManager).AddPool(poolName, pool);
+        var pool = ActivatorUtilities.CreateInstance<ThinClientPoolDM>(_serviceProvider, _poolManager, poolName, snapshot);
+        _poolManager.AddPool(poolName, pool);
+        await pool.InitAsync(ct).ConfigureAwait(false);
         return pool;
     }
 }

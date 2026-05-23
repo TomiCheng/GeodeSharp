@@ -1,8 +1,6 @@
-/*
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using System.Reflection;
 
 namespace Geode.Client.Internal;
 
@@ -34,11 +32,11 @@ namespace Geode.Client.Internal;
 /// </remarks>
 internal class PoolStatistics(string poolName)
 {
-    private static readonly string AssemblyVersion =
+    private static readonly string _assemblyVersion =
         typeof(PoolStatistics).Assembly.GetName().Version?.ToString() ?? "0.0.0";
 
     /// <summary>Shared Meter for all pool-scoped instruments.</summary>
-    readonly static Meter _meter = new("Geode.Client.Pool", AssemblyVersion);
+    readonly static Meter _meter = new("Geode.Client.Pool", _assemblyVersion);
 
     /// <summary>
     /// Elapsed time of <c>LocatorListRequest</c> RPCs issued by the
@@ -505,7 +503,7 @@ internal class PoolStatistics(string poolName)
         _receivedBytes.Add(bytes, new KeyValuePair<string, object?>("poolName", poolName));
 
     /// <summary>ActivitySource for traceable RPC spans.</summary>
-    readonly static ActivitySource _activitySource = new("Geode.Client.Pool", AssemblyVersion);
+    readonly static ActivitySource _activitySource = new("Geode.Client.Pool", _assemblyVersion);
 
     /// <summary>Start an Activity span for a <c>LocatorListRequest</c> RPC.</summary>
     public Activity? StartLocatorListRequest() =>
@@ -515,5 +513,3 @@ internal class PoolStatistics(string poolName)
     public Activity? StartClientConnectionRequest() =>
         _activitySource.StartActivity("ClientConnectionRequest", ActivityKind.Client)?.SetTag("poolName", poolName);
 }
-
-*/

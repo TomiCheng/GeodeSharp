@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Internal;
 
 /// <summary>
@@ -19,4 +18,3 @@ namespace Geode.Client.Internal;
 /// </remarks>
 internal sealed record ServerLocation(string Host, int Port);
 
-*/

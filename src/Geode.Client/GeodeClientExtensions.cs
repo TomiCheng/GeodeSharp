@@ -179,8 +179,6 @@ public static class GeodeClientExtensions
     public static IServiceCollection AddGeodeFactory(this IServiceCollection services)
     {
         services.TryAddSingleton<IGeodeCacheFactory, GeodeCacheFactory>();
-        services.TryAddScoped<CacheScopeContext>();
-        services.TryAddScoped<PoolManager>();
         return services;
     }
 }

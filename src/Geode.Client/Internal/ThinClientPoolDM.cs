@@ -1,3 +1,612 @@
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Net;
+using System.Text;
+using System.Xml.Linq;
+using Geode.Client.Services;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+namespace Geode.Client.Internal;
+
+internal class ThinClientPoolDM(
+    IServiceProvider serviceProvider,
+    ILogger<ThinClientPoolDM> logger,
+    PoolManager poolManager,
+    string name,
+    PoolAttributes attributes)
+    : ThinClientBaseDM, IPool
+{
+    /// <summary>
+    /// 0 / 1 destroy guard, gated by <see cref="Interlocked.Exchange(ref int, int)"/>.
+    /// </summary>
+    private int _isDestroyed;
+    /// <summary>
+    /// 0 = <see cref="InitAsync"/> not run, 1 = ran. Mirrors cppcache
+    /// pool DM's one-shot init guard; gated by
+    /// <see cref="Interlocked.Exchange(ref int, int)"/>.
+    /// </summary>
+    private int _initGuard;
+    /// <summary>
+    /// Pool stats sink (Meter + ActivitySource). Mirrors cppcache
+    /// <c>m_stats</c> / <c>PoolStats</c>.
+    /// </summary>
+    private readonly PoolStatistics _stats = ActivatorUtilities.CreateInstance<PoolStatistics>(serviceProvider, name);
+    /// <summary>
+    /// Current pool conn count (cppcache <c>m_poolSize</c>).
+    /// Bumped in <see cref="CreatePoolConnectionAsync"/> after handshake,
+    /// decremented on every close site. Surfaced via <see cref="PoolSize"/>.
+    /// </summary>
+    private int _poolSize = 0;
+    /// <summary>
+    /// Pool's view onto TCCM-owned <see cref="TcrEndpoint"/> instances —
+    /// tracks which endpoints this pool holds a ref on so destroy knows
+    /// what to release.
+    /// </summary>
+    private readonly ConcurrentDictionary<DnsEndPoint, TcrEndpoint> _endpoints = new();
+    /// <summary>
+    /// Serialises endpoint selection in <see cref="SelectEndpointAsync"/>
+    /// (round-robin cursor + locator pick). Mirrors cppcache
+    /// <c>m_endpointSelectionLock</c>.
+    /// </summary>
+    private readonly Lock _endpointSelectionLock = new();
+    /// <summary>
+    /// Current count of endpoints whose <see cref="TcrEndpoint.IsConnected"/>
+    /// is true. Mirrors cppcache <c>connected_endpoints_</c>
+    /// (<c>ThinClientPoolDM.cpp:2055-2068</c>). Bumped / decremented by
+    /// <see cref="IncConnectedEndpoints"/> / <see cref="DecConnectedEndpoints"/>,
+    /// which fire from <see cref="TcrEndpoint.SetConnected"/>'s broadcast
+    /// on real 0&#x2194;1 transitions. Surfaced via the
+    /// <c>ConnectedServers</c> ObservableGauge.
+    /// </summary>
+    private int _connectedEndpoints = 0;
+    /// <summary>
+    /// Threads currently inside the pool-wide <see cref="_capSlots"/> wait
+    /// in <see cref="CreatePoolConnectionAsync"/> /
+    /// <see cref="CreatePoolConnectionToAEndPointAsync"/>. Mirrors cppcache
+    /// <c>connectionWaitsInProgress</c> (<c>PoolStatistics.cpp:74-76</c>,
+    /// bumped in <c>getConnectionFromQueue</c> at <c>:1819</c>). Surfaced via
+    /// the <c>ConnectionWaitsInProgress</c> ObservableGauge. cppcache
+    /// instruments only the pool-wide cap; per-EP cap waits
+    /// (<see cref="TcrEndpoint.AcquireSlotAsync"/>) are our addition and
+    /// not counted here.
+    /// </summary>
+    private int _connectionWaitsInProgress = 0;
+    /// <summary>
+    /// In-flight pool ops — incremented at <see cref="SendSyncRequestCoreAsync"/>
+    /// entry, decremented in <c>finally</c>. Mirrors cppcache
+    /// <c>m_clientOps</c> tracked via <c>setCurClientOps(++m_clientOps)</c> /
+    /// <c>setCurClientOps(--m_clientOps)</c> around <c>sendSyncRequest</c>
+    /// (<c>ThinClientPoolDM.cpp:1272, 1519, 1538</c>). Surfaced via the
+    /// <c>ClientOpsInProgress</c> ObservableGauge.
+    /// </summary>
+    private int _clientOpsInProgress = 0;
+    /// <summary>
+    /// cppcache <c>m_isMultiUserMode</c> — from <see cref="CachePoolOptions.MultiuserAuthentication"/>.
+    /// </summary>
+    private bool _isMultiUserMode;
+    /// <summary>
+    /// Cancellation source for every background loop the pool spawns;
+    /// <see cref="DestroyAsync"/> cancels it to signal graceful shutdown.
+    /// </summary>
+    private readonly CancellationTokenSource _backgroundCts = new();
+
+    /// <summary>
+    /// Open sockets + handshake with the configured locators/servers. Mirrors
+    /// cppcache <c>ThinClientPoolDM::init</c> called from the tail of
+    /// <c>PoolFactory::create</c>. No-op until the wire layer lands.
+    /// </summary>
+    internal async Task InitAsync(CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _isDestroyed) != 0, typeof(ThinClientPoolDM));
+        if (Interlocked.Exchange(ref _initGuard, 1) != 0) return;
+
+        _stats.SetPoolConnectionsReader(() => Volatile.Read(ref _poolSize));
+        _stats.SetServersReader(() => _endpoints.Count);
+        _stats.SetConnectedServersReader(() => Volatile.Read(ref _connectedEndpoints));
+        _stats.SetConnectionWaitsInProgressReader(() => Volatile.Read(ref _connectionWaitsInProgress));
+        _stats.SetClientOpsInProgressReader(() => Volatile.Read(ref _clientOpsInProgress));
+        _stats.SetLocatorsReader(() => _locatorHelper?.LocatorCount ?? 0);
+
+        _isMultiUserMode = attributes.MultiuserSecureMode;
+        if (_isMultiUserMode)
+        {
+            logger.LogInformation("Multiuser authentication is enabled for pool {PoolName}", name);
+        }
+        //_isSecurityOn = options.Security.Properties.Count > 0;
+        //logger.LogDebug("ThinClientPoolDM.InitAsync: security on/off = {IsSecurityOn}", _isSecurityOn);
+
+        //_stickyManager = ActivatorUtilities.CreateInstance<ThinClientStickyManager>(serviceProvider, this);
+        //_clearPdxRegistry = options.Pdx.ClearTypeIdsOnDisconnect;
+
+        // ── TCCM init — hoisted to Cache.InitializeCoreAsync.
+
+        await StartBackgroundThreads(ct).ConfigureAwait(false);
+
+        // ── Lazy conn opening — first conn opens via ConnManageLoop (RestoreMinConnections) or SendRequestToEndpointAsync.
+    }
+
+    public ValueTask DisposeAsync() => throw new NotImplementedException();
+
+    /// <summary>
+    /// Launch the pool's background machinery. Mirrors cppcache
+    /// <c>ThinClientPoolDM::startBackgroundThreads()</c>
+    /// (<c>ThinClientPoolDM.cpp:264-371</c>).
+    /// </summary>
+    private async Task StartBackgroundThreads(CancellationToken ct)
+    {
+        SchedulePingLoop();
+
+        //ScheduleUpdateLocatorLoop();
+
+        //_connManageLoop = ConnManageLoopAsync(_backgroundCts.Token);
+
+        //await base.InitAsync(ct).ConfigureAwait(false);
+
+        if (attributes.PrSingleHopEnabled)
+        {
+            //_clientMetadataService = ActivatorUtilities.CreateInstance<ClientMetadataService>(serviceProvider, this);
+            //await _clientMetadataService.StartAsync(ct).ConfigureAwait(false);
+        }
+    }
+
+    public async Task DestroyAsync(bool keepAlive = false, CancellationToken ct = default)
+    {
+        // Single override satisfies both ThinClientBaseDM.DestroyAsync
+        // (virtual) and IPool.DestroyAsync (interface).
+        //
+        // Mirror cppcache ThinClientPoolDM::destroy() order
+        // (ThinClientPoolDM.cpp:784-848). Inline TODOs flag steps not
+        // yet implemented; they sit at their cppcache-equivalent position.
+        //   0.  checkRegions (cppcache L787)                          — TODO
+        //   1.  mark destroyed (idempotent). Note: we set _isDestroyed
+        //       at the top for guard safety; cppcache sets it at end (L842).
+        //   1b. close RemoteQueryService (cppcache L791-794)
+        //   —   PoolStatsSampler (L796-800): not ported (Meter-based).
+        //   2.  cancel background CTS — every loop's Task.Delay /
+        //       WaitAsync throws OperationCanceledException
+        //       (cppcache L802-810 stopNoblock).
+        //   3.  await each background Task so they fully unwind
+        //       (cppcache L815 stopPingThread, L818 stopUpdateLocator).
+        //   3b. stop ClientMetadataService (cppcache L820-823).
+        //   4.  dispose timers + sync primitives (C#-only; cppcache RAII).
+        //   5a. drain _opConnections, CloseConnection(18) per conn
+        //       (cppcache L829 ConnectionQueue close).
+        //   5b. release TCCM endpoint refs                            — TODO Phase 1.5
+        //       (ConnManager.RemoveRefToTcrEndpointAsync).
+        //   5c. unregister PoolConnections gauge reader. Full
+        //       _stats.Close() (cppcache L835 getStats().close())     — TODO
+        //       forceSample (L836) — not needed for Meter (pull-based).
+        //   5d. PoolManager.RemovePool(name) (cppcache L838)          — TODO
+        //   6.  base.DestroyAsync — mirror cppcache stopChunkProcessor
+        //       (L840). Caller's ct flows through to base and to per-conn
+        //       CloseAsync; background-loop cancellation is separate via
+        //       _backgroundCts.
+        //   6b. closeAllStickyConnections post-close (cppcache L841).
+        //   7.  warn if pool size != 0 (cppcache L846-848)            — TODO
+
+        // 0. TODO: checkRegions — cppcache L787 verifies region consistency
+        //    before tearing down (e.g. no pending PR ops on dead buckets).
+
+        // 1. Idempotent destroy guard.
+        if (Interlocked.Exchange(ref _isDestroyed, 1) != 0)
+        {
+            return;
+        }
+
+        //// Stash the caller's keepAlive intent for Step 5a's CloseAsync calls.
+        //// cppcache: m_keepAlive = keepAlive (ThinClientPoolDM.cpp:789).
+        //_keepAlive = keepAlive;
+
+        //// 1b. Close pool-owned RemoteQueryService if it was ever
+        //// accessed. Mirrors cppcache CacheImpl::close() →
+        //// m_remoteQueryServicePtr->close(); we trigger it from pool
+        //// destroy because the RQS lives on the pool, not the cache.
+        //// Read the field directly (not the property) — we don't want
+        //// to lazy-create an RQS just to immediately close it.
+        //_queryService?.Close();
+
+        //// 2. Signal every background loop to stop.
+        //_backgroundCts.Cancel();
+
+        //// 3. Await each loop's graceful exit. OperationCanceledException
+        ////    is expected here — that IS the graceful exit signal.
+        //if (_connManageLoop is not null)
+        //{
+        //    try { await _connManageLoop.ConfigureAwait(false); }
+        //    catch (OperationCanceledException)
+        //    {
+        //    }
+        //}
+        //if (_pingLoop is not null)
+        //{
+        //    try { await _pingLoop.ConfigureAwait(false); }
+        //    catch (OperationCanceledException) {  }
+        //}
+        //if (_updateLocatorLoop is not null)
+        //{
+        //    try { await _updateLocatorLoop.ConfigureAwait(false); }
+        //    catch (OperationCanceledException) {  }
+        //}
+
+        //// 3b. Stop the client metadata service. cppcache
+        //// ThinClientPoolDM::destroy (L820-823): after loops, before
+        //// ConnectionQueue close.
+        //if (_clientMetadataService is not null)
+        //{
+        //    await _clientMetadataService.StopAsync(ct).ConfigureAwait(false);
+        //}
+
+        //// 4. Dispose timers + sync primitives owned by this pool.
+        //_pingTimer?.Dispose();
+        //_updateLocatorTimer?.Dispose();
+        //_pingSignal.Dispose();
+        //_connManageSignal.Dispose();
+        //_updateLocatorSignal.Dispose();
+        //_backgroundCts.Dispose();
+        //_capSlots?.Dispose();
+
+        //// 5a. Drain _opConnections — every idle conn gets a polite
+        ////     CloseConnection(18) before its socket goes away. Mirrors
+        ////     cppcache ConnectionQueue::close (ConnectionQueue.hpp:87)
+        ////     invoked from ThinClientPoolDM::destroy (L829).
+        ////     Snapshot-and-clear under lock so CloseAsync's await isn't
+        ////     held under the lock (close I/O may be slow).
+        //List<TcrConnection> drained;
+        //lock (_opConnLock)
+        //{
+        //    drained = [.. _opConnections];
+        //    _opConnections.Clear();
+        //}
+        //foreach (var conn in drained)
+        //{
+        //    // CloseAsync sends MessageType.CloseConnection(18) then
+        //    // disposes the socket. Currently NIE — until the leaf lands,
+        //    // any drained conn here will throw and bubble out of
+        //    // DestroyAsync. Top-down: call site is in place, leaf next.
+        //    await conn.CloseAsync(_keepAlive, ct).ConfigureAwait(false);
+        //}
+
+        //// 5b. TODO Phase 1.5: release pool's TCCM refs to endpoints in
+        ////   _endpoints (ConnManager.RemoveRefToTcrEndpointAsync). Phase
+        ////   1.1: rely on cache-scope dispose to cascade.
+        //_endpoints.Clear();
+
+        //// 5c. Unregister gauge readers so the static registries in
+        //// PoolStatistics don't leak this pool's entries.
+        //// TODO: full _stats.Close() to match cppcache getStats().close()
+        ////   (L835) — drop static-registry entries for every instrument,
+        ////   not just these gauges. forceSample (L836) is not needed for
+        ////   Meter (listeners pull on their own cadence).
+        //_stats.ClearPoolConnectionsReader();
+        //_stats.ClearLocatorsReader();
+        //_stats.ClearServersReader();
+        //_stats.ClearConnectedServersReader();
+        //_stats.ClearConnectionWaitsInProgressReader();
+        //_stats.ClearClientOpsInProgressReader();
+
+        //// 5d. TODO: PoolManager.RemovePool(name) — cppcache L838
+        ////     `cacheImpl->getPoolManager().removePool(m_poolName)`
+        ////     unregisters the pool from cache's registry. Needs a
+        ////     RemovePool API on our PoolManager first (verify whether
+        ////     one exists; if not, add it).
+
+        //// 6. Mirror cppcache stopChunkProcessor (ThinClientPoolDM.cpp:840) —
+        //// base.DestroyAsync flips InitDone off and will stop the
+        //// chunk-processor task when its TODO lands.
+        //await base.DestroyAsync(keepAlive, ct).ConfigureAwait(false);
+
+        //// 6b. closeAllStickyConnections — cppcache L841.
+        //if (_stickyManager is not null)
+        //{
+        //    await _stickyManager.CloseAllStickyConnectionsAsync(ct).ConfigureAwait(false);
+        //}
+
+        // 7. TODO: warn if pool size != 0 — cppcache L846-848 logs FINE
+        //    when m_poolSize.load() != 0 after destroy (diagnostic for
+        //    leaked conns). One LogWarning when _poolSize > 0.
+    }
+
+
+    #region Locator
+
+    private readonly SemaphoreSlim _updateLocatorSignal = new(0, int.MaxValue);
+    private Task? _updateLocatorLoop;
+    private PeriodicTimer? _updateLocatorTimer;
+    private ThinClientLocatorHelper? _locatorHelper;
+
+    ///// <summary>
+    ///// Maybe launch <see cref="UpdateLocatorLoopAsync"/>. Mirrors
+    ///// cppcache <c>ThinClientPoolDM.cpp:292-302</c>: only fires when
+    ///// the pool actually has locators configured (no locators ⇒
+    ///// nothing to refresh). Default 5s baked into
+    ///// <see cref="CachePoolOptions.UpdateLocatorListInterval"/>
+    ///// (cppcache <c>PoolFactory.cpp:51</c>); validator rejects
+    ///// negatives. Interval <c>== 0</c> disables (matches cppcache
+    ///// <c>L286-289</c>).
+    ///// </summary>
+    //private void ScheduleUpdateLocatorLoop()
+    //{
+    //    if (xmlPool.Locators.Count == 0) return;
+
+    //    // Build the helper once we know locators are configured. cppcache
+    //    // ThinClientPoolDM ctor builds m_locHelper unconditionally; we
+    //    // gate on Locators so the field stays null when the pool runs
+    //    // static-server mode (Step E's SelectEndpointAsync locator branch
+    //    // never fires either, so no consumer of _locatorHelper exists).
+    //    // CacheHostPortOptions → ServerLocation conversion is the
+    //    // options-layer ↔ wire-layer boundary.
+    //    var initialLocators = xmlPool.Locators
+    //        .Select(l => new ServerLocation(l.Host, l.Port))
+    //        .ToList();
+    //    // Options layer surfaces the resolved default (3) directly, so no
+    //    // cppcache-style sentinel translation needed here.
+    //    _locatorHelper = ActivatorUtilities.CreateInstance<ThinClientLocatorHelper>(
+    //        serviceProvider, initialLocators, xmlPool.RetryAttempts);
+
+    //    var updateInterval = xmlPool.UpdateLocatorListInterval;
+    //    if (updateInterval <= TimeSpan.Zero)
+    //    {
+    //        logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Not scheduling updateLocatorList as interval {Interval}", updateInterval);
+    //        return;
+    //    }
+
+    //    logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Scheduling updateLocatorList task at {Interval}", updateInterval);
+    //    _updateLocatorTimer = new PeriodicTimer(updateInterval);
+    //    _updateLocatorLoop = UpdateLocatorLoopAsync(_backgroundCts.Token);
+    //}
+
+    ///// <summary>
+    ///// Periodic locator-list refresh loop. Mirrors cppcache
+    ///// <c>ThinClientPoolDM::updateLocatorList</c>
+    ///// (<c>ThinClientPoolDM.cpp:2042-2053</c>): each tick asks every
+    ///// configured locator who's alive and updates the pool's known
+    ///// locator list accordingly. cppcache's body is a
+    ///// <c>semaphore.acquire()</c>-blocked task whose semaphore is
+    ///// released by a separate <c>FunctionExpiryTask</c>; we collapse
+    ///// that two-piece pattern into a single <see cref="PeriodicTimer"/>
+    ///// loop (same shape as <see cref="PingLoopAsync"/>).
+    ///// </summary>
+    //private async Task UpdateLocatorLoopAsync(CancellationToken ct)
+    //{
+    //    // cppcache schedules with the same fixed 1 s initial delay as
+    //    // ping; first refresh fires ~1 s after pool init rather than
+    //    // after a full interval.
+    //    var initialDelay = TimeSpan.FromSeconds(1);
+
+    //    logger.LogDebug("Starting updateLocatorList loop for pool {Pool}", Name);
+    //    try
+    //    {
+    //        await Task.Delay(initialDelay, ct).ConfigureAwait(false);
+
+    //        do
+    //        {
+    //            try
+    //            {
+    //                await UpdateLocatorsLocalAsync(ct).ConfigureAwait(false);
+    //            }
+    //            catch (Exception ex) when (!ct.IsCancellationRequested)
+    //            {
+    //                // One bad refresh must not kill the loop — next tick retries.
+    //                logger.LogWarning(ex, "updateLocatorList tick failed for pool {Pool}", Name);
+    //            }
+    //        }
+    //        while (await _updateLocatorTimer!.WaitForNextTickAsync(ct).ConfigureAwait(false));
+    //    }
+    //    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+    //    {
+    //        // graceful shutdown via _backgroundCts.Cancel().
+    //    }
+    //    logger.LogDebug("Ending updateLocatorList loop for pool {Pool}", Name);
+    //}
+
+    ///// <summary>
+    ///// One locator-list refresh. Mirrors cppcache
+    ///// <c>(m_locHelper)-&gt;updateLocators(getServerGroup())</c>
+    ///// (<c>ThinClientPoolDM.cpp:2048</c>): asks the configured
+    ///// locators for the current authoritative locator set so the pool
+    ///// can drop dead locators and pick up newly-added ones.
+    ///// </summary>
+    ///// <remarks>
+    ///// Stub until <c>ThinClientLocatorHelper</c> lands; the loop's
+    ///// scaffolding (timer, cancellation, error survival) is verified
+    ///// first so its replacement only has to fill in the wire I/O.
+    ///// </remarks>
+    //private async Task UpdateLocatorsLocalAsync(CancellationToken ct)
+    //{
+    //    // _locatorHelper is non-null here: ScheduleUpdateLocatorLoop
+    //    // both builds it and launches this loop only when locators
+    //    // are configured (same gate, same call site).
+    //    using var activity = _stats.StartLocatorListRequest();
+    //    var stopwatch = Stopwatch.StartNew();
+    //    try
+    //    {
+    //        await _locatorHelper!.UpdateLocatorsAsync(xmlPool.ServerGroup, ct).ConfigureAwait(false);
+    //    }
+    //    finally
+    //    {
+    //        _stats.LocatorListRequest(stopwatch.Elapsed);
+    //    }
+    //}
+
+    ///// <summary>
+    ///// Query the pool's <see cref="ThinClientLocatorHelper"/> for one
+    ///// server. Mirrors cppcache <c>ThinClientPoolDM::selectEndpoint</c>
+    ///// locator branch (<c>ThinClientPoolDM.cpp:580-604</c>).
+    ///// </summary>
+    ///// <remarks>
+    ///// Phase 1.5 MVP: empty <c>excludeServers</c> and no
+    ///// <c>currentServer</c> — neither failover-driven retry exclusion
+    ///// nor server replacement is wired in yet.
+    ///// </remarks>
+    //private async Task<DnsEndPoint> SelectEndpointFromLocatorAsync(HashSet<DnsEndPoint> excludeServers, CancellationToken ct)
+    //{
+    //    logger.LogDebug("ThinClientPoolDM: Asking locator for server from group [{Group}]", xmlPool.ServerGroup);
+
+    //    // Convert pool-layer DnsEndPoint set → wire-layer ServerLocation list
+    //    // at the helper boundary. ServerLocation is a value record so the
+    //    // List is cheap to materialise; ToList avoids exposing IEnumerable
+    //    // ordering quirks across the helper call.
+    //    var excludeWire = excludeServers.Select(e => new ServerLocation(e.Host, e.Port)).ToList();
+
+    //    // cppcache ThinClientPoolDM.cpp:587 — incLoctorRequests() before
+    //    // helper call. Maps to ClientConnectionRequest wire RPC.
+    //    using var activity = _stats.StartClientConnectionRequest();
+    //    var stopwatch = Stopwatch.StartNew();
+    //    ServerLocation server;
+    //    try
+    //    {
+    //        server = await _locatorHelper!.GetEndpointForNewFwdConnAsync(xmlPool.ServerGroup, excludeWire, ct)
+    //            .ConfigureAwait(false);
+    //    }
+    //    finally
+    //    {
+    //        _stats.ClientConnectionRequest(stopwatch.Elapsed);
+    //    }
+
+    //    var endpoint = new DnsEndPoint(server.Host, server.Port);
+
+    //    logger.LogDebug("ThinClientPoolDM: Locator returned endpoint [{Host}:{Port}]", endpoint.Host, endpoint.Port);
+    //    return endpoint;
+    //}
+
+    #endregion
+
+    #region Ping
+
+    private Task? _pingLoop;
+    private PeriodicTimer? _pingTimer;
+    private readonly SemaphoreSlim _pingSignal = new(0, int.MaxValue);
+
+    /// <summary>
+    /// Schedule the periodic ping loop, mirroring cppcache
+    /// <c>ThinClientPoolDM.cpp:269-290</c>. cppcache splits this in two:
+    /// a long-running <c>pingServer</c> Task that blocks on
+    /// <c>ping_semaphore_.acquire()</c>, plus a <c>FunctionExpiryTask</c>
+    /// scheduled by <c>ExpiryTaskManager</c> that releases the semaphore
+    /// every <c>PingInterval</c>. We collapse to one loop driven by
+    /// <see cref="PeriodicTimer"/>; <see cref="_pingSignal"/> stays
+    /// declared so Phase 1.5's failover path can release it for an
+    /// immediate probe (then this loop becomes <c>WaitAny(timer, signal)</c>).
+    /// </summary>
+    /// <remarks>
+    /// Interval resolution mirrors cppcache <c>getPingInterval()</c>:
+    /// per-pool override (<see cref="CachePoolOptions.PingInterval"/>)
+    /// wins, otherwise fall back to the system default
+    /// (<see cref="PoolOptions.PingInterval"/>, 10 s).
+    /// Interval <c>&lt;= 0</c> disables ping entirely (cppcache L286-289).
+    /// </remarks>
+    private void SchedulePingLoop()
+    {
+        //var pingInterval = attributes.PingInterval ?? options.Pool.PingInterval;
+        //if (pingInterval > TimeSpan.Zero)
+        //{
+        //    logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Scheduling ping task at {Interval}", pingInterval);
+        //    _pingTimer = new PeriodicTimer(pingInterval);
+        //    _pingLoop = PingLoopAsync(_backgroundCts.Token);
+        //}
+        //else
+        //{
+        //    logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Not scheduling ping task as ping interval {Interval}", pingInterval);
+        //}
+    }
+
+    /// <summary>
+    /// Periodic ping loop. Mirrors cppcache
+    /// <c>ThinClientPoolDM::pingServer</c>
+    /// (<c>ThinClientPoolDM.cpp:2070-2083</c>): each tick walks every
+    /// connected endpoint and probes it with <c>MessageType.Ping</c>.
+    /// </summary>
+    private async Task PingLoopAsync(CancellationToken ct)
+    {
+        //var initialDelay = TimeSpan.FromSeconds(1);
+        //logger.LogDebug("Starting ping loop for pool {Pool}", Name);
+        //try
+        //{
+        //    await Task.Delay(initialDelay, ct).ConfigureAwait(false);
+
+        //    do
+        //    {
+        //        try
+        //        {
+        //            await PingServerLocalAsync(ct).ConfigureAwait(false);
+        //        }
+        //        catch (Exception ex) when (!ct.IsCancellationRequested)
+        //        {
+        //            // One bad tick must not kill the loop — next tick retries.
+        //            logger.LogWarning(ex, "Ping tick failed for pool {Pool}", Name);
+        //        }
+        //    }
+        //    while (await _pingTimer!.WaitForNextTickAsync(ct).ConfigureAwait(false));
+        //}
+        //catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        //{
+        //    // graceful shutdown via _backgroundCts.Cancel().
+        //}
+        //logger.LogDebug("Ending ping loop for pool {Pool}", Name);
+    }
+    /// <summary>
+    /// One ping sweep: probe every connected endpoint and prune the
+    /// pool's references to any that fall offline. Mirrors cppcache
+    /// <c>ThinClientPoolDM::pingServerLocal</c>
+    /// (<c>ThinClientPoolDM.cpp:2028-2040</c>).
+    /// </summary>
+    /// <remarks>
+    /// cppcache holds <c>m_endpointsLock</c> for the whole sweep because
+    /// <c>std::map</c> isn't safe for concurrent iteration; our
+    /// <see cref="_endpoints"/> is a <see cref="ConcurrentDictionary{TKey,TValue}"/>
+    /// so a snapshot enumeration is safe and the sweep won't block
+    /// <see cref="AddEPAsync"/>.
+    /// </remarks>
+    private async Task PingServerLocalAsync(CancellationToken ct)
+    {
+        //var sweepStopwatch = Stopwatch.StartNew();
+        //try
+        //{
+        //    logger.LogTrace("Ping sweep for pool {Pool}: {Count} endpoint(s)", Name, _endpoints.Count);
+
+        //    foreach (var (_, endpoint) in _endpoints)
+        //    {
+        //        ct.ThrowIfCancellationRequested();
+
+        //        if (!endpoint.IsConnected)
+        //        {
+        //            // cppcache: pingServerLocal skips disconnected endpoints
+        //            // (the test is inside the loop body at L2032).
+        //            continue;
+        //        }
+
+        //        var endpointStopwatch = Stopwatch.StartNew();
+        //        await endpoint.PingAsync(this, ct).ConfigureAwait(false);
+
+        //        if (endpoint.IsConnected)
+        //        {
+        //            _stats.EndpointPing(endpointStopwatch.Elapsed);
+        //        }
+        //        else
+        //        {
+        //            // cppcache (ThinClientPoolDM.cpp:2034-2037): ping flipped
+        //            // endpoint's connected_ bit to false → drop pool's
+        //            // references on its conns + HA subscription channel.
+        //            logger.LogDebug("Ping flipped endpoint {Endpoint} to disconnected; cleaning up.", endpoint.Name);
+        //            await RemoveEPConnectionsAsync(endpoint, ct).ConfigureAwait(false);
+        //            await RemoveCallbackConnectionAsync(endpoint, ct).ConfigureAwait(false);
+        //        }
+        //    }
+        //}
+        //finally
+        //{
+        //    _stats.PingSweep(sweepStopwatch.Elapsed);
+        //}
+    }
+
+    #endregion
+}
+
 /*
 using System.Collections.Concurrent;
 using System.Diagnostics;
@@ -45,11 +654,7 @@ internal class ThinClientPoolDM(
     : ThinClientBaseDM(connManager, region: null), IPool
 {
 
-    /// <summary>
-    /// Cancellation source for every background loop the pool spawns;
-    /// <see cref="DestroyAsync"/> cancels it to signal graceful shutdown.
-    /// </summary>
-    private readonly CancellationTokenSource _backgroundCts = new();
+
 
     /// <summary>
     /// <see cref="CachePoolOptions.MaxConnections"/> slot reservation:
@@ -117,36 +722,13 @@ internal class ThinClientPoolDM(
     /// </summary>
     private ClientMetadataService? _clientMetadataService;
 
-    /// <summary>
-    /// Pool's view onto TCCM-owned <see cref="TcrEndpoint"/> instances —
-    /// tracks which endpoints this pool holds a ref on so destroy knows
-    /// what to release.
-    /// </summary>
-    private readonly ConcurrentDictionary<DnsEndPoint, TcrEndpoint> _endpoints = new();
 
-    /// <summary>
-    /// Serialises endpoint selection in <see cref="SelectEndpointAsync"/>
-    /// (round-robin cursor + locator pick). Mirrors cppcache
-    /// <c>m_endpointSelectionLock</c>.
-    /// </summary>
-    private readonly Lock _endpointSelectionLock = new();
 
-    /// <summary>
-    /// 0 = <see cref="InitAsync"/> not run, 1 = ran. Mirrors cppcache
-    /// pool DM's one-shot init guard; gated by
-    /// <see cref="Interlocked.Exchange(ref int, int)"/>.
-    /// </summary>
-    private int _initGuard;
 
-    /// <summary>
-    /// 0 / 1 destroy guard, gated by <see cref="Interlocked.Exchange(ref int, int)"/>.
-    /// </summary>
-    private int _isDestroyed;
 
-    /// <summary>
-    /// cppcache <c>m_isMultiUserMode</c> — from <see cref="CachePoolOptions.MultiuserAuthentication"/>.
-    /// </summary>
-    private bool _isMultiUserMode;
+
+
+
 
     /// <summary>
     /// cppcache <c>m_isSecurityOn</c> — true when the cache has any security-* property set (proxy until Phase 3 auth callback lands).
@@ -219,46 +801,13 @@ internal class ThinClientPoolDM(
     /// </summary>
     private readonly Lock _opConnLock = new();
 
-    /// <summary>
-    /// Current pool conn count (cppcache <c>m_poolSize</c>).
-    /// Bumped in <see cref="CreatePoolConnectionAsync"/> after handshake,
-    /// decremented on every close site. Surfaced via <see cref="PoolSize"/>.
-    /// </summary>
-    private int _poolSize = 0;
 
-    /// <summary>
-    /// Current count of endpoints whose <see cref="TcrEndpoint.IsConnected"/>
-    /// is true. Mirrors cppcache <c>connected_endpoints_</c>
-    /// (<c>ThinClientPoolDM.cpp:2055-2068</c>). Bumped / decremented by
-    /// <see cref="IncConnectedEndpoints"/> / <see cref="DecConnectedEndpoints"/>,
-    /// which fire from <see cref="TcrEndpoint.SetConnected"/>'s broadcast
-    /// on real 0&#x2194;1 transitions. Surfaced via the
-    /// <c>ConnectedServers</c> ObservableGauge.
-    /// </summary>
-    private int _connectedEndpoints = 0;
 
-    /// <summary>
-    /// Threads currently inside the pool-wide <see cref="_capSlots"/> wait
-    /// in <see cref="CreatePoolConnectionAsync"/> /
-    /// <see cref="CreatePoolConnectionToAEndPointAsync"/>. Mirrors cppcache
-    /// <c>connectionWaitsInProgress</c> (<c>PoolStatistics.cpp:74-76</c>,
-    /// bumped in <c>getConnectionFromQueue</c> at <c>:1819</c>). Surfaced via
-    /// the <c>ConnectionWaitsInProgress</c> ObservableGauge. cppcache
-    /// instruments only the pool-wide cap; per-EP cap waits
-    /// (<see cref="TcrEndpoint.AcquireSlotAsync"/>) are our addition and
-    /// not counted here.
-    /// </summary>
-    private int _connectionWaitsInProgress = 0;
 
-    /// <summary>
-    /// In-flight pool ops — incremented at <see cref="SendSyncRequestCoreAsync"/>
-    /// entry, decremented in <c>finally</c>. Mirrors cppcache
-    /// <c>m_clientOps</c> tracked via <c>setCurClientOps(++m_clientOps)</c> /
-    /// <c>setCurClientOps(--m_clientOps)</c> around <c>sendSyncRequest</c>
-    /// (<c>ThinClientPoolDM.cpp:1272, 1519, 1538</c>). Surfaced via the
-    /// <c>ClientOpsInProgress</c> ObservableGauge.
-    /// </summary>
-    private int _clientOpsInProgress = 0;
+
+
+
+
 
     /// <summary>
     /// Pool-scoped query service. Lazy-built on first
@@ -279,11 +828,7 @@ internal class ThinClientPoolDM(
         ? Random.Shared.Next(xmlPool.Servers.Count)
         : 0;
 
-    /// <summary>
-    /// Pool stats sink (Meter + ActivitySource). Mirrors cppcache
-    /// <c>m_stats</c> / <c>PoolStats</c>.
-    /// </summary>
-    private readonly PoolStatistics _stats = ActivatorUtilities.CreateInstance<PoolStatistics>(serviceProvider, xmlPool.Name);
+
 
     /// <summary>
     /// Sticky-transaction connection manager. Built unconditionally in
@@ -781,215 +1326,12 @@ internal class ThinClientPoolDM(
             $"Pool '{xmlPool.Name}': all {total} configured servers are in excludeServers.");
     }
 
-    /// <summary>
-    /// Launch the pool's background machinery. Mirrors cppcache
-    /// <c>ThinClientPoolDM::startBackgroundThreads()</c>
-    /// (<c>ThinClientPoolDM.cpp:264-371</c>).
-    /// </summary>
-    private async Task StartBackgroundThreads(CancellationToken ct)
-    {
-        SchedulePingLoop();
 
-        ScheduleUpdateLocatorLoop();
 
-        _connManageLoop = ConnManageLoopAsync(_backgroundCts.Token);
-
-        await base.InitAsync(ct).ConfigureAwait(false);
-
-        if (xmlPool.PrSingleHopEnabled)
-        {
-            _clientMetadataService = ActivatorUtilities.CreateInstance<ClientMetadataService>(serviceProvider, this);
-            await _clientMetadataService.StartAsync(ct).ConfigureAwait(false);
-        }
-    }
-
-    public override async Task DestroyAsync(bool keepAlive = false, CancellationToken ct = default)
-    {
-        // Single override satisfies both ThinClientBaseDM.DestroyAsync
-        // (virtual) and IPool.DestroyAsync (interface).
-        //
-        // Mirror cppcache ThinClientPoolDM::destroy() order
-        // (ThinClientPoolDM.cpp:784-848). Inline TODOs flag steps not
-        // yet implemented; they sit at their cppcache-equivalent position.
-        //   0.  checkRegions (cppcache L787)                          — TODO
-        //   1.  mark destroyed (idempotent). Note: we set _isDestroyed
-        //       at the top for guard safety; cppcache sets it at end (L842).
-        //   1b. close RemoteQueryService (cppcache L791-794)
-        //   —   PoolStatsSampler (L796-800): not ported (Meter-based).
-        //   2.  cancel background CTS — every loop's Task.Delay /
-        //       WaitAsync throws OperationCanceledException
-        //       (cppcache L802-810 stopNoblock).
-        //   3.  await each background Task so they fully unwind
-        //       (cppcache L815 stopPingThread, L818 stopUpdateLocator).
-        //   3b. stop ClientMetadataService (cppcache L820-823).
-        //   4.  dispose timers + sync primitives (C#-only; cppcache RAII).
-        //   5a. drain _opConnections, CloseConnection(18) per conn
-        //       (cppcache L829 ConnectionQueue close).
-        //   5b. release TCCM endpoint refs                            — TODO Phase 1.5
-        //       (ConnManager.RemoveRefToTcrEndpointAsync).
-        //   5c. unregister PoolConnections gauge reader. Full
-        //       _stats.Close() (cppcache L835 getStats().close())     — TODO
-        //       forceSample (L836) — not needed for Meter (pull-based).
-        //   5d. PoolManager.RemovePool(name) (cppcache L838)          — TODO
-        //   6.  base.DestroyAsync — mirror cppcache stopChunkProcessor
-        //       (L840). Caller's ct flows through to base and to per-conn
-        //       CloseAsync; background-loop cancellation is separate via
-        //       _backgroundCts.
-        //   6b. closeAllStickyConnections post-close (cppcache L841).
-        //   7.  warn if pool size != 0 (cppcache L846-848)            — TODO
-
-        // 0. TODO: checkRegions — cppcache L787 verifies region consistency
-        //    before tearing down (e.g. no pending PR ops on dead buckets).
-
-        // 1. Idempotent destroy guard.
-        if (Interlocked.Exchange(ref _isDestroyed, 1) != 0)
-        {
-            return;
-        }
-
-        // Stash the caller's keepAlive intent for Step 5a's CloseAsync calls.
-        // cppcache: m_keepAlive = keepAlive (ThinClientPoolDM.cpp:789).
-        _keepAlive = keepAlive;
-
-        // 1b. Close pool-owned RemoteQueryService if it was ever
-        // accessed. Mirrors cppcache CacheImpl::close() →
-        // m_remoteQueryServicePtr->close(); we trigger it from pool
-        // destroy because the RQS lives on the pool, not the cache.
-        // Read the field directly (not the property) — we don't want
-        // to lazy-create an RQS just to immediately close it.
-        _queryService?.Close();
-
-        // 2. Signal every background loop to stop.
-        _backgroundCts.Cancel();
-
-        // 3. Await each loop's graceful exit. OperationCanceledException
-        //    is expected here — that IS the graceful exit signal.
-        if (_connManageLoop is not null)
-        {
-            try { await _connManageLoop.ConfigureAwait(false); }
-            catch (OperationCanceledException) { /* expected * / }
-        }
-        if (_pingLoop is not null)
-        {
-            try { await _pingLoop.ConfigureAwait(false); }
-            catch (OperationCanceledException) { /* expected * / }
-        }
-        if (_updateLocatorLoop is not null)
-        {
-            try { await _updateLocatorLoop.ConfigureAwait(false); }
-            catch (OperationCanceledException) { /* expected * / }
-        }
-
-        // 3b. Stop the client metadata service. cppcache
-        // ThinClientPoolDM::destroy (L820-823): after loops, before
-        // ConnectionQueue close.
-        if (_clientMetadataService is not null)
-        {
-            await _clientMetadataService.StopAsync(ct).ConfigureAwait(false);
-        }
-
-        // 4. Dispose timers + sync primitives owned by this pool.
-        _pingTimer?.Dispose();
-        _updateLocatorTimer?.Dispose();
-        _pingSignal.Dispose();
-        _connManageSignal.Dispose();
-        _updateLocatorSignal.Dispose();
-        _backgroundCts.Dispose();
-        _capSlots?.Dispose();
-
-        // 5a. Drain _opConnections — every idle conn gets a polite
-        //     CloseConnection(18) before its socket goes away. Mirrors
-        //     cppcache ConnectionQueue::close (ConnectionQueue.hpp:87)
-        //     invoked from ThinClientPoolDM::destroy (L829).
-        //     Snapshot-and-clear under lock so CloseAsync's await isn't
-        //     held under the lock (close I/O may be slow).
-        List<TcrConnection> drained;
-        lock (_opConnLock)
-        {
-            drained = [.. _opConnections];
-            _opConnections.Clear();
-        }
-        foreach (var conn in drained)
-        {
-            // CloseAsync sends MessageType.CloseConnection(18) then
-            // disposes the socket. Currently NIE — until the leaf lands,
-            // any drained conn here will throw and bubble out of
-            // DestroyAsync. Top-down: call site is in place, leaf next.
-            await conn.CloseAsync(_keepAlive, ct).ConfigureAwait(false);
-        }
-
-        // 5b. TODO Phase 1.5: release pool's TCCM refs to endpoints in
-        //   _endpoints (ConnManager.RemoveRefToTcrEndpointAsync). Phase
-        //   1.1: rely on cache-scope dispose to cascade.
-        _endpoints.Clear();
-
-        // 5c. Unregister gauge readers so the static registries in
-        // PoolStatistics don't leak this pool's entries.
-        // TODO: full _stats.Close() to match cppcache getStats().close()
-        //   (L835) — drop static-registry entries for every instrument,
-        //   not just these gauges. forceSample (L836) is not needed for
-        //   Meter (listeners pull on their own cadence).
-        _stats.ClearPoolConnectionsReader();
-        _stats.ClearLocatorsReader();
-        _stats.ClearServersReader();
-        _stats.ClearConnectedServersReader();
-        _stats.ClearConnectionWaitsInProgressReader();
-        _stats.ClearClientOpsInProgressReader();
-
-        // 5d. TODO: PoolManager.RemovePool(name) — cppcache L838
-        //     `cacheImpl->getPoolManager().removePool(m_poolName)`
-        //     unregisters the pool from cache's registry. Needs a
-        //     RemovePool API on our PoolManager first (verify whether
-        //     one exists; if not, add it).
-
-        // 6. Mirror cppcache stopChunkProcessor (ThinClientPoolDM.cpp:840) —
-        // base.DestroyAsync flips InitDone off and will stop the
-        // chunk-processor task when its TODO lands.
-        await base.DestroyAsync(keepAlive, ct).ConfigureAwait(false);
-
-        // 6b. closeAllStickyConnections — cppcache L841.
-        if (_stickyManager is not null)
-        {
-            await _stickyManager.CloseAllStickyConnectionsAsync(ct).ConfigureAwait(false);
-        }
-
-        // 7. TODO: warn if pool size != 0 — cppcache L846-848 logs FINE
-        //    when m_poolSize.load() != 0 after destroy (diagnostic for
-        //    leaked conns). One LogWarning when _poolSize > 0.
-    }
 
     public override async Task InitAsync(CancellationToken ct = default)
     {
-        ct.ThrowIfCancellationRequested();
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _isDestroyed) != 0, typeof(ThinClientPoolDM));
-        if (Interlocked.Exchange(ref _initGuard, 1) != 0) return;
 
-        _stats.SetPoolConnectionsReader(() => Volatile.Read(ref _poolSize));
-        _stats.SetServersReader(() => _endpoints.Count);
-        _stats.SetConnectedServersReader(() => Volatile.Read(ref _connectedEndpoints));
-        _stats.SetConnectionWaitsInProgressReader(() => Volatile.Read(ref _connectionWaitsInProgress));
-        _stats.SetClientOpsInProgressReader(() => Volatile.Read(ref _clientOpsInProgress));
-        // _locatorHelper is built lazily in ScheduleUpdateLocatorLoop when
-        // locators are configured; the reader closes over the field so the
-        // gauge starts at 0 and flips to the helper's count once it appears.
-        _stats.SetLocatorsReader(() => _locatorHelper?.LocatorCount ?? 0);
-
-        _isMultiUserMode = xmlPool.MultiuserAuthentication ?? false;
-        if (_isMultiUserMode)
-        {
-            logger.LogInformation("Multiuser authentication is enabled for pool {PoolName}", xmlPool.Name);
-        }
-        _isSecurityOn = options.Security.Properties.Count > 0;
-        logger.LogDebug("ThinClientPoolDM.InitAsync: security on/off = {IsSecurityOn}", _isSecurityOn);
-
-        _stickyManager = ActivatorUtilities.CreateInstance<ThinClientStickyManager>(serviceProvider, this);
-        _clearPdxRegistry = options.Pdx.ClearTypeIdsOnDisconnect;
-
-        // ── TCCM init — hoisted to Cache.InitializeCoreAsync.
-
-        await StartBackgroundThreads(ct).ConfigureAwait(false);
-
-        // ── Lazy conn opening — first conn opens via ConnManageLoop (RestoreMinConnections) or SendRequestToEndpointAsync.
     }
 
     /// <summary>
@@ -1405,135 +1747,7 @@ internal class ThinClientPoolDM(
     internal int PoolSize => Volatile.Read(ref _poolSize);
 
 
-    #region Ping
-
-    private Task? _pingLoop;
-    private PeriodicTimer? _pingTimer;
-    private readonly SemaphoreSlim _pingSignal = new(0, int.MaxValue);
-
-    /// <summary>
-    /// Schedule the periodic ping loop, mirroring cppcache
-    /// <c>ThinClientPoolDM.cpp:269-290</c>. cppcache splits this in two:
-    /// a long-running <c>pingServer</c> Task that blocks on
-    /// <c>ping_semaphore_.acquire()</c>, plus a <c>FunctionExpiryTask</c>
-    /// scheduled by <c>ExpiryTaskManager</c> that releases the semaphore
-    /// every <c>PingInterval</c>. We collapse to one loop driven by
-    /// <see cref="PeriodicTimer"/>; <see cref="_pingSignal"/> stays
-    /// declared so Phase 1.5's failover path can release it for an
-    /// immediate probe (then this loop becomes <c>WaitAny(timer, signal)</c>).
-    /// </summary>
-    /// <remarks>
-    /// Interval resolution mirrors cppcache <c>getPingInterval()</c>:
-    /// per-pool override (<see cref="CachePoolOptions.PingInterval"/>)
-    /// wins, otherwise fall back to the system default
-    /// (<see cref="PoolOptions.PingInterval"/>, 10 s).
-    /// Interval <c>&lt;= 0</c> disables ping entirely (cppcache L286-289).
-    /// </remarks>
-    private void SchedulePingLoop()
-    {
-        var pingInterval = xmlPool.PingInterval ?? options.Pool.PingInterval;
-        if (pingInterval > TimeSpan.Zero)
-        {
-            logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Scheduling ping task at {Interval}", pingInterval);
-            _pingTimer = new PeriodicTimer(pingInterval);
-            _pingLoop = PingLoopAsync(_backgroundCts.Token);
-        }
-        else
-        {
-            logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Not scheduling ping task as ping interval {Interval}", pingInterval);
-        }
-    }
-
-    /// <summary>
-    /// Periodic ping loop. Mirrors cppcache
-    /// <c>ThinClientPoolDM::pingServer</c>
-    /// (<c>ThinClientPoolDM.cpp:2070-2083</c>): each tick walks every
-    /// connected endpoint and probes it with <c>MessageType.Ping</c>.
-    /// </summary>
-    private async Task PingLoopAsync(CancellationToken ct)
-    {
-        var initialDelay = TimeSpan.FromSeconds(1);
-        logger.LogDebug("Starting ping loop for pool {Pool}", Name);
-        try
-        {
-            await Task.Delay(initialDelay, ct).ConfigureAwait(false);
-
-            do
-            {
-                try
-                {
-                    await PingServerLocalAsync(ct).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (!ct.IsCancellationRequested)
-                {
-                    // One bad tick must not kill the loop — next tick retries.
-                    logger.LogWarning(ex, "Ping tick failed for pool {Pool}", Name);
-                }
-            }
-            while (await _pingTimer!.WaitForNextTickAsync(ct).ConfigureAwait(false));
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            // graceful shutdown via _backgroundCts.Cancel().
-        }
-        logger.LogDebug("Ending ping loop for pool {Pool}", Name);
-    }
-    /// <summary>
-    /// One ping sweep: probe every connected endpoint and prune the
-    /// pool's references to any that fall offline. Mirrors cppcache
-    /// <c>ThinClientPoolDM::pingServerLocal</c>
-    /// (<c>ThinClientPoolDM.cpp:2028-2040</c>).
-    /// </summary>
-    /// <remarks>
-    /// cppcache holds <c>m_endpointsLock</c> for the whole sweep because
-    /// <c>std::map</c> isn't safe for concurrent iteration; our
-    /// <see cref="_endpoints"/> is a <see cref="ConcurrentDictionary{TKey,TValue}"/>
-    /// so a snapshot enumeration is safe and the sweep won't block
-    /// <see cref="AddEPAsync"/>.
-    /// </remarks>
-    private async Task PingServerLocalAsync(CancellationToken ct)
-    {
-        var sweepStopwatch = Stopwatch.StartNew();
-        try
-        {
-            logger.LogTrace("Ping sweep for pool {Pool}: {Count} endpoint(s)", Name, _endpoints.Count);
-
-            foreach (var (_, endpoint) in _endpoints)
-            {
-                ct.ThrowIfCancellationRequested();
-
-                if (!endpoint.IsConnected)
-                {
-                    // cppcache: pingServerLocal skips disconnected endpoints
-                    // (the test is inside the loop body at L2032).
-                    continue;
-                }
-
-                var endpointStopwatch = Stopwatch.StartNew();
-                await endpoint.PingAsync(this, ct).ConfigureAwait(false);
-
-                if (endpoint.IsConnected)
-                {
-                    _stats.EndpointPing(endpointStopwatch.Elapsed);
-                }
-                else
-                {
-                    // cppcache (ThinClientPoolDM.cpp:2034-2037): ping flipped
-                    // endpoint's connected_ bit to false → drop pool's
-                    // references on its conns + HA subscription channel.
-                    logger.LogDebug("Ping flipped endpoint {Endpoint} to disconnected; cleaning up.", endpoint.Name);
-                    await RemoveEPConnectionsAsync(endpoint, ct).ConfigureAwait(false);
-                    await RemoveCallbackConnectionAsync(endpoint, ct).ConfigureAwait(false);
-                }
-            }
-        }
-        finally
-        {
-            _stats.PingSweep(sweepStopwatch.Elapsed);
-        }
-    }
-
-    #endregion
+  
 
     #region Connection Manager
 
@@ -1837,169 +2051,7 @@ internal class ThinClientPoolDM(
 
     #endregion
 
-    #region Locator
-
-    private readonly SemaphoreSlim _updateLocatorSignal = new(0, int.MaxValue);
-    private Task? _updateLocatorLoop;
-    private PeriodicTimer? _updateLocatorTimer;
-    private ThinClientLocatorHelper? _locatorHelper;
-
-    /// <summary>
-    /// Maybe launch <see cref="UpdateLocatorLoopAsync"/>. Mirrors
-    /// cppcache <c>ThinClientPoolDM.cpp:292-302</c>: only fires when
-    /// the pool actually has locators configured (no locators ⇒
-    /// nothing to refresh). Default 5s baked into
-    /// <see cref="CachePoolOptions.UpdateLocatorListInterval"/>
-    /// (cppcache <c>PoolFactory.cpp:51</c>); validator rejects
-    /// negatives. Interval <c>== 0</c> disables (matches cppcache
-    /// <c>L286-289</c>).
-    /// </summary>
-    private void ScheduleUpdateLocatorLoop()
-    {
-        if (xmlPool.Locators.Count == 0) return;
-
-        // Build the helper once we know locators are configured. cppcache
-        // ThinClientPoolDM ctor builds m_locHelper unconditionally; we
-        // gate on Locators so the field stays null when the pool runs
-        // static-server mode (Step E's SelectEndpointAsync locator branch
-        // never fires either, so no consumer of _locatorHelper exists).
-        // CacheHostPortOptions → ServerLocation conversion is the
-        // options-layer ↔ wire-layer boundary.
-        var initialLocators = xmlPool.Locators
-            .Select(l => new ServerLocation(l.Host, l.Port))
-            .ToList();
-        // Options layer surfaces the resolved default (3) directly, so no
-        // cppcache-style sentinel translation needed here.
-        _locatorHelper = ActivatorUtilities.CreateInstance<ThinClientLocatorHelper>(
-            serviceProvider, initialLocators, xmlPool.RetryAttempts);
-
-        var updateInterval = xmlPool.UpdateLocatorListInterval;
-        if (updateInterval <= TimeSpan.Zero)
-        {
-            logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Not scheduling updateLocatorList as interval {Interval}", updateInterval);
-            return;
-        }
-
-        logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Scheduling updateLocatorList task at {Interval}", updateInterval);
-        _updateLocatorTimer = new PeriodicTimer(updateInterval);
-        _updateLocatorLoop = UpdateLocatorLoopAsync(_backgroundCts.Token);
-    }
-
-    /// <summary>
-    /// Periodic locator-list refresh loop. Mirrors cppcache
-    /// <c>ThinClientPoolDM::updateLocatorList</c>
-    /// (<c>ThinClientPoolDM.cpp:2042-2053</c>): each tick asks every
-    /// configured locator who's alive and updates the pool's known
-    /// locator list accordingly. cppcache's body is a
-    /// <c>semaphore.acquire()</c>-blocked task whose semaphore is
-    /// released by a separate <c>FunctionExpiryTask</c>; we collapse
-    /// that two-piece pattern into a single <see cref="PeriodicTimer"/>
-    /// loop (same shape as <see cref="PingLoopAsync"/>).
-    /// </summary>
-    private async Task UpdateLocatorLoopAsync(CancellationToken ct)
-    {
-        // cppcache schedules with the same fixed 1 s initial delay as
-        // ping; first refresh fires ~1 s after pool init rather than
-        // after a full interval.
-        var initialDelay = TimeSpan.FromSeconds(1);
-
-        logger.LogDebug("Starting updateLocatorList loop for pool {Pool}", Name);
-        try
-        {
-            await Task.Delay(initialDelay, ct).ConfigureAwait(false);
-
-            do
-            {
-                try
-                {
-                    await UpdateLocatorsLocalAsync(ct).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (!ct.IsCancellationRequested)
-                {
-                    // One bad refresh must not kill the loop — next tick retries.
-                    logger.LogWarning(ex, "updateLocatorList tick failed for pool {Pool}", Name);
-                }
-            }
-            while (await _updateLocatorTimer!.WaitForNextTickAsync(ct).ConfigureAwait(false));
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            // graceful shutdown via _backgroundCts.Cancel().
-        }
-        logger.LogDebug("Ending updateLocatorList loop for pool {Pool}", Name);
-    }
-
-    /// <summary>
-    /// One locator-list refresh. Mirrors cppcache
-    /// <c>(m_locHelper)-&gt;updateLocators(getServerGroup())</c>
-    /// (<c>ThinClientPoolDM.cpp:2048</c>): asks the configured
-    /// locators for the current authoritative locator set so the pool
-    /// can drop dead locators and pick up newly-added ones.
-    /// </summary>
-    /// <remarks>
-    /// Stub until <c>ThinClientLocatorHelper</c> lands; the loop's
-    /// scaffolding (timer, cancellation, error survival) is verified
-    /// first so its replacement only has to fill in the wire I/O.
-    /// </remarks>
-    private async Task UpdateLocatorsLocalAsync(CancellationToken ct)
-    {
-        // _locatorHelper is non-null here: ScheduleUpdateLocatorLoop
-        // both builds it and launches this loop only when locators
-        // are configured (same gate, same call site).
-        using var activity = _stats.StartLocatorListRequest();
-        var stopwatch = Stopwatch.StartNew();
-        try
-        {
-            await _locatorHelper!.UpdateLocatorsAsync(xmlPool.ServerGroup, ct).ConfigureAwait(false);
-        }
-        finally
-        {
-            _stats.LocatorListRequest(stopwatch.Elapsed);
-        }
-    }
-
-    /// <summary>
-    /// Query the pool's <see cref="ThinClientLocatorHelper"/> for one
-    /// server. Mirrors cppcache <c>ThinClientPoolDM::selectEndpoint</c>
-    /// locator branch (<c>ThinClientPoolDM.cpp:580-604</c>).
-    /// </summary>
-    /// <remarks>
-    /// Phase 1.5 MVP: empty <c>excludeServers</c> and no
-    /// <c>currentServer</c> — neither failover-driven retry exclusion
-    /// nor server replacement is wired in yet.
-    /// </remarks>
-    private async Task<DnsEndPoint> SelectEndpointFromLocatorAsync(HashSet<DnsEndPoint> excludeServers, CancellationToken ct)
-    {
-        logger.LogDebug("ThinClientPoolDM: Asking locator for server from group [{Group}]", xmlPool.ServerGroup);
-
-        // Convert pool-layer DnsEndPoint set → wire-layer ServerLocation list
-        // at the helper boundary. ServerLocation is a value record so the
-        // List is cheap to materialise; ToList avoids exposing IEnumerable
-        // ordering quirks across the helper call.
-        var excludeWire = excludeServers.Select(e => new ServerLocation(e.Host, e.Port)).ToList();
-
-        // cppcache ThinClientPoolDM.cpp:587 — incLoctorRequests() before
-        // helper call. Maps to ClientConnectionRequest wire RPC.
-        using var activity = _stats.StartClientConnectionRequest();
-        var stopwatch = Stopwatch.StartNew();
-        ServerLocation server;
-        try
-        {
-            server = await _locatorHelper!.GetEndpointForNewFwdConnAsync(xmlPool.ServerGroup, excludeWire, ct)
-                .ConfigureAwait(false);
-        }
-        finally
-        {
-            _stats.ClientConnectionRequest(stopwatch.Elapsed);
-        }
-
-        var endpoint = new DnsEndPoint(server.Host, server.Port);
-
-        logger.LogDebug("ThinClientPoolDM: Locator returned endpoint [{Host}:{Port}]", endpoint.Host, endpoint.Port);
-        return endpoint;
-    }
-
-    #endregion
+   
 
 
 

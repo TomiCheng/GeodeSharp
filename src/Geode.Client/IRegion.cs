@@ -1,4 +1,4 @@
-/*
+
 namespace Geode.Client;
 
 /// <summary>
@@ -103,5 +103,3 @@ public interface IRegion<TKey, TValue> : IRegion
     /// <inheritdoc cref="IRegion.SelectValueAsync(string, CancellationToken)" />
     new Task<TValue?> SelectValueAsync(string predicate, CancellationToken ct = default);
 }
-
-*/

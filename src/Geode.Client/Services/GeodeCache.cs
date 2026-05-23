@@ -4,23 +4,24 @@ namespace Geode.Client.Services;
 
 internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
 {
+    private readonly Lazy<PoolManager> _poolManager;
     private readonly string _name;
-    private readonly AsyncServiceScope _scope;
 
     public GeodeCache(IServiceProvider serviceProvider, string name)
     {
-        _scope = serviceProvider.CreateAsyncScope();
-        _scope.ServiceProvider.GetRequiredService<CacheScopeContext>().Init(name);
         _name = name;
+        _poolManager = new Lazy<PoolManager>(
+                    () => ActivatorUtilities.CreateInstance<PoolManager>(serviceProvider, this),
+                    LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     public string Name => _name;
 
-    public IPoolManager PoolManager => _scope.ServiceProvider.GetRequiredService<PoolManager>();
+    public IPoolManager PoolManager => _poolManager.Value;
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        await _scope.DisposeAsync();
+        return ValueTask.CompletedTask;
     }
 
     //    /// <summary>

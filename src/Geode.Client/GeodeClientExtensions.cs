@@ -3,9 +3,8 @@
 //using Geode.Client.Pdx;
 //using Geode.Client.Protocol;
 //using Geode.Client.Protocol.Serialization;
-//using Geode.Client.Services;
+//using Microsoft.Extensions.Configuration;
 using Geode.Client.Services;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;

@@ -1,6 +1,5 @@
 using Geode.Client.Internal;
 using Geode.Client.Protocol;
-using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;

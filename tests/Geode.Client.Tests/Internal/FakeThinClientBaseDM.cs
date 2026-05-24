@@ -1,6 +1,5 @@
 using Geode.Client.Internal;
 using Geode.Client.Protocol;
-using Geode.Client.Services;
 
 namespace Geode.Client.Tests.Internal;
 

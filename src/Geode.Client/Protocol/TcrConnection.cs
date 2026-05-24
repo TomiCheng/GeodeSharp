@@ -757,7 +757,6 @@ using System.Security.Cryptography;
 using System.Text;
 using Geode.Client.Internal;
 using Geode.Client.Options;
-using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 

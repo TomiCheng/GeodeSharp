@@ -4,7 +4,7 @@ using Geode.Client.Pdx;
 using Geode.Client.Protocol.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Geode.Client.Services;
+namespace Geode.Client.Internal;
 
 internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
 {

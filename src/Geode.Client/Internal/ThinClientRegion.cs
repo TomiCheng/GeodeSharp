@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
 using Geode.Client.Protocol.Serialization;
-using Geode.Client.Services;
+using Geode.Client.Internal;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 

@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using Geode.Client.Pdx;
 using Microsoft.Extensions.Logging;
 
-namespace Geode.Client.Services;
+namespace Geode.Client.Internal;
 
 /// <summary>
 /// Default <see cref="ITypeRegistry"/>. Scoped (per-cache); mirror of cppcache

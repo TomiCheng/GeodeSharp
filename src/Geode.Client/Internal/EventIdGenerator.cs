@@ -1,4 +1,4 @@
-namespace Geode.Client.Services;
+namespace Geode.Client.Internal;
 
 /// <summary>
 /// Per-cache generator for the <c>(threadId, sequenceId)</c> pair the

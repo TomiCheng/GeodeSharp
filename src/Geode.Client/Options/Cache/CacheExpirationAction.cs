@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Options;
 
 /// <summary>
@@ -11,5 +10,3 @@ public enum CacheExpirationAction
     LocalInvalidate,
     LocalDestroy,
 }
-
-*/

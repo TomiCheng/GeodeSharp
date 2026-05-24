@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Options;
 using Microsoft.Extensions.Options;
 
@@ -52,5 +51,3 @@ internal sealed class GeodeClientOptionsValidator : IValidateOptions<GeodeClient
             : ValidateOptionsResult.Fail(failures);
     }
 }
-
-*/

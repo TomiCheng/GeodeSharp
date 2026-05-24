@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Options;
 
 /// <summary>
@@ -79,5 +78,3 @@ public class PoolOptions : ICloneable
             yield return $"{prefix}.ConnectionPoolSize must be >= 0 (got {ConnectionPoolSize}).";
     }
 }
-
-*/

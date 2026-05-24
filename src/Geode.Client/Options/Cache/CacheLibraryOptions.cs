@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Options;
 
 /// <summary>
@@ -49,4 +48,3 @@ public class CacheLibraryOptions : ICloneable
     }
 }
 
-*/

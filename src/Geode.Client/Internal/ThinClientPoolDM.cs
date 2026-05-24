@@ -722,10 +722,17 @@ internal class ThinClientPoolDM(
         var initialLocators = attributes.Locators
             .Select(l => new ServerLocation(l.Host, l.Port))
             .ToList();
-        // Options layer surfaces the resolved default (3) directly, so no
-        // cppcache-style sentinel translation needed here.
+        // cppcache ThinClientLocatorHelper::getConnRetries (L66-69):
+        //   `retries <= 0 ? DEFAULT_CONNECTION_RETRIES(=3) : retries`.
+        // PoolAttributes.RetryAttempts default is -1 (the cppcache
+        // sentinel for "use default"); translate at the boundary so the
+        // helper's loop sees a positive bound.
+        const int DefaultConnectionRetries = 3;
+        var locatorRetries = attributes.RetryAttempts <= 0
+            ? DefaultConnectionRetries
+            : attributes.RetryAttempts;
         _locatorHelper = ActivatorUtilities.CreateInstance<ThinClientLocatorHelper>(
-            serviceProvider, initialLocators, attributes.RetryAttempts);
+            serviceProvider, initialLocators, locatorRetries);
 
         var updateInterval = attributes.UpdateLocatorListInterval;
         if (updateInterval <= TimeSpan.Zero)
@@ -1842,31 +1849,6 @@ internal class ThinClientPoolDM(
 
     /// <inheritdoc/>
     public override bool IsSecurityOn => _isSecurityOn;
-}
-
-/*
-
-
-internal class ThinClientPoolDM(
-    IServiceProvider serviceProvider,
-    ILogger<ThinClientPoolDM> logger,
-    CachePoolOptions xmlPool,
-    GeodeClientOptions options,
-    TcrConnectionManager connManager)
-    : ThinClientBaseDM(connManager, region: null), IPool
-{
-
-
-    /// <summary>
-    /// PR single-hop metadata service. Built when
-    /// <see cref="CachePoolOptions.PrSingleHopEnabled"/>; lifecycle paired
-    /// with <see cref="StartBackgroundThreads"/> / <see cref="DestroyAsync"/>.
-    /// </summary>
-    private ClientMetadataService? _clientMetadataService;
-
-
-
-
 
     /// <summary>
     /// Bump <see cref="_connectedEndpoints"/>. Mirrors cppcache
@@ -1905,6 +1887,33 @@ internal class ThinClientPoolDM(
         // TODO Phase 2+: if (val <= 0 && _clearPdxRegistry) ClearPdxTypeRegistry();
         //   cppcache ThinClientPoolDM.cpp:2065-2067.
     }
+}
+
+/*
+
+
+internal class ThinClientPoolDM(
+    IServiceProvider serviceProvider,
+    ILogger<ThinClientPoolDM> logger,
+    CachePoolOptions xmlPool,
+    GeodeClientOptions options,
+    TcrConnectionManager connManager)
+    : ThinClientBaseDM(connManager, region: null), IPool
+{
+
+
+    /// <summary>
+    /// PR single-hop metadata service. Built when
+    /// <see cref="CachePoolOptions.PrSingleHopEnabled"/>; lifecycle paired
+    /// with <see cref="StartBackgroundThreads"/> / <see cref="DestroyAsync"/>.
+    /// </summary>
+    private ClientMetadataService? _clientMetadataService;
+
+
+
+
+
+
 
 
 

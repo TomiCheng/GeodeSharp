@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Options;
 
 /// <summary>
@@ -33,5 +32,3 @@ public class PdxOptions : ICloneable
     public bool ClearTypeIdsOnDisconnect { get; set; }
 
 }
-
-*/

@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Options;
 
 /// <summary>PDX options.</summary>
@@ -37,5 +36,3 @@ public class CachePdxOptions : ICloneable
         yield break;
     }
 }
-
-*/

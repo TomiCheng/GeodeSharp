@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Options;
 
 /// <summary>
@@ -47,5 +46,3 @@ public class HeapOptions : ICloneable
         yield break;
     }
 }
-
-*/

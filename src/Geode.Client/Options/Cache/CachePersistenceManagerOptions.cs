@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Options;
 
 /// <summary>
@@ -34,5 +33,3 @@ public class CachePersistenceManagerOptions : CacheLibraryOptions
         // No structural rules for this subclass currently — parity stub.
     }
 }
-
-*/

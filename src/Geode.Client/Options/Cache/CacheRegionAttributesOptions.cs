@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Options;
 
 /// <summary>
@@ -139,5 +138,3 @@ public class CacheRegionAttributesOptions : ICloneable
             foreach (var f in PersistenceManager.Validate($"{prefix}.PersistenceManager")) yield return f;
     }
 }
-
-*/

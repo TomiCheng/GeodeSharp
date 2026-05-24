@@ -1,5 +1,5 @@
 using System.Collections.Concurrent;
-using Geode.Client.Internal;
+using Geode.Client.Options;
 using Geode.Client.Pdx;
 using Geode.Client.Protocol.Serialization;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,17 +15,18 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
     private readonly IServiceProvider _serviceProvider;
     private readonly Lazy<PoolManager> _poolManager;
     private readonly ConcurrentDictionary<string, IRegion> _regions = new(StringComparer.Ordinal);
-    private readonly SystemProperties _systemProperties = new();
+    private readonly SystemProperties _systemProperties;
     private readonly Lazy<TcrConnectionManager> _tcrConnectionManager;
     private readonly TypedResultAdapter _typedResultAdapter;
     private readonly TypeRegistry _typeRegistry;
     private readonly PdxTypeRegistry _pdxTypeRegistry;
     private readonly Lazy<SerializationRegistry> _serializationRegistry;
     private readonly EventIdGenerator _eventIdGenerator = new();
-    public GeodeCache(IServiceProvider serviceProvider, string name)
+    public GeodeCache(IServiceProvider serviceProvider, string name, GeodeClientOptions? options = null)
     {
         _name = name;
         _serviceProvider = serviceProvider;
+        _systemProperties = BuildSystemProperties(options);
         _typedResultAdapter = ActivatorUtilities.CreateInstance<TypedResultAdapter>(serviceProvider);
         _typeRegistry = ActivatorUtilities.CreateInstance<TypeRegistry>(serviceProvider);
         _pdxTypeRegistry = ActivatorUtilities.CreateInstance<PdxTypeRegistry>(serviceProvider);
@@ -39,6 +40,75 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
         _serializationRegistry = new Lazy<SerializationRegistry>(
             () => ActivatorUtilities.CreateInstance<SerializationRegistry>(serviceProvider, this),
                    LazyThreadSafetyMode.ExecutionAndPublication);
+    }
+
+    /// <summary>
+    /// Build-time snapshot of the public <see cref="GeodeClientOptions"/>
+    /// into the internal <see cref="SystemProperties"/> bag (cppcache
+    /// "geode.properties → SystemProperties at cache build"). Subsequent
+    /// mutations to the caller's <paramref name="opts"/> do NOT affect
+    /// this cache.
+    /// </summary>
+    private static SystemProperties BuildSystemProperties(GeodeClientOptions? opts)
+    {
+        if (opts is null) return new SystemProperties();
+
+        // ── init-only properties: object initializer ────────────────
+        var sp = new SystemProperties
+        {
+            Name = opts.Name,
+            ThreadPoolSize = opts.ThreadPoolSize,
+
+            // Subscription
+            DurableClientId = opts.Subscription.DurableClientId,
+            DurableTimeout = opts.Subscription.DurableTimeout,
+            AutoReadyForEvents = opts.Subscription.AutoReadyForEvents,
+            RedundancyMonitorInterval = opts.Subscription.RedundancyMonitorInterval,
+            NotifyAckInterval = opts.Subscription.NotifyAckInterval,
+            NotifyDupCheckLife = opts.Subscription.NotifyDupCheckLife,
+
+            // Security
+            SecurityClientDhAlgo = opts.Security.ClientDhAlgo,
+            SecurityClientKsPath = opts.Security.ClientKsPath,
+            SecurityProperties = opts.Security.Properties,
+
+            // Heap (LRULimit: ulong public ↔ long internal — wire is i64 BE,
+            // cast is safe within the positive-i64 range we care about).
+            HeapLRULimit = (long)opts.Heap.LRULimit,
+            HeapLRUDelta = opts.Heap.LRUDelta,
+
+            // Tls — only Enabled has a SystemProperties analog today;
+            // KeyStorePath / Password / TrustStorePath wire in when the
+            // SSL handshake path lands (Phase 3+).
+            SslEnabled = opts.Tls.Enabled,
+
+            // Pool (these are pool-level wire knobs surfaced under
+            // SystemProperties for cppcache parity — PoolAttributes
+            // owns the per-pool overrides).
+            ConnectionPoolSize = (uint)opts.Pool.ConnectionPoolSize,
+            ConnectTimeout = opts.Pool.ConnectTimeout,
+            ConnectWaitTimeout = opts.Pool.ConnectWaitTimeout,
+            MaxSocketBufferSize = opts.Pool.MaxSocketBufferSize,
+            PingInterval = opts.Pool.PingInterval,
+            BucketWaitTimeout = opts.Pool.BucketWaitTimeout,
+            DisableShufflingEndpoint = !opts.Pool.ShuffleEndpoints,   // inverted (cppcache parity)
+        };
+
+        // ── { get; set; } properties: assign after init-block ────────
+        sp.MaxDepth = opts.Serialization.MaxDepth;
+        sp.MaxArrayLength = opts.Serialization.MaxArrayLength;
+        sp.MaxBytesLength = opts.Serialization.MaxBytesLength;
+        sp.MaxStringLength = opts.Serialization.MaxStringLength;
+
+        // TODO Phase 2+ — fields without a SystemProperties analog today:
+        //   opts.EnableChunkHandlerThread   (.NET ThreadPool covers it, may stay unmapped)
+        //   opts.Tls.KeyStorePath/Password/TrustStorePath (SSL handshake)
+        //   opts.Subscription.ConflateEvents (subscription queue settings)
+        //   opts.Heap.TombstoneTimeout (concurrency-checks / tombstones)
+        //   opts.Pdx.ClearTypeIdsOnDisconnect (PDX type registry)
+        //   opts.Tx.SuspendedTimeout (transactions, Phase 11+)
+
+        return sp;
     }
 
     private async Task InitializeCoreAsync(CancellationToken ct)

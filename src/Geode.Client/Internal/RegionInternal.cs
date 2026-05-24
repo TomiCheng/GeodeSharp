@@ -1,14 +1,11 @@
-/*
-using Geode.Client.Options;
-
 namespace Geode.Client.Internal;
 
 /// <summary>
 /// Abstract internal layer between the public <see cref="IRegion"/>
 /// interface and the concrete region implementations
-/// (<see cref="LocalRegion"/> &#x2192;
-/// <see cref="ThinClientRegion"/>). Mirrors cppcache
-/// <c>RegionInternal</c> (<c>cppcache/src/RegionInternal.hpp:131</c>).
+/// (<see cref="LocalRegion"/> &#x2192; <c>ThinClientRegion</c>).
+/// Mirrors cppcache <c>RegionInternal</c>
+/// (<c>cppcache/src/RegionInternal.hpp:131</c>).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -16,7 +13,7 @@ namespace Geode.Client.Internal;
 /// the public <c>Region</c> interface doesn't surface (event flags,
 /// version tags, tombstones, internal Put / Get variants that take
 /// <c>EventId</c> + <c>VersionTag</c>). All of those land in their
-/// respective phases — Phase 1.2 keeps the layer empty so the
+/// respective phases — Phase 1.x keeps the layer mostly empty so the
 /// inheritance chain matches cppcache for future ports.
 /// </para>
 /// <para>
@@ -26,23 +23,23 @@ namespace Geode.Client.Internal;
 /// 1.5) will add it.
 /// </para>
 /// </remarks>
-internal abstract class RegionInternal(CacheRegionAttributesOptions attributes)
+internal abstract class RegionInternal(RegionAttributes attributes)
     : IRegion
 {
-
     /// <summary>
-    /// XML-declared region attributes. Mirrors cppcache
-    /// <c>RegionInternal::m_regionAttributes</c>.
+    /// Region attributes snapshot taken at <see cref="RegionFactory.CreateAsync"/>
+    /// time. Mirrors cppcache <c>RegionInternal::m_regionAttributes</c>.
     /// </summary>
-    protected CacheRegionAttributesOptions Attributes { get; } = attributes;
+    protected RegionAttributes Attributes { get; } = attributes;
 
     // ── IRegion (forward to derived) ───────────────────────────
     public abstract string Name { get; }
     public abstract string FullPath { get; }
 
     /// <summary>
-    /// Mirrors cppcache <c>RegionAttributes::getPoolName()</c>; the
-    /// reference (if any) into <c>CacheOptions.Pools</c>.
+    /// Mirrors cppcache <c>RegionAttributes::getPoolName()</c>; resolved
+    /// by <see cref="RegionFactory.CreateAsync"/> to either the
+    /// caller-supplied pool name or the cache's default pool name.
     /// </summary>
     public string PoolName => Attributes.PoolName;
 
@@ -65,5 +62,3 @@ internal abstract class RegionInternal(CacheRegionAttributesOptions attributes)
     //   Phase 4:   single-hop / partitioned-region helpers
     //   Sub-region phase: createSubRegion / getSubRegion / subRegions
 }
-
-*/

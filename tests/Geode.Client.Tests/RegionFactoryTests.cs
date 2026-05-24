@@ -40,14 +40,6 @@ public class RegionFactoryTests
         Assert.Same(f, f.SetConcurrencyChecksEnabled(false));
     }
 
-    [Fact]
-    public async Task CreateAsync_ThrowsNotImplementedException()
-    {
-        // Lock the current stub state — flip this test when CreateAsync lands.
-        await using var sp = BuildSp();
-        var f = await BuildFactoryAsync(sp, TestContext.Current.CancellationToken);
-
-        await Assert.ThrowsAsync<NotImplementedException>(
-            () => f.CreateAsync<string, string>("r", TestContext.Current.CancellationToken));
-    }
+    // CreateAsync orchestration tests live in RegionFactoryCreateAsyncTests.cs;
+    // this file keeps the cheap surface-level facts (setter fluency).
 }

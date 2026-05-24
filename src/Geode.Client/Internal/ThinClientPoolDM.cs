@@ -16,7 +16,7 @@ internal class ThinClientPoolDM(
     PoolManager poolManager,
     string name,
     PoolAttributes attributes)
-    : ThinClientBaseDM, IPool
+    : ThinClientBaseDM(serviceProvider, poolManager.Cache), IPool
 {
     /// <summary>
     /// 0 / 1 destroy guard, gated by <see cref="Interlocked.Exchange(ref int, int)"/>.
@@ -354,11 +354,8 @@ internal class ThinClientPoolDM(
 
     public PoolManager PoolManager => poolManager;
 
-    /// <summary>
-    /// Shortcut to <see cref="Services.PoolManager.Cache"/>; saves the
-    /// double-hop <c>poolDM.PoolManager.Cache</c> at call sites.
-    /// </summary>
-    public GeodeCache Cache => poolManager.Cache;
+    /// <summary>Pool name as registered via <see cref="PoolManager.AddPool"/>; mirrors cppcache <c>Pool::getName()</c>.</summary>
+    internal string Name => name;
 
     public override Task<TcrMessage> SendRequestToEndpointAsync(
         TcrMessage request,

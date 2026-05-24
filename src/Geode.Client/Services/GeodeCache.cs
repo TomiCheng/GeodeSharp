@@ -496,6 +496,29 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
         return new RegionFactory(_serviceProvider, this, shortcut);
     }
 
+    /// <summary>
+    /// Register a freshly-built region on the cache. Called by
+    /// <see cref="RegionFactory.CreateAsync{TKey, TValue}(string, CancellationToken)"/>;
+    /// mirrors cppcache <c>CacheImpl::createRegion</c> map insertion
+    /// (<c>cppcache/src/CacheImpl.cpp:395-398, 440</c>).
+    /// </summary>
+    internal void RegisterRegion(string name, IRegion region)
+    {
+        ObjectDisposedException.ThrowIf(IsClosed, this);
+        if (!_regions.TryAdd(name, region))
+        {
+            throw new RegionExistsException(
+                $"CacheImpl::createRegion: \"{name}\" region exists in local cache");
+        }
+    }
+
+    /// <summary>
+    /// Shared typed-result adapter used to wrap freshly-created regions
+    /// in <see cref="RegionView{TKey, TValue}"/>; same instance the
+    /// cache hands to <see cref="GetRegion{TKey, TValue}(string)"/>.
+    /// </summary>
+    internal Protocol.Serialization.TypedResultAdapter TypedResultAdapter => _typedResultAdapter;
+
     //    /// <summary>
     //    /// Delegates to <c>PoolManager.DefaultPool.QueryService</c> (or the
     //    /// named pool's). Mirrors cppcache <c>CacheImpl::getQueryService()</c>

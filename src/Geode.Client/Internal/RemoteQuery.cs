@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Protocol;
 using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -22,11 +21,15 @@ internal sealed class RemoteQuery<T>(
     string oql,
     RemoteQueryService queryService,
     ThinClientBaseDM dm,
-    TcrMessageBuilder messageBuilder,
-    EventIdGenerator eventIdGenerator,
     IServiceProvider serviceProvider,
     ILogger<RemoteQuery<T>> logger) : IQuery<T>
 {
+    // One TcrMessageHelper per query instance — passed positionally to
+    // the ChunkedQueryResponse collector below so TcrMessageHelper /
+    // SerializationRegistry don't need DI aliases.
+    private readonly TcrMessageHelper _tcrMessageHelper =
+        ActivatorUtilities.CreateInstance<TcrMessageHelper>(serviceProvider);
+
 
     /// <inheritdoc />
     public string QueryString { get; } = oql;
@@ -81,27 +84,38 @@ internal sealed class RemoteQuery<T>(
         TcrMessage request;
         if (Parameters.Count == 0)
         {
-            // Query(34) needs an EventId; cppcache TcrMessageQuery emits
-            // writeEventIdPart unconditionally. Reuse the per-cache
-            // EventIdGenerator that Put / ClearRegion already drive.
-            var (threadId, sequenceId) = eventIdGenerator.Next();
-            request = await messageBuilder.QueryAsync(
-                QueryString,
-                eventThreadId: threadId,
-                eventSequenceId: sequenceId,
-                messageResponseTimeoutMillis: timeoutMs,
-                ct: ct);
+            // Query(34) wire layout mirrors cppcache TcrMessageQuery
+            // (TcrMessage.cpp:1684-1709): RegionPart(querystring) +
+            // EventId + i32 timeout-millis. cppcache writeMillisecondsPart
+            // is writeIntPart(int32) under the hood — same as AddInt32Part.
+            var (threadId, sequenceId) = dm.Cache.EventIdGenerator.Next();
+            request = await TcrMessageBuilder
+                .Create(serviceProvider, MessageType.Query)
+                .AddRegionNamePart(QueryString)
+                .AddEventIdPart(threadId, sequenceId)
+                .AddInt32Part(timeoutMs)
+                .BuildAsync(ct);
         }
         else
         {
-            // QueryWithParameters(80) omits the EventId part (cppcache
-            // TcrMessageQueryWithParameters ctor doesn't call
-            // writeEventIdPart).
-            request = await messageBuilder.QueryWithParametersAsync(
-                QueryString,
-                Parameters,
-                messageResponseTimeoutMillis: timeoutMs,
-                ct: ct);
+            // QueryWithParameters(80) wire mirrors cppcache
+            // TcrMessageQueryWithParameters (TcrMessage.cpp:1769-1806):
+            // 4 + N parts (RegionPart(querystring) + i32 paramCount +
+            // i32 compileTimeout(15) + i32 responseTimeoutMs +
+            // N×ObjectPart(param)). No EventId — cppcache ctor doesn't
+            // call writeEventIdPart.
+            const int CompileQueryClearTimeout = 15;
+            var builder = TcrMessageBuilder
+                .Create(serviceProvider, MessageType.QueryWithParameters)
+                .AddRegionNamePart(QueryString)
+                .AddInt32Part(Parameters.Count)
+                .AddInt32Part(CompileQueryClearTimeout)
+                .AddInt32Part(timeoutMs);
+            foreach (var param in Parameters)
+            {
+                builder = builder.AddValuePart(dm.Cache, param!);
+            }
+            request = await builder.BuildAsync(ct);
         }
 
         // B4 ??Build ChunkedQueryResponse<T> collector (A3). cppcache
@@ -110,8 +124,8 @@ internal sealed class RemoteQuery<T>(
         // overload takes the collector directly in B6; nothing to bind
         // here, just construct. ActivatorUtilities mirrors what
         // ThinClientRegion does for its Chunked*Response collectors.
-        var collector =
-            ActivatorUtilities.CreateInstance<ChunkedQueryResponse<T>>(serviceProvider);
+        var collector = ActivatorUtilities.CreateInstance<ChunkedQueryResponse<T>>(
+            serviceProvider, _tcrMessageHelper, dm.Cache.SerializationRegistry);
 
         // B5 ??Log "sending request". cppcache RemoteQuery.cpp:143
         // (Query branch) / :166 (QueryWithParameters branch) ??same
@@ -160,5 +174,3 @@ internal sealed class RemoteQuery<T>(
     }
 
 }
-
-*/

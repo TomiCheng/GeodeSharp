@@ -1,4 +1,3 @@
-/*
 using Microsoft.Extensions.Logging;
 
 namespace Geode.Client.Internal;
@@ -61,5 +60,3 @@ internal sealed class ThinClientStickyManager(
         return Task.CompletedTask;
     }
 }
-
-*/

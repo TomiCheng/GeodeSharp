@@ -1,4 +1,3 @@
-/*
 using Microsoft.Extensions.Logging;
 
 namespace Geode.Client.Internal;
@@ -73,5 +72,3 @@ internal sealed class ClientMetadataService(
         _ = endpointName;
     }
 }
-
-*/

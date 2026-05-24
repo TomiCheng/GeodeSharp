@@ -127,7 +127,18 @@ internal class ThinClientPoolDM(
         ? Random.Shared.Next(attributes.Servers.Count)
         : 0;
 
-
+    /// <summary>
+    /// Pool-scoped query service. Lazy-built on first
+    /// <see cref="QueryService"/> access (primary-ctor field-init can't
+    /// reference <c>this</c>). Mirrors cppcache
+    /// <c>m_remoteQueryServicePtr</c>.
+    /// </summary>
+    private RemoteQueryService? _queryService;
+    public IQueryService QueryService =>
+        LazyInitializer.EnsureInitialized(
+        ref _queryService,
+        () => ActivatorUtilities.CreateInstance<RemoteQueryService>(
+            serviceProvider, this, Cache.SerializationRegistry));
 
     /// <summary>
     /// Whether to clear cached PDX type IDs when the pool fully disconnects.
@@ -1826,6 +1837,11 @@ internal class ThinClientPoolDM(
     /// </summary>
     private static bool IsClientOpTimeout(Exception ex) =>
         ex is TimeoutException or OperationCanceledException;
+    /// <inheritdoc/>
+    public override bool IsMultiUserMode => _isMultiUserMode;
+
+    /// <inheritdoc/>
+    public override bool IsSecurityOn => _isSecurityOn;
 }
 
 /*
@@ -1850,11 +1866,7 @@ internal class ThinClientPoolDM(
 
 
 
-    /// <inheritdoc/>
-    public override bool IsMultiUserMode => _isMultiUserMode;
 
-    /// <inheritdoc/>
-    public override bool IsSecurityOn => _isSecurityOn;
 
     /// <summary>
     /// Bump <see cref="_connectedEndpoints"/>. Mirrors cppcache
@@ -1895,13 +1907,7 @@ internal class ThinClientPoolDM(
     }
 
 
-    /// <summary>
-    /// Pool-scoped query service. Lazy-built on first
-    /// <see cref="QueryService"/> access (primary-ctor field-init can't
-    /// reference <c>this</c>). Mirrors cppcache
-    /// <c>m_remoteQueryServicePtr</c>.
-    /// </summary>
-    private RemoteQueryService? _queryService;
+
 
 
     /// <summary>
@@ -1917,10 +1923,7 @@ internal class ThinClientPoolDM(
 
     public string Name => xmlPool.Name;
 
-    public IQueryService QueryService =>
-        LazyInitializer.EnsureInitialized(
-            ref _queryService,
-            () => ActivatorUtilities.CreateInstance<RemoteQueryService>(serviceProvider, this));
+
 
     /// <summary>
     /// Test-only: current pool connection count (cppcache <c>m_poolSize</c>).

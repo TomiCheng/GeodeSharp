@@ -1,4 +1,3 @@
-/*
 using System.Net;
 using Geode.Client.Services;
 using Microsoft.Extensions.Logging;
@@ -46,12 +45,11 @@ namespace Geode.Client.Internal;
 internal sealed class TcrPoolEndPoint(
     IServiceProvider serviceProvider,
     ILogger<TcrEndpoint> logger,
-    CacheScopeContext cacheScopeContext,
-    DnsEndPoint endpoint)
-    : TcrEndpoint(serviceProvider, logger, cacheScopeContext, endpoint)
+    DnsEndPoint endpoint,
+    TcrConnectionManager tcrConnectionManager)
+    : TcrEndpoint(serviceProvider, logger, endpoint, tcrConnectionManager)
 {
     // cppcache m_dm: ThinClientPoolDM* — set in ctor; routed through
     // every pool-mode override. Migration pending; see class xmldoc.
 }
 
-*/

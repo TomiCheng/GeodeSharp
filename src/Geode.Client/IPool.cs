@@ -39,12 +39,10 @@ public interface IPool : IAsyncDisposable
     ///// </remarks>
     //Task DestroyAsync(bool keepAlive = false, CancellationToken ct = default);
 
-    ///// <summary>
-    ///// Pool-scoped OQL query factory. Mirrors cppcache
-    ///// <c>Pool::getQueryService()</c> &#x2192;
-    ///// <c>ThinClientPoolDM::m_remoteQueryService</c>.
-    ///// </summary>
-    //IQueryService QueryService { get; }
+    /// <summary>
+    /// Pool-scoped OQL query factory.
+    /// </summary>
+    IQueryService QueryService { get; }
 
     //// TODO Phase 1.5:
     ////   string Name { get; }

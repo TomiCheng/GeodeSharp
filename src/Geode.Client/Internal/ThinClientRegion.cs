@@ -133,30 +133,38 @@ internal sealed partial class ThinClientRegion(
     private async Task<IReadOnlyList<object>> QueryAsync(
         string predicate, CancellationToken ct)
     {
-        throw new NotImplementedException();
-        //if (string.IsNullOrWhiteSpace(predicate))
-        //{
-        //    logger.LogError("Region query predicate string is empty");
-        //    throw new ArgumentException(
-        //        "Region query predicate string is empty.", nameof(predicate));
-        //}
+        if (string.IsNullOrWhiteSpace(predicate))
+        {
+            logger.LogError("Region query predicate string is empty");
+            throw new ArgumentException(
+                "Region query predicate string is empty.", nameof(predicate));
+        }
 
-        //logger.LogTrace(
-        //    "Region::query: region={RegionPath}, predicate={Predicate}",
-        //    FullPath, predicate);
+        logger.LogTrace(
+            "Region::query: region={RegionPath}, predicate={Predicate}",
+            FullPath, predicate);
 
-        //var oql = FullQueryRegex1().IsMatch(predicate)
-        //    ? predicate
-        //    : $"select distinct * from {FullPath} this where {predicate}";
+        // cppcache ThinClientRegion.cpp:524-535 — if predicate is already
+        // a full OQL (starts with SELECT/IMPORT), pass through verbatim;
+        // otherwise wrap as `select distinct * from <FullPath> this where <pred>`.
+        // The `this` alias is required for `WHERE this = ...` /
+        // `WHERE this.field` to resolve server-side.
+        var oql = FullQueryRegex().IsMatch(predicate)
+            ? predicate
+            : $"select distinct * from {FullPath} this where {predicate}";
 
-        //if (dm is not ThinClientPoolDM poolDm)
-        //{
-        //    throw new NotImplementedException(
-        //        "Non-pool DistributionManager query routing is not implemented.");
-        //}
+        // Non-pool DM routing is deferred (memory pool-only-no-non-pool).
+        if (dm is not ThinClientPoolDM poolDm)
+        {
+            throw new NotImplementedException(
+                "Non-pool DistributionManager query routing is not implemented.");
+        }
 
-        //var query = poolDm.QueryService.NewQuery<object>(oql);
-        //return await query.ExecuteAsync(ct).ConfigureAwait(false);
+        // <object> mirrors cppcache shared_ptr<Serializable> — row type is
+        // untyped at the API boundary; TypedResultAdapter short-circuits to
+        // identity when the IRegion caller asks for object.
+        var query = poolDm.QueryService.NewQuery<object>(oql);
+        return await query.ExecuteAsync(ct).ConfigureAwait(false);
     }
 
     /// <summary>

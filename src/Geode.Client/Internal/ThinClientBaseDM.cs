@@ -121,8 +121,8 @@ internal abstract class ThinClientBaseDM(
     //public virtual void ReleaseRedundancyLock() { }
     //public virtual void TriggerRedundancyThread() { }
 
-    //public virtual bool IsSecurityOn => false;        // TODO: ConnManager.HasAuthInitialize when wired
-    //public virtual bool IsMultiUserMode => false;
+    public virtual bool IsSecurityOn => false;        // TODO: ConnManager.HasAuthInitialize when wired
+    public virtual bool IsMultiUserMode => false;
 
     ///// <summary>
     ///// True when <paramref name="exceptionMsg"/> is an

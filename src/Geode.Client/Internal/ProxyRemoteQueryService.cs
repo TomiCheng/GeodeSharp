@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Internal;
 
 /// <summary>
@@ -30,4 +29,3 @@ internal sealed class ProxyRemoteQueryService : IQueryService
     }
 }
 
-*/

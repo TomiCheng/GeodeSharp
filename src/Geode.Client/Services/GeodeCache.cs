@@ -534,34 +534,34 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
     /// </summary>
     internal Protocol.Serialization.TypedResultAdapter TypedResultAdapter => _typedResultAdapter;
 
-    //    /// <summary>
-    //    /// Delegates to <c>PoolManager.DefaultPool.QueryService</c> (or the
-    //    /// named pool's). Mirrors cppcache <c>CacheImpl::getQueryService()</c>
-    //    /// pool-mode branch (<c>CacheImpl.cpp:171-203</c>); the non-pool
-    //    /// fallback in the same method has no .NET counterpart per memory
-    //    /// <c>pool-only-no-non-pool.md</c>.
-    //    /// </summary>
-    //    public IQueryService GetQueryService(string? poolName = null)
-    //    {
-    //        ObjectDisposedException.ThrowIf(IsClosed, this);
+    /// <summary>
+    /// Delegates to <c>PoolManager.DefaultPool.QueryService</c> (or the
+    /// named pool's). Mirrors cppcache <c>CacheImpl::getQueryService()</c>
+    /// pool-mode branch (<c>CacheImpl.cpp:171-203</c>); the non-pool
+    /// fallback in the same method has no .NET counterpart per memory
+    /// <c>pool-only-no-non-pool.md</c>.
+    /// </summary>
+    public IQueryService GetQueryService(string? poolName = null)
+    {
+        ObjectDisposedException.ThrowIf(IsClosed, this);
 
-    //        // null / empty → DefaultPool. Aligns with PoolManager.Find's
-    //        // own empty-string convention, but null gets normalised here
-    //        // so PoolManager.Find (which throws on null) never sees it.
-    //        if (string.IsNullOrEmpty(poolName))
-    //        {
-    //            var defaultPool = poolManager.DefaultPool
-    //                ?? throw new InvalidOperationException(
-    //                    "Cache has no default pool — call EnsureInitializedAsync " +
-    //                    "first or ensure at least one pool is registered.");
-    //            return defaultPool.QueryService;
-    //        }
+        // null / empty → DefaultPool. Aligns with PoolManager.Find's
+        // own empty-string convention, but null gets normalised here
+        // so PoolManager.Find (which throws on null) never sees it.
+        if (string.IsNullOrEmpty(poolName))
+        {
+            var defaultPool = _poolManager.Value.DefaultPool
+                ?? throw new InvalidOperationException(
+                    "Cache has no default pool — call EnsureInitializedAsync " +
+                    "first or ensure at least one pool is registered.");
+            return defaultPool.QueryService;
+        }
 
-    //        var pool = poolManager.Find(poolName)
-    //            ?? throw new ArgumentException(
-    //                $"Pool '{poolName}' is not registered.", nameof(poolName));
-    //        return pool.QueryService;
-    //    }
+        var pool = _poolManager.Value.Find(poolName)
+            ?? throw new ArgumentException(
+                $"Pool '{poolName}' is not registered.", nameof(poolName));
+        return pool.QueryService;
+    }
 
 
 

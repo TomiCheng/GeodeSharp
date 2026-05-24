@@ -568,86 +568,6 @@ internal sealed class TcrConnection(
     /// </summary>
     public void Touch()
         => Volatile.Write(ref _lastAccessed, Stopwatch.GetTimestamp());
-}
-
-/*
-using System.Buffers;
-using System.Buffers.Binary;
-using System.Diagnostics;
-using System.IO;
-using System.Net.Sockets;
-using System.Security.Cryptography;
-using System.Text;
-using Geode.Client.Internal;
-using Geode.Client.Options;
-using Geode.Client.Services;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-
-namespace Geode.Client.Protocol;
-
-/// <summary>
-/// One framed TCP connection to a Geode server-cache port (default 40404).
-/// Mirrors <c>cppcache/src/TcrConnection.cpp</c>.
-/// </summary>
-internal sealed class TcrConnection(
-    IServiceProvider serviceProvider,
-    ILogger<TcrConnection> logger,
-    CacheScopeContext scopeContext,
-    ClientProxyMembershipIdBuilder membershipIdBuilder,
-    TcrMessageBuilder messageBuilder)
-    : IAsyncDisposable
-{
-
-    public IServiceProvider ServiceProvider { get; } = serviceProvider;
-
-
-    // Read options through the scope context so named registrations route
-    // to the right cache (plain IOptions<T> always returned the unnamed
-    // default). Currently consumed by HandshakeAsync step 7
-    // (Subscription.ConflateEvents); Phase 6+ pool / TLS / auth code
-    // will read further fields.
-    private readonly GeodeClientOptions _options = scopeContext.Options;
-
-
-
-
-
-
-
-
-
-#pragma warning disable CS0169, CS0414, CS0649 // placeholder mirror fields wired up phase by phase
-    private long _connectionId;                                 // connectionId
-    private TcrConnectionManager? _connectionManager;           // connectionManager_
-    // _tcpClient + _stream above cover cppcache `conn_` (Connector).
-    private ushort _port;                                       // port_
-    private object? _chunksProcessSemaphore;                    // binary_semaphore chunks_process_semaphore_ (??SemaphoreSlim)
-
-    private int _isBeingUsed;                                   // volatile bool isBeingUsed_ (Interlocked 0/1)
-    private uint _isUsed;                                       // atomic<uint32_t> isUsed_
-
-#pragma warning restore CS0169, CS0414, CS0649
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     /// <summary>
     /// Chunked-reply variant of <see cref="SendRequestAsync(TcrMessage, CancellationToken)"/>.
@@ -762,7 +682,7 @@ internal sealed class TcrConnection(
         // Synthesise a TcrMessage carrying just the header fields the
         // caller branches on. Body is owned by chunkedResult.
         return ActivatorUtilities.CreateInstance<TcrMessage>(
-            ServiceProvider,
+            serviceProvider,
             (MessageType)msgType,
             txId,
             (byte)0,
@@ -825,6 +745,67 @@ internal sealed class TcrConnection(
             ChunkLen: BinaryPrimitives.ReadInt32BigEndian(buffer.AsSpan(0, 4)),
             Flags: buffer[4]);
     }
+}
+
+/*
+using System.Buffers;
+using System.Buffers.Binary;
+using System.Diagnostics;
+using System.IO;
+using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Text;
+using Geode.Client.Internal;
+using Geode.Client.Options;
+using Geode.Client.Services;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+
+namespace Geode.Client.Protocol;
+
+/// <summary>
+/// One framed TCP connection to a Geode server-cache port (default 40404).
+/// Mirrors <c>cppcache/src/TcrConnection.cpp</c>.
+/// </summary>
+internal sealed class TcrConnection(
+    IServiceProvider serviceProvider,
+    ILogger<TcrConnection> logger,
+    CacheScopeContext scopeContext,
+    ClientProxyMembershipIdBuilder membershipIdBuilder,
+    TcrMessageBuilder messageBuilder)
+    : IAsyncDisposable
+{
+
+    public IServiceProvider ServiceProvider { get; } = serviceProvider;
+
+
+    // Read options through the scope context so named registrations route
+    // to the right cache (plain IOptions<T> always returned the unnamed
+    // default). Currently consumed by HandshakeAsync step 7
+    // (Subscription.ConflateEvents); Phase 6+ pool / TLS / auth code
+    // will read further fields.
+    private readonly GeodeClientOptions _options = scopeContext.Options;
+
+
+
+
+#pragma warning disable CS0169, CS0414, CS0649 // placeholder mirror fields wired up phase by phase
+    private long _connectionId;                                 // connectionId
+    private TcrConnectionManager? _connectionManager;           // connectionManager_
+    // _tcpClient + _stream above cover cppcache `conn_` (Connector).
+    private ushort _port;                                       // port_
+    private object? _chunksProcessSemaphore;                    // binary_semaphore chunks_process_semaphore_ (??SemaphoreSlim)
+
+    private int _isBeingUsed;                                   // volatile bool isBeingUsed_ (Interlocked 0/1)
+    private uint _isUsed;                                       // atomic<uint32_t> isUsed_
+
+#pragma warning restore CS0169, CS0414, CS0649
+
+
+
+
+
+
 
     /// <summary>
     /// Send a <see cref="MessageType.Ping"/> (5) and wait for the server's

@@ -188,62 +188,40 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task ClearAsync(CancellationToken ct = default)
     {
-        throw new NotImplementedException();
-        //logger.LogTrace("ClearAsync: region={RegionPath}", FullPath);
+        // Mirrors cppcache ThinClientRegion::clear (ThinClientRegion.cpp:767-808)
+        // + TcrMessageClearRegion ctor (TcrMessage.cpp:1644-1682). Wire layout
+        // is 2 parts (Region + EventId); callback arg + response-timeout
+        // optional slots are skipped.
+        logger.LogTrace("ClearAsync: region={RegionPath}", FullPath);
 
-        //// Mirrors cppcache ThinClientRegion::clear
-        //// (cppcache/src/ThinClientRegion.cpp:767-808) +
-        //// TcrMessageClearRegion ctor (TcrMessage.cpp:1644-1682).
-        //// localClearNoThrow + post-clear listener invocation are
-        //// local-cache machinery — Phase 2+ when caching-enabled lands.
-        ////
-        //// ─── Step 1+2: build request frame ────────────────────
-        //var (threadId, sequenceId) = eventIdGenerator.Next();
-        //var request = await tcrMessageBuilder.ClearRegionAsync(
-        //    regionName: FullPath,
-        //    eventThreadId: threadId,
-        //    eventSequenceId: sequenceId,
-        //    ct: ct);
+        var (threadId, sequenceId) = dm.Cache.EventIdGenerator.Next();
+        var request = await TcrMessageBuilder
+            .Create(serviceProvider, MessageType.ClearRegion)
+            .AddRegionNamePart(FullPath)
+            .AddEventIdPart(threadId, sequenceId)
+            .BuildAsync(ct);
 
-        //// ─── Step 3: dispatch via DM ─────────────────────────
-        //var reply = await dm
-        //    .SendSyncRequestAsync(request, ct: ct)
-        //    .ConfigureAwait(false);
+        var reply = await dm.SendSyncRequestAsync(request, ct: ct).ConfigureAwait(false);
 
-        //// ─── Step 4: reply decoding ──────────────────────────
-        //// cppcache clear reply switch
-        //// (ThinClientRegion.cpp:782-802):
-        ////   REPLY                    → success + LogDebug breadcrumb
-        ////   EXCEPTION                → throw
-        ////   CLEAR_REGION_DATA_ERROR  → throw (cppcache LogError "endpoint X")
-        ////   default                  → throw
-        //switch (reply.MessageType)
-        //{
-        //    case MessageType.Reply:
-        //        logger.LogDebug(
-        //            "Region {RegionPath} clear message sent to server successfully",
-        //            FullPath);
-        //        return;
+        switch (reply.MessageType)
+        {
+            case MessageType.Reply:
+                logger.LogDebug("Region {RegionPath} clear sent to server", FullPath);
+                return;
 
-        //    case MessageType.Exception:
-        //        throw new GeodeException(
-        //            $"Server exception on Clear '{FullPath}': " +
-        //            TcrMessageHelper.DecodeExceptionPreview(reply));
+            case MessageType.Exception:
+                throw new GeodeException(
+                    $"Server exception on Clear '{FullPath}': " +
+                    TcrMessageHelper.DecodeExceptionPreview(reply));
 
-        //    case MessageType.ClearRegionDataError:
-        //        logger.LogError(
-        //            "Region clear read error occurred on endpoint for region {RegionPath}",
-        //            FullPath);
-        //        throw new GeodeException(
-        //            $"Server returned ClearRegionDataError on '{FullPath}'.");
+            case MessageType.ClearRegionDataError:
+                throw new GeodeException(
+                    $"Server returned ClearRegionDataError on '{FullPath}'.");
 
-        //    default:
-        //        logger.LogError(
-        //            "Unknown message type {MessageType} during region clear on {RegionPath}",
-        //            reply.MessageType, FullPath);
-        //        throw new GeodeException(
-        //            $"Unexpected reply type {reply.MessageType} for Clear on '{FullPath}'.");
-        //}
+            default:
+                throw new GeodeException(
+                    $"Unexpected reply type {reply.MessageType} for Clear on '{FullPath}'.");
+        }
     }
 
     public override async Task<bool> ContainsKeyAsync(object key, CancellationToken ct = default)
@@ -442,54 +420,43 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task InvalidateAsync(object key, CancellationToken ct = default)
     {
-        throw new NotImplementedException();
-        //ArgumentNullException.ThrowIfNull(key);
+        // Mirrors cppcache ThinClientRegion::invalidateNoThrow_remote
+        // (ThinClientRegion.cpp:852-886) + TcrMessageInvalidate ctor
+        // (TcrMessage.cpp:1896-1932). Wire: 3 parts (Region + Key + EventId);
+        // callback arg optional slot skipped.
+        ArgumentNullException.ThrowIfNull(key);
+        logger.LogTrace("InvalidateAsync: region={RegionPath}, key={Key}", FullPath, key);
 
-        //logger.LogTrace("InvalidateAsync: region={RegionPath}, key={Key}", FullPath, key);
+        var (threadId, sequenceId) = dm.Cache.EventIdGenerator.Next();
+        var request = await TcrMessageBuilder
+            .Create(serviceProvider, MessageType.Invalidate)
+            .AddRegionNamePart(FullPath)
+            .AddKeyPart(dm.Cache, key)
+            .AddEventIdPart(threadId, sequenceId)
+            .BuildAsync(ct);
 
-        //// Mirrors cppcache ThinClientRegion::invalidateNoThrow_remote
-        //// (cppcache/src/ThinClientRegion.cpp:852-886) +
-        //// TcrMessageInvalidate ctor (TcrMessage.cpp:1896-1932).
-        ////
-        //// ─── Step 1+2: build request frame ────────────────────
-        //var (threadId, sequenceId) = eventIdGenerator.Next();
-        //var request = await tcrMessageBuilder.InvalidateAsync(
-        //    regionName: FullPath,
-        //    key: key,
-        //    eventThreadId: threadId,
-        //    eventSequenceId: sequenceId,
-        //    ct: ct);
+        var reply = await dm.SendSyncRequestAsync(request, ct: ct).ConfigureAwait(false);
 
-        //// ─── Step 3: dispatch via DM ─────────────────────────
-        //var reply = await dm
-        //    .SendSyncRequestAsync(request, ct: ct)
-        //    .ConfigureAwait(false);
+        switch (reply.MessageType)
+        {
+            case MessageType.Reply:
+                // cppcache REPLY branch reads versionTag here; Phase 4
+                // concurrency-checks territory, dropped for now.
+                return;
 
-        //// ─── Step 4: reply decoding ──────────────────────────
-        //// cppcache invalidateNoThrow_remote reply switch
-        //// (ThinClientRegion.cpp:865-884):
-        ////   REPLY            → success (versionTag dropped Phase 1.2-style)
-        ////   EXCEPTION        → throw
-        ////   INVALIDATE_ERROR → throw
-        ////   default          → throw
-        //switch (reply.MessageType)
-        //{
-        //    case MessageType.Reply:
-        //        return;
+            case MessageType.Exception:
+                throw new GeodeException(
+                    $"Server exception on Invalidate '{FullPath}': " +
+                    TcrMessageHelper.DecodeExceptionPreview(reply));
 
-        //    case MessageType.Exception:
-        //        throw new GeodeException(
-        //            $"Server exception on Invalidate '{FullPath}': " +
-        //            TcrMessageHelper.DecodeExceptionPreview(reply));
+            case MessageType.InvalidateError:
+                throw new GeodeException(
+                    $"Server returned InvalidateError on '{FullPath}'.");
 
-        //    case MessageType.InvalidateError:
-        //        throw new GeodeException(
-        //            $"Server returned InvalidateError on '{FullPath}'.");
-
-        //    default:
-        //        throw new GeodeException(
-        //            $"Unexpected reply type {reply.MessageType} for Invalidate on '{FullPath}'.");
-        //}
+            default:
+                throw new GeodeException(
+                    $"Unexpected reply type {reply.MessageType} for Invalidate on '{FullPath}'.");
+        }
     }
 
     public override async Task PutAllAsync(IReadOnlyDictionary<object, object> map, CancellationToken ct = default)
@@ -710,66 +677,45 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task<bool> RemoveAsync(object key, CancellationToken ct = default)
     {
-        throw new NotImplementedException();
-        //ArgumentNullException.ThrowIfNull(key);
+        // Mirrors cppcache ThinClientRegion::destroyNoThrow_remote
+        // (ThinClientRegion.cpp:959-999) + TcrMessageDestroy ctor null-value
+        // branch (TcrMessage.cpp:1974-1985). Wire: 5 parts
+        // (Region + Key + NullObj(expectedOldValue) + NullObj(operation) + EventId).
+        ArgumentNullException.ThrowIfNull(key);
+        logger.LogTrace("RemoveAsync: region={RegionPath}, key={Key}", FullPath, key);
 
-        //logger.LogTrace("RemoveAsync: region={RegionPath}, key={Key}", FullPath, key);
+        var (threadId, sequenceId) = dm.Cache.EventIdGenerator.Next();
+        var request = await TcrMessageBuilder
+            .Create(serviceProvider, MessageType.Destroy)
+            .AddRegionNamePart(FullPath)
+            .AddKeyPart(dm.Cache, key)
+            .AddNullObjectPart()    // expectedOldValue = null
+            .AddNullObjectPart()    // operation = null (server treats as plain DESTROY)
+            .AddEventIdPart(threadId, sequenceId)
+            .BuildAsync(ct);
 
-        //// Mirrors cppcache ThinClientRegion::destroyNoThrow_remote
-        //// (cppcache/src/ThinClientRegion.cpp:959-999) +
-        //// TcrMessageDestroy ctor value=null branch
-        //// (TcrMessage.cpp:1934-1986).
-        ////
-        //// ─── Step 1+2: build request frame ────────────────────
-        //var (threadId, sequenceId) = eventIdGenerator.Next();
-        //var request = await tcrMessageBuilder.DestroyAsync(
-        //    regionName: FullPath,
-        //    key: key,
-        //    eventThreadId: threadId,
-        //    eventSequenceId: sequenceId,
-        //    ct: ct);
+        var reply = await dm.SendSyncRequestAsync(request, ct: ct).ConfigureAwait(false);
 
-        //// ─── Step 3: dispatch via DM ─────────────────────────
-        //var reply = await dm
-        //    .SendSyncRequestAsync(request, ct: ct)
-        //    .ConfigureAwait(false);
+        switch (reply.MessageType)
+        {
+            case MessageType.Reply:
+                // Reply body layout (cppcache TcrMessage.cpp:1317-1330):
+                //   flags i32 + (versionTag if flags & 0x01) + prMetaData
+                //   + entryNotFound i32.  Phase 1.x doesn't drive
+                //   concurrency-checks so flags stays 0, no versionTag,
+                //   and entryNotFound lives in the last part.
+                var entryNotFound = ReadDestroyEntryNotFound(reply);
+                return entryNotFound == 0;
 
-        //// ─── Step 4: reply decoding ──────────────────────────
-        //// cppcache destroyNoThrow_remote reply switch
-        //// (ThinClientRegion.cpp:973-998):
-        ////   REPLY → check entryNotFound flag → success xor "not found"
-        ////   EXCEPTION → throw
-        ////   DESTROY_DATA_ERROR → throw
-        ////   default → throw
-        //switch (reply.MessageType)
-        //{
-        //    case MessageType.Reply:
-        //        {
-        //            // Reply body layout for Destroy (cppcache
-        //            // TcrMessage.cpp:1317-1330):
-        //            //   Part flags         i32   (always present)
-        //            //   Part versionTag    var   (only if flags & 0x01)
-        //            //   Part prMetaData    1-2 bytes
-        //            //   Part entryNotFound i32   (0 = destroyed, 1 = absent)
-        //            //
-        //            // Phase 1.2 doesn't drive concurrency checks (flags
-        //            // stays 0 so no versionTag), so the entryNotFound
-        //            // part is the last in the list — that's the
-        //            // contract we read against until version-tag
-        //            // handling lands and we walk parts in order.
-        //            var entryNotFound = ReadDestroyEntryNotFound(reply);
-        //            return entryNotFound == 0;
-        //        }
+            case MessageType.Exception:
+                throw new GeodeException(
+                    $"Server exception on Remove '{FullPath}': " +
+                    TcrMessageHelper.DecodeExceptionPreview(reply));
 
-        //    case MessageType.Exception:
-        //        throw new GeodeException(
-        //            $"Server exception on Remove '{FullPath}': " +
-        //            TcrMessageHelper.DecodeExceptionPreview(reply));
-
-        //    default:
-        //        throw new GeodeException(
-        //            $"Unexpected reply type {reply.MessageType} for Remove on '{FullPath}'.");
-        //}
+            default:
+                throw new GeodeException(
+                    $"Unexpected reply type {reply.MessageType} for Remove on '{FullPath}'.");
+        }
     }
 
     public override async Task<object?> SelectValueAsync(string predicate, CancellationToken ct = default)

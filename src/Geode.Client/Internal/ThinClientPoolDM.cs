@@ -406,12 +406,9 @@ internal class ThinClientPoolDM(
 
         try
         {
-
-            var reply = await conn.SendRequestAsync(request, ct).ConfigureAwait(false);
-
-            //var reply = chunkedResult is null
-            //    ? await conn.SendRequestAsync(request, ct).ConfigureAwait(false)
-            //    : await conn.SendRequestAsync(request, chunkedResult, ct).ConfigureAwait(false);
+            var reply = chunkedResult is null
+                ? await conn.SendRequestAsync(request, ct).ConfigureAwait(false)
+                : await conn.SendRequestAsync(request, chunkedResult, ct).ConfigureAwait(false);
 
             //    // Phase 3 — AuthenticationRequiredException retry. cppcache ThinClientPoolDM.cpp:1975.
             //    if (IsSecurityOn

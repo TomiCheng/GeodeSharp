@@ -10,8 +10,12 @@ namespace Geode.Client.Tests.Internal;
 /// <c>Send*</c> abstract methods all throw <see cref="NotSupportedException"/>
 /// so a test that hits the wrong overload flags immediately.
 /// </summary>
+// sp param kept so the existing ~70 test call sites compile unchanged; the
+// base ctor no longer accepts it, so it's unused here.
+#pragma warning disable CS9113
 internal sealed class FakeThinClientBaseDM(IServiceProvider sp, GeodeCache cache)
-    : ThinClientBaseDM(sp, cache)
+    : ThinClientBaseDM(cache)
+#pragma warning restore CS9113
 {
     public TcrMessage? LastRequest { get; private set; }
     public TcrMessage? CannedReply { get; set; }

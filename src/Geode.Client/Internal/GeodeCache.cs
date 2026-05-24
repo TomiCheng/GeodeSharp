@@ -8,7 +8,12 @@ namespace Geode.Client.Internal;
 
 internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
 {
+    // Writer lives in the cppcache destroy path (CacheImpl::close /
+    // CacheImpl::~CacheImpl), which we have not ported yet. Field is kept so
+    // GetRegion mirrors cppcache 1:1 and the writer can land in place later.
+#pragma warning disable CS0649
     private int _destroyPending;
+#pragma warning restore CS0649
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private Task? _initTask;
     private readonly string _name;
@@ -68,7 +73,7 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
             NotifyDupCheckLife = opts.Subscription.NotifyDupCheckLife,
 
             // Security
-            SecurityClientDhAlgo = opts.Security.ClientDhAlgo,
+            //SecurityClientDhAlgo = opts.Security.ClientDhAlgo,
             SecurityClientKsPath = opts.Security.ClientKsPath,
             SecurityProperties = opts.Security.Properties,
 

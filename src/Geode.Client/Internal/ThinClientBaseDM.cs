@@ -26,7 +26,6 @@ namespace Geode.Client.Internal;
 /// </para>
 /// </remarks>
 internal abstract class ThinClientBaseDM(
-    IServiceProvider serviceProvider,
     GeodeCache cache) : IAsyncDisposable
 {
 

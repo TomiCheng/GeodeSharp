@@ -90,7 +90,7 @@ internal class TcrEndpoint(
 
     private readonly SemaphoreSlim _notificationCleanupSignal = new(0, int.MaxValue);
     private bool _pingSent;
-    private int _pingTimeouts;
+    //private int _pingTimeouts;
 
     /// <summary>
     /// Slot semaphore enforcing <see cref="_maxConnections"/>. Null when
@@ -295,7 +295,7 @@ internal class TcrEndpoint(
             //   consecutive timeouts (++_pingTimeouts) before flipping
             //   connected. cppcache TcrEndpoint.cpp:522-524.
             //   Currently any error flips connected immediately.
-            _pingTimeouts = 0;
+            //_pingTimeouts = 0;
             logger.LogWarning(ex, "Ping to endpoint {Endpoint} failed; marking disconnected", Name);
             if (IsConnected)
             {
@@ -305,7 +305,7 @@ internal class TcrEndpoint(
         }
 
         // Non-timeout outcome → reset tolerance counter (cppcache L525).
-        _pingTimeouts = 0;
+        //_pingTimeouts = 0;
 
         // cppcache (TcrEndpoint.cpp:532-534): connected iff the server
         // returned a proper Reply frame. Anything else (Exception reply,

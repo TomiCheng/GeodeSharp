@@ -141,12 +141,9 @@ public class GeodeCacheFactoryOptionsBridgeTests
 
     // ── Security ──────────────────────────────────────────────────
 
-    [Fact]
-    public async Task Mapping_Security_ClientDhAlgo()
-    {
-        var cache = await CreateWith(o => o.Security.ClientDhAlgo = "DH:1024");
-        Assert.Equal("DH:1024", Props(cache).SecurityClientDhAlgo);
-    }
+    // Mapping_Security_ClientDhAlgo: removed — SystemProperties.SecurityClientDhAlgo
+    // is [Obsolete] (DH credentials encryption is not supported) and the
+    // GeodeCache mapping was dropped accordingly. See SystemProperties.cs:86-88.
 
     [Fact]
     public async Task Mapping_Security_ClientKsPath()

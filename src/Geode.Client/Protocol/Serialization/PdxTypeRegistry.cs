@@ -149,6 +149,7 @@ internal sealed class PdxTypeRegistry(
     /// </remarks>
     private ValueTask<TcrMessage> BuildGetPdxIdForTypeRequestAsync(PdxType nType, CancellationToken ct)
     {
+        _ = serviceProvider; // captured for Phase 2 — see commented call below.
         throw new NotImplementedException();
         //serviceProvider.GetRequiredService<TcrMessageBuilder>()
         //    .GetPdxIdForTypeAsync(nType, ct);

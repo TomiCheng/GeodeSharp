@@ -16,7 +16,7 @@ internal class ThinClientPoolDM(
     PoolManager poolManager,
     string name,
     PoolAttributes attributes)
-    : ThinClientBaseDM(serviceProvider, poolManager.Cache), IPool
+    : ThinClientBaseDM(poolManager.Cache), IPool
 {
     /// <summary>
     /// 0 / 1 destroy guard, gated by <see cref="Interlocked.Exchange(ref int, int)"/>.
@@ -146,7 +146,7 @@ internal class ThinClientPoolDM(
     /// <see cref="PdxOptions.ClearTypeIdsOnDisconnect"/>. Reader
     /// (<c>decConnectedEndpoints</c> → <c>clearPdxTypeRegistry</c>) is Phase 2+.
     /// </summary>
-    private bool _clearPdxRegistry;
+    //private bool _clearPdxRegistry;
 
     /// <summary>
     /// Open sockets + handshake with the configured locators/servers. Mirrors

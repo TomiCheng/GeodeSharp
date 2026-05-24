@@ -1,0 +1,63 @@
+using Geode.Client.Internal;
+
+namespace Geode.Client.Protocol.Serialization;
+
+/// <summary>
+/// <see cref="IDataConverter"/> for <see cref="float"/><c>[]</c> ??/// <see cref="DSCode.CacheableFloatArray"/> (50). Wire payload is a
+/// VL-encoded length (1 / 3 / 5 bytes) followed by 4 bytes big-endian
+/// IEEE-754 per element. Mirrors cppcache <c>CacheableFloatArray</c>
+/// (<c>CacheableArrayPrimitive&lt;float, CacheableFloatArray&gt;</c>).
+/// </summary>
+/// <remarks>
+/// Per-element wire shape matches <see cref="SingleDataConverter"/>
+/// (DSCode 59) ??NaN / ±Infinity round-trip preserves IEEE-754 bit
+/// pattern. Same key / null / empty rules as
+/// <see cref="BooleanArrayDataConverter"/>.
+/// </remarks>
+internal sealed class SingleArrayDataConverter(GeodeCache cache)
+    : DataConverter<float[]>
+{
+    private static readonly byte[] _dsCodes = { DSCode.CacheableFloatArray };
+
+    private readonly int _maxArrayLength
+        = cache.CacheProperties.MaxArrayLength;
+
+    public override byte[] DsCodes => _dsCodes;
+
+    public override ValueTask WriteAsync(DataOutput writer, float[] value, byte dsCode, int depth, CancellationToken ct)
+    {
+        if (value.Length > _maxArrayLength)
+        {
+            throw new InvalidOperationException(
+                $"SingleArrayDataConverter: cannot serialise an array of {value.Length} elements "
+                + $"— exceeds Serialization.MaxArrayLength ({_maxArrayLength}).");
+        }
+        writer.WriteArrayLen(value.Length);
+        foreach (var element in value)
+        {
+            writer.WriteFloat(element);
+        }
+        return ValueTask.CompletedTask;
+    }
+
+    public override float[] Read(DataInput reader, byte dsCode, int depth)
+    {
+        var length = reader.ReadArrayLen();
+        if (length <= 0)
+        {
+            return Array.Empty<float>();
+        }
+        if (length > _maxArrayLength)
+        {
+            throw new GeodeException(
+                $"SingleArrayDataConverter: wire array length {length} exceeds "
+                + $"Serialization.MaxArrayLength ({_maxArrayLength}) ??refusing to allocate.");
+        }
+        var array = new float[length];
+        for (var i = 0; i < length; i++)
+        {
+            array[i] = reader.ReadFloat();
+        }
+        return array;
+    }
+}

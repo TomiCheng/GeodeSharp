@@ -33,7 +33,7 @@ var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddGeodeClient(builder.Configuration.GetSection("Geode"));
 var app = builder.Build();
 
-// 任何服務注入 IGeodeCache
+// Inject IGeodeCache anywhere
 public class OrderService(IGeodeCache cache)
 {
     private readonly IRegion<string, byte[]> _orders =

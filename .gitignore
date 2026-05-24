@@ -44,3 +44,9 @@ Thumbs.db
 
 ## Claude Code (per-machine settings, transcripts, etc.)
 .claude/
+
+## Per-user Visual Studio solution files (mirrors geode-dotnet.sln plus personal solution items)
+*.local.slnx
+
+## Visual Studio extension cache (per-user, e.g. CodeRush / similar)
+.cr/

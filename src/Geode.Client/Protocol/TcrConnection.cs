@@ -11,7 +11,9 @@ using Microsoft.Extensions.Logging;
 
 internal sealed class TcrConnection(
     IServiceProvider serviceProvider,
-    ILogger<TcrConnection> logger)
+    ILogger<TcrConnection> logger,
+    TcrEndpoint endpoint,
+    ThinClientPoolDM pool)
     : IAsyncDisposable
 {
     readonly TcpClient _tcpClient = new();
@@ -68,27 +70,18 @@ internal sealed class TcrConnection(
     internal bool OwnsEndpointSlot { get; set; }
 
     /// <summary>
-    /// The <see cref="ThinClientPoolDM"/> that opened this conn. Mirrors
+    /// Owning <see cref="ThinClientPoolDM"/>; ctor-injected. Mirrors
     /// cppcache <c>TcrConnection::poolDM_</c>. Each conn belongs to
     /// exactly one pool (endpoints are TCCM-shared across pools, conns
-    /// aren't). Set by the pool's create sites
-    /// (<see cref="ThinClientPoolDM.CreatePoolConnectionAsync"/> /
-    /// <see cref="ThinClientPoolDM.CreatePoolConnectionToAEndPointAsync"/>)
-    /// right after <see cref="TcrEndpoint.CreateNewConnectionAsync"/>
-    /// returns. Consumed by <see cref="ReceiveAsync"/> to route wire-byte
-    /// stats back into the owning pool's <c>PoolStatistics</c>.
+    /// aren't). Consumed by <see cref="ReceiveAsync"/> to route wire-byte
+    /// stats back into the owning pool's <c>PoolStatistics</c>; handshake
+    /// bytes therefore land in <see cref="PoolStatistics.ReceivedBytes"/>
+    /// too (cppcache parity).
     /// </summary>
-    /// <remarks>
-    /// Wired late (post-handshake) rather than via ctor, so handshake
-    /// read bytes (~few hundred per conn) are <b>not</b> counted in
-    /// <c>ReceivedBytes</c>. cppcache wires <c>poolDM_</c> in the conn
-    /// ctor so it catches those bytes; we accept the rounding-error
-    /// deficit to avoid threading the DM through
-    /// <see cref="TcrEndpoint.CreateNewConnectionAsync"/>.
-    /// </remarks>
-    internal ThinClientPoolDM? PoolDM { get; set; }
+    internal ThinClientPoolDM PoolDM => pool;
 
-    internal TcrEndpoint? Endpoint { get; set; }
+    /// <summary>Target server this connection talks to; set via ctor (mirrors cppcache <c>TcrConnection::endpointObj</c>).</summary>
+    internal TcrEndpoint Endpoint => endpoint;
 
     /// <summary>
     /// Send a <see cref="TcrMessage"/> request and read the next framed

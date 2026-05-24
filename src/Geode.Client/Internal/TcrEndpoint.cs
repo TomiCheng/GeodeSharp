@@ -40,8 +40,16 @@ namespace Geode.Client.Internal;
 internal class TcrEndpoint(
     IServiceProvider serviceProvider,
     ILogger<TcrEndpoint> logger,
-    DnsEndPoint endpoint) //: IAsyncDisposable
+    DnsEndPoint endpoint,
+    TcrConnectionManager connectionManager) //: IAsyncDisposable
 {
+    /// <summary>
+    /// Owning <see cref="TcrConnectionManager"/>. Mirrors cppcache's
+    /// <c>TcrEndpoint::m_cacheImpl-&gt;tcrConnectionManager()</c>
+    /// indirection (we collapse the hop because TCCM is the layer that
+    /// actually owns this endpoint registry).
+    /// </summary>
+    internal TcrConnectionManager ConnectionManager => connectionManager;
 
     /// <summary>
     /// connected_ (atomic<bool> → Interlocked 0/1)
@@ -138,6 +146,7 @@ internal class TcrEndpoint(
     /// 1 (modern .NET sockets don't need it).
     /// </summary>
     public async Task<TcrConnection> CreateNewConnectionAsync(
+        ThinClientPoolDM pool,
         bool isClientNotification,
         bool isSecondary,
         TimeSpan? connectTimeout = null,
@@ -160,9 +169,10 @@ internal class TcrEndpoint(
 
         // Pull TcrConnection through DI so its own deps (ILogger<TcrConnection>,
         // IOptions<GeodeClientOptions>, ClientProxyMembershipIdBuilder)
-        // resolve cleanly. cppcache constructs TcrConnection directly with
-        // the TcrConnectionManager reference; we let DI compose instead.
-        var conn = ActivatorUtilities.CreateInstance<TcrConnection>(serviceProvider);
+        // resolve cleanly; `this` (Endpoint) + `pool` ride as positional
+        // args so the conn carries both its target server identity and
+        // its owning pool from ctor onwards.
+        var conn = ActivatorUtilities.CreateInstance<TcrConnection>(serviceProvider, this, pool);
 
         try
         {
@@ -174,7 +184,6 @@ internal class TcrEndpoint(
             //   • SocketException / IOException — TCP failure.
             //   • OperationCanceledException — ct cancelled.
             await conn.ConnectAsync(endpoint.Host, endpoint.Port, connectTimeout, ct).ConfigureAwait(false);
-            conn.Endpoint = this;
 
             // Endpoint state flags are caller-driven (mirror cppcache):
             //   • SetConnected — ThinClientPoolDM::createPoolConnection

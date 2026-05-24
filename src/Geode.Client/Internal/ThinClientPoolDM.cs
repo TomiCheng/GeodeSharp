@@ -565,6 +565,7 @@ internal class ThinClientPoolDM(
             {
                 conn = await endpoint
                     .CreateNewConnectionAsync(
+                        pool: this,
                         isClientNotification: false,
                         isSecondary: false,
                         connectTimeout: poolManager.Cache.CacheProperties.ConnectTimeout,
@@ -584,10 +585,6 @@ internal class ThinClientPoolDM(
 
             // cppcache L1704-1712: mark endpoint healthy + grow counter + stats.
             endpoint.SetConnected(true);
-            // Wire poolDM back-ref so TcrConnection.ReceiveAsync can route
-            // #20 ReceivedBytes back to this pool's stats. cppcache sets
-            // poolDM_ in the conn ctor; see TcrConnection.PoolDM xmldoc.
-            conn.PoolDM = this;
             var newSize = Interlocked.Increment(ref _poolSize);
             _stats.PoolConnect();
             if (newSize > attributes.MinConnections)
@@ -1415,7 +1412,7 @@ internal class ThinClientPoolDM(
                     TcrConnection conn;
                     try
                     {
-                        conn = await endpoint.CreateNewConnectionAsync(false, false, poolManager.Cache.CacheProperties.ConnectTimeout, ct).ConfigureAwait(false);
+                        conn = await endpoint.CreateNewConnectionAsync(this, false, false, poolManager.Cache.CacheProperties.ConnectTimeout, ct).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (ct.IsCancellationRequested)
                     {
@@ -1446,12 +1443,6 @@ internal class ThinClientPoolDM(
                     }
 
                     endpoint.SetConnected(true);
-                    // Wire poolDM back-ref so TcrConnection.ReceiveAsync can route
-                    // #20 ReceivedBytes back to this pool's stats. cppcache sets
-                    // poolDM_ in the conn ctor; we set post-handshake so handshake
-                    // bytes are unmeasured (small deficit, see TcrConnection.PoolDM
-                    // xmldoc).
-                    conn.PoolDM = this;
                     var newSize = Interlocked.Increment(ref _poolSize);
                     _stats.PoolConnect();
                     // cppcache :1707-1711 — pool growing past Min means this conn is

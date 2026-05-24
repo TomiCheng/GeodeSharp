@@ -94,12 +94,15 @@ internal sealed class TcrConnectionManager(
         //    ActivatorUtilities lets TcrEndpoint pull its non-positional
         //    deps (ILogger<TcrEndpoint>, etc.) from DI directly — TCCM
         //    forwards `endpointAddress` positionally.
+        // Capture `this` so the value-factory can hand TCCM back to the
+        // endpoint ctor — gives endpoint a direct back-ref instead of
+        // routing every TCCM-bound op through the cache hop.
+        var tccm = this;
         var lazy = _endpoints.GetOrAdd(
             endpointAddress,
-            static (ep, sp) => new Lazy<TcrEndpoint>(
-                () => ActivatorUtilities.CreateInstance<TcrEndpoint>(sp, ep),
-                LazyThreadSafetyMode.ExecutionAndPublication),
-            serviceProvider);
+            ep => new Lazy<TcrEndpoint>(
+                () => ActivatorUtilities.CreateInstance<TcrEndpoint>(serviceProvider, ep, tccm),
+                LazyThreadSafetyMode.ExecutionAndPublication));
 
         // 2. Force the ctor (winner constructs; subsequent callers
         //    hit the cached value).

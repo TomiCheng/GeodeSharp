@@ -28,3 +28,4 @@ internal sealed class ProxyRemoteQueryService : IQueryService
             "Phase 3 multi-user authentication is not yet implemented.");
     }
 }
+

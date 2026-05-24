@@ -9,8 +9,8 @@ namespace Geode.Client.Protocol.Serialization;
 /// <typeparam name="T">CLR type the codec serialises.</typeparam>
 /// <remarks>
 /// Single-DSCode converters (the common case) only override
-/// <see cref="DsCodes"/>, <see cref="Write(DataOutput, T, byte)"/>,
-/// and <see cref="Read(BigEndianBinaryReader, byte)"/>. They inherit
+/// <see cref="DsCodes"/>, <see cref="WriteAsync(DataOutput, T, byte, int, CancellationToken)"/>,
+/// and <see cref="Read(DataInput, byte, int)"/>. They inherit
 /// the default <see cref="GetDsCode(T)"/> which returns
 /// <c>DsCodes[0]</c> ??fine because their <see cref="DsCodes"/> array
 /// is one element long. Multi-DSCode converters (only
@@ -31,10 +31,10 @@ internal abstract class DataConverter<T> : IDataConverter<T>
 
     public abstract ValueTask WriteAsync(DataOutput writer, T value, byte dsCode, int depth, CancellationToken ct);
 
-    public abstract T? Read(BigEndianBinaryReader reader, byte dsCode, int depth);
+    public abstract T? Read(DataInput reader, byte dsCode, int depth);
 
     /// <summary>預設:跑 sync <see cref="Read"/> 包成 <see cref="ValueTask{TResult}"/>。</summary>
-    public virtual ValueTask<T?> ReadAsync(BigEndianBinaryReader reader, byte dsCode, int depth, CancellationToken ct) =>
+    public virtual ValueTask<T?> ReadAsync(DataInput reader, byte dsCode, int depth, CancellationToken ct) =>
         ValueTask.FromResult(Read(reader, dsCode, depth));
 
     // Bridges to the non-generic interface — registry holds IDataConverter,
@@ -43,12 +43,12 @@ internal abstract class DataConverter<T> : IDataConverter<T>
     byte IDataConverter.GetDsCode(object value) =>
         GetDsCode((T)value);
 
-    object? IDataConverter.Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>
+    object? IDataConverter.Read(DataInput reader, byte dsCode, int depth) =>
         Read(reader, dsCode, depth);
 
     ValueTask IDataConverter.WriteAsync(DataOutput writer, object value, byte dsCode, int depth, CancellationToken ct) =>
         WriteAsync(writer, (T)value, dsCode, depth, ct);
 
-    async ValueTask<object?> IDataConverter.ReadAsync(BigEndianBinaryReader reader, byte dsCode, int depth, CancellationToken ct) =>
+    async ValueTask<object?> IDataConverter.ReadAsync(DataInput reader, byte dsCode, int depth, CancellationToken ct) =>
         await ReadAsync(reader, dsCode, depth, ct);
 }

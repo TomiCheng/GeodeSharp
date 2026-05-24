@@ -1,6 +1,6 @@
 using System.Threading.Channels;
 using Geode.Client.Protocol;
-using Geode.Client.Services;
+using Geode.Client.Internal;
 
 namespace Geode.Client.Internal;
 
@@ -25,36 +25,155 @@ namespace Geode.Client.Internal;
 /// 1:1 with cppcache during implementation.
 /// </para>
 /// </remarks>
-internal abstract class ThinClientBaseDM : IAsyncDisposable
+internal abstract class ThinClientBaseDM(
+    IServiceProvider serviceProvider,
+    GeodeCache cache) : IAsyncDisposable
 {
-    protected readonly TcrConnectionManager ConnManager;     // m_connManager
-    protected readonly object? Region;                        // m_region (ThinClientRegion*)
+
+    //protected readonly TcrConnectionManager ConnManager;     // m_connManager
+    //protected readonly object? Region;                        // m_region (ThinClientRegion*)
     protected bool InitDone;                                  // m_initDone
-    protected bool ClientNotification;                        // m_clientNotification
 
-    /// <summary>
-    /// Async chunked-response queue. Mirrors cppcache
-    /// <c>m_chunks</c> + <c>m_chunkProcessor</c> Task.
-    /// </summary>
-    protected readonly Channel<object> Chunks =
-        Channel.CreateUnbounded<object>(new UnboundedChannelOptions
-        {
-            SingleReader = true,
-            SingleWriter = false,
-        });
-    protected Task? ChunkProcessor;
-    protected readonly CancellationTokenSource ChunkCts = new();
+    public virtual void DecConnectedEndpoints() { }
 
-    private int _disposed;
+    //public virtual Task<int /*GfErrType* /> RegisterInterestForRegionAsync(
+    //    TcrEndpoint endpoint,
+    //    object? region = null,
+    //    CancellationToken ct = default)
+    //    => Task.FromResult(/*GF_NOERR* / 0);
 
-    protected ThinClientBaseDM(TcrConnectionManager connManager, object? region)
+    ///// <summary>
+    ///// Push a chunked-response context onto <see cref="Chunks"/> for
+    ///// the chunk-processor to consume. Mirrors cppcache
+    ///// <c>queueChunk</c>.
+    ///// </summary>
+    //public void QueueChunk(object chunk)
+    //{
+    //    ArgumentNullException.ThrowIfNull(chunk);
+    //    Chunks.Writer.TryWrite(chunk);
+    //}
+
+    //// ── Static error classifiers (cppcache inline static) ──────
+
+    ///// <summary>Mirrors cppcache <c>isFatalError(GfErrType)</c>.</summary>
+    //public static bool IsFatalError(int err)
+    //{
+    //    // TODO: port the cppcache GfErrType enum table once GfErrType lands.
+    //    return false;
+    //}
+
+    ///// <summary>Mirrors cppcache <c>isFatalClientError(GfErrType)</c>.</summary>
+    //public static bool IsFatalClientError(int err)
+    //{
+    //    // TODO: same as IsFatalError.
+    //    return false;
+    //}
+
+    //public async ValueTask DisposeAsync()
+    //{
+    //    if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+    //    await DestroyAsync(keepAlive: false).ConfigureAwait(false);
+    //    ChunkCts.Cancel();
+    //    ChunkCts.Dispose();
+    //}
+    public ValueTask DisposeAsync()
     {
-        ArgumentNullException.ThrowIfNull(connManager);
-        ConnManager = connManager;
-        Region = region;
+        // todo
+        return ValueTask.CompletedTask;
+
     }
 
-    // ── Lifecycle ──────────────────────────────────────────────
+    //// ── Template methods (concrete; delegate to derived) ───────
+
+    ///// <summary>
+    ///// Interest registration helper. Mirrors cppcache
+    ///// <c>sendSyncRequestRegisterInterest</c> — when
+    ///// <paramref name="endpoint"/> is null delegate to
+    ///// <see cref="SendSyncRequestAsync"/>; otherwise delegate to
+    ///// <see cref="SendRequestToEndpointAsync"/>. A disconnected
+    ///// endpoint surfaces as a <see cref="GeodeException"/> rather than
+    ///// cppcache's <c>GF_NOTCON</c> error code.
+    ///// </summary>
+    //public virtual Task<TcrMessage> SendSyncRequestRegisterInterestAsync(
+    //    TcrMessage request,
+    //    bool attemptFailover = true,
+    //    TcrEndpoint? endpoint = null,
+    //    CancellationToken ct = default)
+    //{
+    //    if (endpoint is null)
+    //    {
+    //        return SendSyncRequestAsync(request, attemptFailover, false, ct);
+    //    }
+    //    if (!endpoint.IsConnected)
+    //    {
+    //        throw new GeodeException(
+    //            $"Endpoint {endpoint.Name} is not connected (cppcache GF_NOTCON).");
+    //    }
+    //    return SendRequestToEndpointAsync(request, endpoint, ct);
+    //}
+
+    //// ── Empty virtual hooks (override in derived if needed) ────
+
+    //public virtual Task FailoverAsync(CancellationToken ct = default) => Task.CompletedTask;
+    //public virtual void AcquireFailoverLock() { }
+    //public virtual void ReleaseFailoverLock() { }
+    //public virtual void AcquireRedundancyLock() { }
+    //public virtual void ReleaseRedundancyLock() { }
+    //public virtual void TriggerRedundancyThread() { }
+
+    public virtual bool IsSecurityOn => false;        // TODO: ConnManager.HasAuthInitialize when wired
+    public virtual bool IsMultiUserMode => false;
+
+    ///// <summary>
+    ///// True when <paramref name="exceptionMsg"/> is an
+    ///// <c>AuthenticationRequiredException</c> reply text from the server,
+    ///// signalling the outer dispatcher to unauth + retry.
+    ///// </summary>
+    ///// <remarks>
+    ///// Mirrors <c>ThinClientBaseDM::isAuthRequireException</c>
+    ///// (<c>cppcache/src/ThinClientBaseDM.cpp:374</c>): substring-match for
+    ///// <c>"org.apache.geode.security.AuthenticationRequiredException"</c>.
+    ///// Phase 3 — only the security / multi-user dispatch path needs it, so
+    ///// it stays a NIE stub until <c>TcrMessage.GetException()</c> + the
+    ///// auth-retry loop land.
+    ///// </remarks>
+    //protected virtual bool IsAuthRequireException(string exceptionMsg) =>
+    //    throw new NotImplementedException(
+    //        "Phase 3 — ThinClientBaseDM.IsAuthRequireException (auth-retry detection)");
+
+    //public virtual void BeforeSendingRequest(object request, object connection) { }
+    //public virtual void AfterSendingRequest(object request, object reply, object connection) { }
+
+    //public virtual TcrEndpoint? ActiveEndpoint => null;
+    //public virtual int NumberOfEndpoints => 0;
+
+    //public virtual bool IsEndpointAttached(TcrEndpoint endpoint) => false;
+    public virtual void IncConnectedEndpoints() { }
+    //protected bool ClientNotification;                        // m_clientNotification
+
+    ///// <summary>
+    ///// Async chunked-response queue. Mirrors cppcache
+    ///// <c>m_chunks</c> + <c>m_chunkProcessor</c> Task.
+    ///// </summary>
+    //protected readonly Channel<object> Chunks =
+    //    Channel.CreateUnbounded<object>(new UnboundedChannelOptions
+    //    {
+    //        SingleReader = true,
+    //        SingleWriter = false,
+    //    });
+    //protected Task? ChunkProcessor;
+    //protected readonly CancellationTokenSource ChunkCts = new();
+
+    //private int _disposed;
+
+    //protected ThinClientBaseDM(TcrConnectionManager connManager, object? region)
+    //{
+    //    ArgumentNullException.ThrowIfNull(connManager);
+    //    ConnManager = connManager;
+    //    Region = region;
+    //}
+
+    //// ── Lifecycle ──────────────────────────────────────────────
 
     /// <summary>
     /// One-time init. Mirrors cppcache <c>ThinClientBaseDM::init()</c>:
@@ -69,19 +188,19 @@ internal abstract class ThinClientBaseDM : IAsyncDisposable
         return Task.CompletedTask;
     }
 
-    /// <summary>
-    /// Mirrors cppcache <c>destroy(keepalive)</c>: stop chunk
-    /// processor, mark not-initialised.
-    /// </summary>
-    public virtual Task DestroyAsync(bool keepAlive = false, CancellationToken ct = default)
-    {
-        if (!InitDone) return Task.CompletedTask;
-        // TODO: stopChunkProcessor; await ChunkProcessor.
-        InitDone = false;
-        return Task.CompletedTask;
-    }
+    ///// <summary>
+    ///// Mirrors cppcache <c>destroy(keepalive)</c>: stop chunk
+    ///// processor, mark not-initialised.
+    ///// </summary>
+    //public virtual Task DestroyAsync(bool keepAlive = false, CancellationToken ct = default)
+    //{
+    //    if (!InitDone) return Task.CompletedTask;
+    //    // TODO: stopChunkProcessor; await ChunkProcessor.
+    //    InitDone = false;
+    //    return Task.CompletedTask;
+    //}
 
-    // ── Pure abstract: each DM implements its own dispatch ─────
+    //// ── Pure abstract: each DM implements its own dispatch ─────
 
     /// <summary>
     /// Send a request and await the server's reply. Mirrors cppcache
@@ -160,112 +279,10 @@ internal abstract class ThinClientBaseDM : IAsyncDisposable
         TcrEndpoint endpoint,
         CancellationToken ct = default);
 
-    // ── Template methods (concrete; delegate to derived) ───────
-
     /// <summary>
-    /// Interest registration helper. Mirrors cppcache
-    /// <c>sendSyncRequestRegisterInterest</c> — when
-    /// <paramref name="endpoint"/> is null delegate to
-    /// <see cref="SendSyncRequestAsync"/>; otherwise delegate to
-    /// <see cref="SendRequestToEndpointAsync"/>. A disconnected
-    /// endpoint surfaces as a <see cref="GeodeException"/> rather than
-    /// cppcache's <c>GF_NOTCON</c> error code.
+    /// Shortcut to <see cref="Services.PoolManager.Cache"/>; saves the
+    /// double-hop <c>poolDM.PoolManager.Cache</c> at call sites.
     /// </summary>
-    public virtual Task<TcrMessage> SendSyncRequestRegisterInterestAsync(
-        TcrMessage request,
-        bool attemptFailover = true,
-        TcrEndpoint? endpoint = null,
-        CancellationToken ct = default)
-    {
-        if (endpoint is null)
-        {
-            return SendSyncRequestAsync(request, attemptFailover, false, ct);
-        }
-        if (!endpoint.IsConnected)
-        {
-            throw new GeodeException(
-                $"Endpoint {endpoint.Name} is not connected (cppcache GF_NOTCON).");
-        }
-        return SendRequestToEndpointAsync(request, endpoint, ct);
-    }
+    public GeodeCache Cache => cache;
 
-    // ── Empty virtual hooks (override in derived if needed) ────
-
-    public virtual Task FailoverAsync(CancellationToken ct = default) => Task.CompletedTask;
-    public virtual void AcquireFailoverLock() { }
-    public virtual void ReleaseFailoverLock() { }
-    public virtual void AcquireRedundancyLock() { }
-    public virtual void ReleaseRedundancyLock() { }
-    public virtual void TriggerRedundancyThread() { }
-
-    public virtual bool IsSecurityOn => false;        // TODO: ConnManager.HasAuthInitialize when wired
-    public virtual bool IsMultiUserMode => false;
-
-    /// <summary>
-    /// True when <paramref name="exceptionMsg"/> is an
-    /// <c>AuthenticationRequiredException</c> reply text from the server,
-    /// signalling the outer dispatcher to unauth + retry.
-    /// </summary>
-    /// <remarks>
-    /// Mirrors <c>ThinClientBaseDM::isAuthRequireException</c>
-    /// (<c>cppcache/src/ThinClientBaseDM.cpp:374</c>): substring-match for
-    /// <c>"org.apache.geode.security.AuthenticationRequiredException"</c>.
-    /// Phase 3 — only the security / multi-user dispatch path needs it, so
-    /// it stays a NIE stub until <c>TcrMessage.GetException()</c> + the
-    /// auth-retry loop land.
-    /// </remarks>
-    protected virtual bool IsAuthRequireException(string exceptionMsg) =>
-        throw new NotImplementedException(
-            "Phase 3 — ThinClientBaseDM.IsAuthRequireException (auth-retry detection)");
-
-    public virtual void BeforeSendingRequest(object request, object connection) { }
-    public virtual void AfterSendingRequest(object request, object reply, object connection) { }
-
-    public virtual TcrEndpoint? ActiveEndpoint => null;
-    public virtual int NumberOfEndpoints => 0;
-
-    public virtual bool IsEndpointAttached(TcrEndpoint endpoint) => false;
-    public virtual void IncConnectedEndpoints() { }
-    public virtual void DecConnectedEndpoints() { }
-
-    public virtual Task<int /*GfErrType*/> RegisterInterestForRegionAsync(
-        TcrEndpoint endpoint,
-        object? region = null,
-        CancellationToken ct = default)
-        => Task.FromResult(/*GF_NOERR*/ 0);
-
-    /// <summary>
-    /// Push a chunked-response context onto <see cref="Chunks"/> for
-    /// the chunk-processor to consume. Mirrors cppcache
-    /// <c>queueChunk</c>.
-    /// </summary>
-    public void QueueChunk(object chunk)
-    {
-        ArgumentNullException.ThrowIfNull(chunk);
-        Chunks.Writer.TryWrite(chunk);
-    }
-
-    // ── Static error classifiers (cppcache inline static) ──────
-
-    /// <summary>Mirrors cppcache <c>isFatalError(GfErrType)</c>.</summary>
-    public static bool IsFatalError(int err)
-    {
-        // TODO: port the cppcache GfErrType enum table once GfErrType lands.
-        return false;
-    }
-
-    /// <summary>Mirrors cppcache <c>isFatalClientError(GfErrType)</c>.</summary>
-    public static bool IsFatalClientError(int err)
-    {
-        // TODO: same as IsFatalError.
-        return false;
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        await DestroyAsync(keepAlive: false).ConfigureAwait(false);
-        ChunkCts.Cancel();
-        ChunkCts.Dispose();
-    }
 }

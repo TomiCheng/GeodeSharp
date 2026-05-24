@@ -1,3 +1,4 @@
+
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol;
@@ -29,11 +30,11 @@ namespace Geode.Client.Protocol;
 /// </para>
 /// </remarks>
 internal sealed record TcrMessage(
+    IServiceProvider ServiceProvider,
     MessageType MessageType,
     int TransactionId,
     byte EarlyAck,
-    IReadOnlyList<TcrPart> Parts,
-    IServiceProvider ServiceProvider)
+    IReadOnlyList<TcrPart> Parts)
 {
 
     /// <summary>Fixed-size frame header: four i32 fields + one u8.</summary>
@@ -63,7 +64,6 @@ internal sealed record TcrMessage(
     /// <summary>Encode this message to a freshly-allocated byte array.</summary>
     public byte[] Encode()
     {
-        // Pass 1: encode parts to learn their total byte length.
         using var partsWriter = ActivatorUtilities.CreateInstance<DataOutput>(ServiceProvider);
         foreach (var part in Parts)
         {
@@ -71,10 +71,9 @@ internal sealed record TcrMessage(
         }
         var partsBytes = partsWriter.WrittenSpan;
 
-        // Pass 2: write header followed by the parts payload.
         using var w = ActivatorUtilities.CreateInstance<DataOutput>(ServiceProvider);
         w.WriteInt32((int)MessageType);
-        w.WriteInt32(partsBytes.Length);   // MessageLength = bytes occupied by Parts
+        w.WriteInt32(partsBytes.Length);
         w.WriteInt32(Parts.Count);
         w.WriteInt32(TransactionId);
         w.WriteByte(EarlyAck);
@@ -90,9 +89,9 @@ internal sealed record TcrMessage(
     /// <exception cref="EndOfStreamException">
     /// The buffer is shorter than the frame claims.
     /// </exception>
-    public static TcrMessage Decode(ReadOnlyMemory<byte> bytes, IServiceProvider serviceProvider)
+    public static TcrMessage Decode(IServiceProvider serviceProvider, ReadOnlyMemory<byte> bytes)
     {
-        var reader = new BigEndianBinaryReader(bytes);
+        var reader = new DataInput(bytes);
 
         var messageType = (MessageType)reader.ReadInt32();
         var messageLength = reader.ReadInt32();
@@ -151,35 +150,35 @@ internal sealed record TcrMessage(
         return hash.ToHashCode();
     }
 
-    /// <summary>
-    /// The server-side exception text carried by an
-    /// <see cref="MessageType.Exception"/> reply (the Java exception's
-    /// fully-qualified class name + message), used by the dispatcher to
-    /// classify failures (e.g. auth-required retry).
-    /// </summary>
-    /// <remarks>
-    /// Mirrors <c>TcrMessage::getException</c>
-    /// (<c>cppcache/src/TcrMessage.cpp:213</c>), which lazily stringifies
-    /// <c>m_value</c> (the deserialized exception payload). NIE stub
-    /// until exception-reply deserialization lands.
-    /// </remarks>
-    public string GetException() =>
-        throw new NotImplementedException(
-            "Phase 3 ??TcrMessage.GetException (exception-reply payload stringify)");
+    ///// <summary>
+    ///// The server-side exception text carried by an
+    ///// <see cref="MessageType.Exception"/> reply (the Java exception's
+    ///// fully-qualified class name + message), used by the dispatcher to
+    ///// classify failures (e.g. auth-required retry).
+    ///// </summary>
+    ///// <remarks>
+    ///// Mirrors <c>TcrMessage::getException</c>
+    ///// (<c>cppcache/src/TcrMessage.cpp:213</c>), which lazily stringifies
+    ///// <c>m_value</c> (the deserialized exception payload). NIE stub
+    ///// until exception-reply deserialization lands.
+    ///// </remarks>
+    //public string GetException() =>
+    //    throw new NotImplementedException(
+    //        "Phase 3 ??TcrMessage.GetException (exception-reply payload stringify)");
 
-    /// <summary>
-    /// True when <paramref name="msg"/> is a user-initiated region op
-    /// (Put / Get / Query / register-interest / ...) rather than a
-    /// framework-internal control frame (PING, PERIODIC_ACK,
-    /// CLOSE_CONNECTION, CLIENT_READY, PDX / CQ / metadata fetches, ...).
-    /// </summary>
-    /// <remarks>
-    /// Mirrors <c>TcrMessage::isUserInitiativeOps</c>
-    /// (<c>cppcache/src/TcrMessage.cpp:98</c>). Only the multi-user /
-    /// security dispatch path consults this predicate ??Phase 3 work,
-    /// hence NIE stub until then.
-    /// </remarks>
-    public static bool IsUserInitiativeOps(TcrMessage msg) =>
-        throw new NotImplementedException(
-            "Phase 3 ??TcrMessage.IsUserInitiativeOps (auth / multi-user dispatch)");
+    ///// <summary>
+    ///// True when <paramref name="msg"/> is a user-initiated region op
+    ///// (Put / Get / Query / register-interest / ...) rather than a
+    ///// framework-internal control frame (PING, PERIODIC_ACK,
+    ///// CLOSE_CONNECTION, CLIENT_READY, PDX / CQ / metadata fetches, ...).
+    ///// </summary>
+    ///// <remarks>
+    ///// Mirrors <c>TcrMessage::isUserInitiativeOps</c>
+    ///// (<c>cppcache/src/TcrMessage.cpp:98</c>). Only the multi-user /
+    ///// security dispatch path consults this predicate ??Phase 3 work,
+    ///// hence NIE stub until then.
+    ///// </remarks>
+    //public static bool IsUserInitiativeOps(TcrMessage msg) =>
+    //    throw new NotImplementedException(
+    //        "Phase 3 ??TcrMessage.IsUserInitiativeOps (auth / multi-user dispatch)");
 }

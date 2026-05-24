@@ -4,7 +4,6 @@ using System.Security.Cryptography;
 using System.Text;
 using Geode.Client.Internal;
 using Geode.Client.Options;
-using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol;
@@ -36,7 +35,7 @@ namespace Geode.Client.Protocol;
 /// call since inputs (hostname, IP, PID, options) are immutable per cache.
 /// </para>
 /// </remarks>
-internal sealed class ClientProxyMembershipIdBuilder(CacheScopeContext scopeContext, IServiceProvider serviceProvider)
+internal sealed class ClientProxyMembershipIdBuilder(IServiceProvider serviceProvider, string name)
 {
     // === cppcache hardcoded values (ClientProxyMembershipID.cpp:31-33) ======
     private const byte InternalDistributedMemberDsfid = 92;
@@ -69,7 +68,7 @@ internal sealed class ClientProxyMembershipIdBuilder(CacheScopeContext scopeCont
     /// </remarks>
     private readonly string _uniqueTag = GenerateUniqueTag();
 
-    private readonly GeodeClientOptions _options = scopeContext.Options;
+    //private readonly GeodeClientOptions _options = scopeContext.Options;
 
     /// <summary>
     /// Cached identity bytes. Inputs are immutable for the lifetime of this
@@ -122,7 +121,7 @@ internal sealed class ClientProxyMembershipIdBuilder(CacheScopeContext scopeCont
         w.WriteArrayLen(0);
 
         // dsName ??distributed system name; usually "" for clients.
-        w.WriteString(_options.Name);
+        w.WriteString(name);
 
         // uniqueTag ??randomly generated per cache (see _uniqueTag doc).
         w.WriteString(_uniqueTag);
@@ -135,9 +134,9 @@ internal sealed class ClientProxyMembershipIdBuilder(CacheScopeContext scopeCont
         // The previous "if (durable) throw; else skip" path corrupted the
         // wire because the server then read the trailing Version bytes as
         // string contents, hitting "Unknown header byte 0".
-        var sub = _options.Subscription;
-        w.WriteString(sub.DurableClientId);
-        w.WriteInt32((int)sub.DurableTimeout.TotalSeconds);
+        //var sub = ""; // todo
+        w.WriteString("");
+        w.WriteInt32(30);
 
         // Trailing protocol-version stamp (compressed ordinal).
         ProtocolVersion.Current.WriteTo(w);

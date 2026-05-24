@@ -1,42 +1,23 @@
-using System.Buffers;
 using System.Buffers.Binary;
 using System.Diagnostics;
-using System.IO;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
+using Geode.Client;
 using Geode.Client.Internal;
-using Geode.Client.Options;
-using Geode.Client.Services;
+using Geode.Client.Protocol;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-namespace Geode.Client.Protocol;
-
-/// <summary>
-/// One framed TCP connection to a Geode server-cache port (default 40404).
-/// Mirrors <c>cppcache/src/TcrConnection.cpp</c>.
-/// </summary>
 internal sealed class TcrConnection(
     IServiceProvider serviceProvider,
     ILogger<TcrConnection> logger,
-    CacheScopeContext scopeContext,
-    ClientProxyMembershipIdBuilder membershipIdBuilder,
-    TcrMessageBuilder messageBuilder)
+    TcrEndpoint endpoint,
+    ThinClientPoolDM pool)
     : IAsyncDisposable
 {
-
-    public IServiceProvider ServiceProvider { get; } = serviceProvider;
     readonly TcpClient _tcpClient = new();
     Stream? _stream;
-
-    // Read options through the scope context so named registrations route
-    // to the right cache (plain IOptions<T> always returned the unnamed
-    // default). Currently consumed by HandshakeAsync step 7
-    // (Subscription.ConflateEvents); Phase 6+ pool / TLS / auth code
-    // will read further fields.
-    private readonly GeodeClientOptions _options = scopeContext.Options;
-
     /// <summary>
     /// Server's subscription-queue role, captured from the handshake reply
     /// byte at step 10. Mirrors cppcache <c>hasServerQueue_</c> ??despite
@@ -48,7 +29,6 @@ internal sealed class TcrConnection(
     /// branch on it for HA failover.
     /// </summary>
     private byte _hasServerQueue;
-
     /// <summary>
     /// Number of events currently buffered in the server's subscription
     /// queue for this client, captured from handshake step 11. Mirrors
@@ -81,18 +61,6 @@ internal sealed class TcrConnection(
     // pool and avoid synchronised mass-rotation.
     private readonly int _expiryTimeVariancePercentage = RandomNumberGenerator.GetInt32(-9, 10);
 
-    // ?�?�?cppcache TcrConnection member mirror (TcrConnection.hpp:272-363) ?�?�?    // Phase 1.5 mirror-then-prune. Most fields are zero / null until
-    // the wire path that fills them lands; back-refs are nullable typed
-    // so we can swap in real DI plumbing without changing the shape.
-    /// <summary>
-    /// The <see cref="TcrEndpoint"/> this conn was opened on. Mirrors
-    /// cppcache <c>TcrConnection::getEndpointObject()</c> /
-    /// <c>endpointObj_</c>. Set by <see cref="TcrEndpoint.CreateNewConnectionAsync"/>
-    /// right after the handshake succeeds; consumed by pool failover
-    /// (currentServer recycle hint) and per-endpoint conn filtering.
-    /// </summary>
-    internal TcrEndpoint? Endpoint { get; set; }
-
     /// <summary>
     /// True when this conn was created via a path that reserved one of
     /// <see cref="Endpoint"/>'s per-endpoint slots (cppcache
@@ -102,135 +70,77 @@ internal sealed class TcrConnection(
     internal bool OwnsEndpointSlot { get; set; }
 
     /// <summary>
-    /// The <see cref="ThinClientPoolDM"/> that opened this conn. Mirrors
+    /// Owning <see cref="ThinClientPoolDM"/>; ctor-injected. Mirrors
     /// cppcache <c>TcrConnection::poolDM_</c>. Each conn belongs to
     /// exactly one pool (endpoints are TCCM-shared across pools, conns
-    /// aren't). Set by the pool's create sites
-    /// (<see cref="ThinClientPoolDM.CreatePoolConnectionAsync"/> /
-    /// <see cref="ThinClientPoolDM.CreatePoolConnectionToAEndPointAsync"/>)
-    /// right after <see cref="TcrEndpoint.CreateNewConnectionAsync"/>
-    /// returns. Consumed by <see cref="ReceiveAsync"/> to route wire-byte
-    /// stats back into the owning pool's <c>PoolStatistics</c>.
+    /// aren't). Consumed by <see cref="ReceiveAsync"/> to route wire-byte
+    /// stats back into the owning pool's <c>PoolStatistics</c>; handshake
+    /// bytes therefore land in <see cref="PoolStatistics.ReceivedBytes"/>
+    /// too (cppcache parity).
+    /// </summary>
+    internal ThinClientPoolDM PoolDM => pool;
+
+    /// <summary>Target server this connection talks to; set via ctor (mirrors cppcache <c>TcrConnection::endpointObj</c>).</summary>
+    internal TcrEndpoint Endpoint => endpoint;
+
+    /// <summary>
+    /// Send a <see cref="TcrMessage"/> request and read the next framed
+    /// message from the wire as the reply. The message-level building
+    /// block on top of <see cref="SendAsync"/> / <see cref="ReceiveAsync"/>;
+    /// every operation (Ping, Put, Get, ?? ultimately composes through
+    /// here. Mirrors cppcache <c>TcrConnection::sendRequest</c>.
     /// </summary>
     /// <remarks>
-    /// Wired late (post-handshake) rather than via ctor, so handshake
-    /// read bytes (~few hundred per conn) are <b>not</b> counted in
-    /// <c>ReceivedBytes</c>. cppcache wires <c>poolDM_</c> in the conn
-    /// ctor so it catches those bytes; we accept the rounding-error
-    /// deficit to avoid threading the DM through
-    /// <see cref="TcrEndpoint.CreateNewConnectionAsync"/>.
+    /// Pure request-response: assumes one in-flight request per
+    /// connection. Doesn't interpret the reply ??callers branch on
+    /// <see cref="TcrMessage.MessageType"/> themselves (e.g. Reply vs
+    /// Exception). Phase 6 connection-pool dispatch will lift this to be
+    /// the only public entry point used by the operation layer.
     /// </remarks>
-    internal ThinClientPoolDM? PoolDM { get; set; }
-
-#pragma warning disable CS0169, CS0414, CS0649 // placeholder mirror fields wired up phase by phase
-    private long _connectionId;                                 // connectionId
-    private TcrConnectionManager? _connectionManager;           // connectionManager_
-    // _tcpClient + _stream above cover cppcache `conn_` (Connector).
-    private ushort _port;                                       // port_
-    private object? _chunksProcessSemaphore;                    // binary_semaphore chunks_process_semaphore_ (??SemaphoreSlim)
-
-    private int _isBeingUsed;                                   // volatile bool isBeingUsed_ (Interlocked 0/1)
-    private uint _isUsed;                                       // atomic<uint32_t> isUsed_
-
-#pragma warning restore CS0169, CS0414, CS0649
-
-    /// <summary>
-    /// Stamp this connection's last-access time. Mirrors cppcache
-    /// <c>TcrConnection::touch()</c>
-    /// (<c>cppcache/src/TcrConnection.cpp:1201</c>) ??pool managers call
-    /// it on borrow / return so <c>cleanStaleConnections</c> /
-    /// <see cref="IsIdle"/> can distinguish idle conns from active ones.
-    /// </summary>
-    public void Touch()
-        => Volatile.Write(ref _lastAccessed, Stopwatch.GetTimestamp());
-
-    /// <summary>
-    /// Reset both the creation clock and the last-access clock. Mirrors
-    /// cppcache <c>TcrConnection::updateCreationTime()</c>
-    /// (<c>cppcache/src/TcrConnection.cpp:1222</c>) ??the pool calls this
-    /// when load-conditioning replacement fails but the conn isn't
-    /// expired yet, so the same conn isn't immediately re-elected on
-    /// the next <c>cleanStaleConnections</c> sweep.
-    /// </summary>
-    public void UpdateCreationTime()
+    public async Task<TcrMessage> SendRequestAsync(TcrMessage request, CancellationToken cancellationToken = default)
     {
-        var now = Stopwatch.GetTimestamp();
-        Volatile.Write(ref _createdAt, now);
-        Volatile.Write(ref _lastAccessed, now);
+        await SendAsync(request.Encode(), cancellationToken).ConfigureAwait(false);
+        var replyBytes = await ReceiveAsync(cancellationToken).ConfigureAwait(false);
+        return TcrMessage.Decode(serviceProvider, replyBytes);
     }
 
     /// <summary>
-    /// Has this connection been unused longer than <paramref name="idleTimeout"/>?
-    /// Mirrors cppcache <c>TcrConnection::isIdle</c>
-    /// (<c>cppcache/src/TcrConnection.cpp:1193</c>).
-    /// </summary>
-    public bool IsIdle(TimeSpan idleTimeout)
-    {
-        if (idleTimeout <= TimeSpan.Zero) return false;
-        var elapsed = Stopwatch.GetElapsedTime(Volatile.Read(ref _lastAccessed));
-        return elapsed > idleTimeout;
-    }
-
-    /// <summary>
-    /// Has this connection lived longer than <paramref name="loadConditioningInterval"/>
-    /// since it was opened? Mirrors cppcache <c>TcrConnection::hasExpired</c>
-    /// (<c>cppcache/src/TcrConnection.cpp:1183</c>).
+    /// Write a fully-encoded frame to the wire and flush.
     /// </summary>
     /// <remarks>
-    /// Applies the <see cref="_expiryTimeVariancePercentage"/> jitter from
-    /// cppcache (default 0 = exact threshold; non-zero spreads expiry
-    /// across a pool to avoid synchronised mass-rotation).
+    /// Pure transport: the caller (operation layer) is responsible for
+    /// producing <paramref name="data"/> via <see cref="TcrMessage.Encode"/>
+    /// or equivalent. Mirrors <c>cppcache/src/TcrConnection.cpp::send</c>.
+    /// Assumes the connection is already open; <see cref="TcpClient.GetStream"/>
+    /// throws <see cref="InvalidOperationException"/> otherwise.
     /// </remarks>
-    public bool HasExpired(TimeSpan loadConditioningInterval)
+    public async Task SendAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
     {
-        if (loadConditioningInterval <= TimeSpan.Zero) return false;
-        var jitter = loadConditioningInterval * _expiryTimeVariancePercentage / 100;
-        var threshold = loadConditioningInterval + jitter;
-        return Stopwatch.GetElapsedTime(Volatile.Read(ref _createdAt)) > threshold;
+        var stream = _stream
+            ?? throw new InvalidOperationException(
+                $"{nameof(ConnectAsync)} must be called before {nameof(SendAsync)}.");
+
+        logger.LogTrace("TcrConnection sending {ByteCount} bytes", data.Length);
+
+        await stream.WriteAsync(data, cancellationToken).ConfigureAwait(false);
+        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// Open a TCP connection to <paramref name="host"/>:<paramref name="port"/>
-    /// and run the Geode client-to-server handshake. Mirrors
-    /// <c>cppcache/src/TcrConnection.cpp::initTcrConnection</c>.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// On return the connection is ready to send framed Geode messages.
-    /// Bundling TCP connect + handshake in a single entry point matches
-    /// cppcache and prevents the easy mistake of forgetting to handshake
-    /// (server rejects the first non-handshake frame).
-    /// </para>
-    /// <para>
-    /// MVP only opens request/response channels; notification channels
-    /// (subscription / HA secondary) land in Phase 12+ when
-    /// <see cref="HandshakeAsync"/>'s <c>isClientNotification</c> /
-    /// <c>isSecondary</c> parameters get plumbed through.
-    /// </para>
-    /// </remarks>
-    public async Task ConnectAsync(string host, int port, TimeSpan? connectTimeout = null, CancellationToken cancellationToken = default)
+    public async Task ConnectAsync(string host, int port,
+        TimeSpan? connectTimeout = null,
+        CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrEmpty(host);
-
-        // Bound TCP connect + handshake under a single budget. cppcache
-        // initTcrConnection passes connectTimeout to BOTH legs; we mirror
-        // by linking the caller's ct to a CancelAfter timer that fires
-        // when the budget expires. Null or <= 0 means "no extra bound".
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         if (connectTimeout is { } budget && budget > TimeSpan.Zero)
         {
             cts.CancelAfter(budget);
         }
 
-        // Disable Nagle so a 17-byte Ping flushes immediately instead of
-        // waiting for buffer fill ??cppcache does the same.
         _tcpClient.NoDelay = true;
         await _tcpClient.ConnectAsync(host, port, cts.Token).ConfigureAwait(false);
         logger.LogDebug("TcrConnection connected to {host}:{port}", host, port);
         _stream = _tcpClient.GetStream();
 
-        // Geode handshake ??fail fast here if the server rejects us, so the
-        // caller never sees a half-initialised connection.
         await HandshakeAsync(cancellationToken: cts.Token).ConfigureAwait(false);
     }
 
@@ -245,8 +155,6 @@ internal sealed class TcrConnection(
         bool isSecondary = false,
         CancellationToken cancellationToken = default)
     {
-        // cppcache precondition: isSecondary only makes sense on a notification
-        // channel (it picks PRIMARY vs SECONDARY for HA queue replay).
         if (isSecondary && !isClientNotification)
         {
             throw new ArgumentException(
@@ -254,18 +162,8 @@ internal sealed class TcrConnection(
                 nameof(isSecondary));
         }
 
-        // Build the whole client-hello in memory; flushed in one SendAsync
-        // at the end of the client?�server section so the bytes hit the wire
-        // as a single TCP segment.
-        using var hello = ActivatorUtilities.CreateInstance<DataOutput>(ServiceProvider);
+        using var hello = ActivatorUtilities.CreateInstance<DataOutput>(serviceProvider);
 
-        // === Client ??Server ====================================================
-        //
-        // 1. ConnectionType (u8)
-        //      100 = CLIENT_TO_SERVER           ??request / response (Phase 2??1)
-        //      101 = PRIMARY_SERVER_TO_CLIENT   ??notification / subscription channel
-        //      102 = SECONDARY_SERVER_TO_CLIENT ??HA secondary (server keeps the
-        //            subscription queue as backup, doesn't actively push)
         const byte ClientToServer = 100;
         const byte PrimaryServerToClient = 101;
         const byte SecondaryServerToClient = 102;
@@ -274,32 +172,13 @@ internal sealed class TcrConnection(
             : ClientToServer;
         hello.WriteByte(connectionType);
 
-        //
-        // 2. ProtocolVersion (ordinal only ??major/minor/patch never go on the
-        //    wire). Compressed form: ordinal ??127 ??1 byte. Uncompressed:
-        //    sentinel + i16. See ProtocolVersion.WriteTo.
         ProtocolVersion.Current.WriteTo(hello);
         logger.LogTrace("TcrConnection handshake, sending ProtocolVersion ordinal {Ordinal}",
             ProtocolVersion.Current.Ordinal);
-        //
-        // 3. ReplyOk (u8) = 59
-        //      Tells server we are ready to receive its acceptance reply.
-        //      Defined in cppcache/src/TcrConnection.hpp:41 as
-        //      `#define REPLY_OK 59`. (The inline comment at TcrConnection.cpp:160
-        //      claims 58 ??that comment is stale; the macro value 59 is what
-        //      actually goes on the wire.)
+
         const byte ReplyOk = 59;
         hello.WriteByte(ReplyOk);
 
-        //
-        // 4. Port set ??channel-type dependent, NO bytes for request/response.
-        //    cppcache TcrConnection.cpp:161-170:
-        //      - !isClientNotification ??record local TCP port into a shared set
-        //        (Geode uses the set later to identify which client a notification
-        //        channel belongs to). NO bytes written here. Skipped entirely until
-        //        Phase 6 (pool) / Phase 12+ (subscriptions) need it.
-        //      - isClientNotification  ??write i32 PortCount + i32 ? N port list.
-        //        Phase 12+.
         if (isClientNotification)
         {
             throw new NotImplementedException(
@@ -307,13 +186,6 @@ internal sealed class TcrConnection(
                 "implemented; subscription support lands in Phase 12+.");
         }
 
-        //
-        // 5. ReadTimeout (i32) ??request/response channel only.
-        //    int.MaxValue - 10000 (~24.85 days, "effectively no timeout"). The
-        //    -10000 dodges an old GFE 5.7 bug where the server added a 5-sec
-        //    buffer that would otherwise overflow int.MaxValue.
-        //    Notification channels skip this field (server is the sender, no
-        //    timeout to set).
         if (!isClientNotification)
         {
             const int HandshakeReadTimeoutMillis = int.MaxValue - 10000;
@@ -345,6 +217,7 @@ internal sealed class TcrConnection(
         const int FreshClientUniqueId = 1;
         hello.WriteByte(DSCode.FixedIDByte);                   // 6a
         hello.WriteByte(ClientProxyMembershipIdDsfid);         // 6b
+        var membershipIdBuilder = new ClientProxyMembershipIdBuilder(serviceProvider, "");// todo
         hello.WriteBytes(membershipIdBuilder.Build());         // 6c (varint length + bytes)
         hello.WriteInt32(FreshClientUniqueId);                 // 6d
 
@@ -377,19 +250,6 @@ internal sealed class TcrConnection(
         logger.LogTrace("TcrConnection sending client-hello ({byteCount} bytes)", clientHello.Length);
         await SendAsync(clientHello, cancellationToken).ConfigureAwait(false);
 
-        //
-        // === Server ??Client ====================================================
-        //  Order taken from ClientSideHandshakeImpl.handshakeWithServer (Java).
-        //
-        //  9. AcceptanceCode (u8)
-        //       59 = OK (Handshake.java:58 REPLY_OK).
-        //       60 REFUSED / 61 INVALID / 66 AUTH_NOT_REQUIRED ??server keeps
-        //                                                       sending steps 10-14.
-        //       67 SERVER_IS_LOCATOR / 21 SSL_REQUIRED ??server stops here, no
-        //                                                more bytes to read.
-        //     Strategy: throw immediately for the "no more data" codes (matches
-        //     Java client). For other non-OK codes, capture the byte and keep
-        //     reading so step 13's diagnostic text can land in the exception.
         const byte ReplyOkServer = 59;
         const byte ReplyServerIsLocator = 67;
         const byte ReplySslRequired = 21;
@@ -406,48 +266,25 @@ internal sealed class TcrConnection(
                 "Connected port belongs to a Geode locator, not a server. " +
                 "Use locator-discovery configuration instead of pointing at this address directly.");
         }
-        // Any other non-OK code ??defer the throw until after step 13 so we
-        // can surface the server's diagnostic message in the exception.
-        //
-        // 10. EndpointType / ServerQueueStatus (u8). Identifies the server's
-        //     subscription role (NON_REDUNDANT_SERVER / PRIMARY / SECONDARY).
-        //     MVP doesn't subscribe, but we record the value into
-        //     _hasServerQueue so Phase 12+ HA failover can branch on it
-        //     without re-running the handshake.
+
         _hasServerQueue = (await ReadHandshakeDataAsync(1, cancellationToken)
             .ConfigureAwait(false))[0];
         logger.LogTrace("TcrConnection handshake hasServerQueue = {hasServerQueue}", _hasServerQueue);
 
-        //
-        // 11. QueueSize (i32). Number of events currently buffered in the
-        //     server's subscription queue for this client. Non-zero only
-        //     after reconnect with durable subscriptions; recorded into
-        //     _queueSize for Phase 12+ to consume.
         var queueSizeBuf = await ReadHandshakeDataAsync(4, cancellationToken)
             .ConfigureAwait(false);
         _queueSize = BinaryPrimitives.ReadInt32BigEndian(queueSizeBuf);
         logger.LogTrace("TcrConnection handshake queueSize = {queueSize}", _queueSize);
-        //
-        // 12. ServerMember ??varint length + N opaque bytes (the server's
-        //     serialised InternalDistributedMember). Read via
-        //     DataSerializer.readByteArray on the Java side; same encoding
-        //     as our WriteArrayLen / WriteBytes pair. We capture the bytes
-        //     into _serverMember without parsing ??Phase 6/7 will decode.
+
+
         var serverMemberLen = await ReadHandshakeArrayLenAsync(cancellationToken)
             .ConfigureAwait(false);
         _serverMember = serverMemberLen > 0
             ? await ReadHandshakeDataAsync(serverMemberLen, cancellationToken).ConfigureAwait(false)
             : [];
         logger.LogTrace("TcrConnection handshake serverMember = {byteCount} bytes", _serverMember.Length);
-        //
-        // 13. Message ??Java writeUTF format (u16 byte-length + modified UTF-8).
-        //     Server's diagnostic / refusal text; empty on the success path,
-        //     populated on REFUSED / INVALID / AUTH_NOT_REQUIRED / etc.
-        //     Captured into serverMessage and folded into the GeodeException
-        //     thrown after step 14 when AcceptanceCode != REPLY_OK.
-        //     Modified-UTF-8 vs standard UTF-8 only differs at U+0000 and
-        //     supplementary code points; English diagnostic text decodes
-        //     identically with Encoding.UTF8.
+
+
         var messageLenBuf = await ReadHandshakeDataAsync(2, cancellationToken)
             .ConfigureAwait(false);
         var messageLen = BinaryPrimitives.ReadUInt16BigEndian(messageLenBuf);
@@ -456,18 +293,11 @@ internal sealed class TcrConnection(
             : [];
         var serverMessage = Encoding.UTF8.GetString(messageBytes);
         logger.LogTrace("TcrConnection handshake serverMessage = '{serverMessage}'", serverMessage);
-        //
-        // 14. DeltaEnabled (u8 read as bool: 0 = false, non-zero = true).
-        //     Server's delta-propagation toggle; recorded into _deltaEnabled
-        //     for Phase 12+ to branch on. Not actioned in MVP.
+
         _deltaEnabled = (await ReadHandshakeDataAsync(1, cancellationToken)
             .ConfigureAwait(false))[0] != 0;
         logger.LogTrace("TcrConnection handshake deltaEnabled = {deltaEnabled}", _deltaEnabled);
 
-        // Deferred from step 9: now that the full server response is drained
-        // (so the stream is in a clean state for the caller's next move) and
-        // the diagnostic text from step 13 is in hand, surface any non-OK
-        // acceptance code as a GeodeException with the message attached.
         if (acceptanceCode != ReplyOkServer)
         {
             var detail = string.IsNullOrEmpty(serverMessage)
@@ -476,24 +306,75 @@ internal sealed class TcrConnection(
             throw new GeodeException(
                 $"Geode server refused handshake; AcceptanceCode = {acceptanceCode}. Server says: {detail}.");
         }
-        //
-        // ========================================================================
-        // Implementation strategy for the server response: read each field
-        // off _stream with ReadHandshakeDataAsync + BinaryPrimitives, and
-        // validate / drain as listed above.
     }
 
+    /// <summary>
+    /// Read one framed message from the wire: 17-byte header followed by
+    /// the <c>MessageLength</c> body bytes the header advertises.
+    /// </summary>
+    /// <returns>
+    /// The full frame (header + body) as a contiguous byte array, ready to
+    /// be handed to <see cref="TcrMessage.Decode"/> by the caller.
+    /// </returns>
+    /// <exception cref="EndOfStreamException">
+    /// The peer closed the connection before a full frame was received.
+    /// </exception>
+    /// <exception cref="InvalidDataException">
+    /// The header advertises a negative <c>MessageLength</c>.
+    /// </exception>
+    /// <remarks>
+    /// Pure transport: decoding the bytes back into a <see cref="TcrMessage"/>
+    /// is the caller's job. Mirrors <c>cppcache/src/TcrConnection.cpp::readMessage</c>.
+    /// </remarks>
+    public async Task<byte[]> ReceiveAsync(CancellationToken cancellationToken = default)
+    {
+        var stream = _stream
+            ?? throw new InvalidOperationException($"{nameof(ConnectAsync)} must be called before {nameof(ReceiveAsync)}.");
+
+        var frame = new byte[TcrMessage.HeaderLength];
+        await stream
+            .ReadExactlyAsync(frame.AsMemory(0, TcrMessage.HeaderLength), cancellationToken)
+            .ConfigureAwait(false);
+
+        var messageLength = BinaryPrimitives.ReadInt32BigEndian(frame.AsSpan(4, sizeof(int)));
+        if (messageLength < 0)
+        {
+            throw new InvalidDataException(
+                $"Received header advertises negative MessageLength={messageLength}.");
+        }
+
+        logger.LogTrace("TcrConnection received header, MessageLength={messageLength}", messageLength);
+
+        // 2. Grow the buffer and read the parts payload, if any.
+        if (messageLength > 0)
+        {
+            Array.Resize(ref frame, TcrMessage.HeaderLength + messageLength);
+            await stream
+                .ReadExactlyAsync(
+                    frame.AsMemory(TcrMessage.HeaderLength, messageLength), cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        PoolDM?.RecordReceivedBytes(frame.Length);
+
+        return frame;
+    }
     /// <summary>
     /// Map the tristate <see cref="SubscriptionOptions.ConflateEvents"/>
     /// to the wire byte used in the handshake "overrides" field. Mirrors
     /// cppcache <c>TcrConnection::getOverrides</c>.
     /// </summary>
-    private byte MapConflateEvents() => _options.Subscription.ConflateEvents switch
+    private byte MapConflateEvents()
     {
-        null => 0,   // CONFLATION_DEFAULT ??let the server decide
-        true => 1,   // CONFLATION_ON
-        false => 2,   // CONFLATION_OFF
-    };
+        /// todo 
+        return 0;
+        //_options.Subscription.ConflateEvents switch
+        //{
+        //    null => 0,   // CONFLATION_DEFAULT ??let the server decide
+        //    true => 1,   // CONFLATION_ON
+        //    false => 2,   // CONFLATION_OFF
+        //};
+    } 
 
     /// <summary>
     /// Read exactly <paramref name="byteCount"/> bytes from the underlying
@@ -544,118 +425,149 @@ internal sealed class TcrConnection(
             _ => first,
         };
     }
+    private bool _disposed;
 
-    /// <summary>
-    /// Write a fully-encoded frame to the wire and flush.
-    /// </summary>
-    /// <remarks>
-    /// Pure transport: the caller (operation layer) is responsible for
-    /// producing <paramref name="data"/> via <see cref="TcrMessage.Encode"/>
-    /// or equivalent. Mirrors <c>cppcache/src/TcrConnection.cpp::send</c>.
-    /// Assumes the connection is already open; <see cref="TcpClient.GetStream"/>
-    /// throws <see cref="InvalidOperationException"/> otherwise.
-    /// </remarks>
-    public async Task SendAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
+    public async ValueTask DisposeAsync()
     {
-        var stream = _stream
-            ?? throw new InvalidOperationException(
-                $"{nameof(ConnectAsync)} must be called before {nameof(SendAsync)}.");
+        if (_disposed)
+        {
+            return;
+        }
+        _disposed = true;
 
-        logger.LogTrace("TcrConnection sending {ByteCount} bytes", data.Length);
+        // Dispose the stream first so any pending async work (e.g. TLS
+        // close_notify once Phase 8 swaps in SslStream) gets a chance to
+        // flush; then drop the underlying socket. _stream is null if
+        // ConnectAsync was never called.
+        if (_stream is not null)
+        {
+            await _stream.DisposeAsync().ConfigureAwait(false);
+        }
+        _tcpClient.Dispose();
 
-        await stream.WriteAsync(data, cancellationToken).ConfigureAwait(false);
-        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        // Return the per-endpoint slot the pool reserved for this conn
+        // (set by CreatePoolConnection* paths). Pool-wide _capSlots is
+        // still released manually by ThinClientPoolDM at each close site ??        // intentional asymmetry while pool-wide accounting stays in the DM.
+        if (OwnsEndpointSlot)
+        {
+            Endpoint?.ReleaseSlot();
+            OwnsEndpointSlot = false;
+        }
     }
 
     /// <summary>
-    /// Read one framed message from the wire: 17-byte header followed by
-    /// the <c>MessageLength</c> body bytes the header advertises.
+    /// Reset both the creation clock and the last-access clock. Mirrors
+    /// cppcache <c>TcrConnection::updateCreationTime()</c>
+    /// (<c>cppcache/src/TcrConnection.cpp:1222</c>) ??the pool calls this
+    /// when load-conditioning replacement fails but the conn isn't
+    /// expired yet, so the same conn isn't immediately re-elected on
+    /// the next <c>cleanStaleConnections</c> sweep.
     /// </summary>
-    /// <returns>
-    /// The full frame (header + body) as a contiguous byte array, ready to
-    /// be handed to <see cref="TcrMessage.Decode"/> by the caller.
-    /// </returns>
-    /// <exception cref="EndOfStreamException">
-    /// The peer closed the connection before a full frame was received.
-    /// </exception>
-    /// <exception cref="InvalidDataException">
-    /// The header advertises a negative <c>MessageLength</c>.
-    /// </exception>
-    /// <remarks>
-    /// Pure transport: decoding the bytes back into a <see cref="TcrMessage"/>
-    /// is the caller's job. Mirrors <c>cppcache/src/TcrConnection.cpp::readMessage</c>.
-    /// </remarks>
-    public async Task<byte[]> ReceiveAsync(CancellationToken cancellationToken = default)
+    public void UpdateCreationTime()
     {
-        var stream = _stream
-            ?? throw new InvalidOperationException(
-                $"{nameof(ConnectAsync)} must be called before {nameof(ReceiveAsync)}.");
+        var now = Stopwatch.GetTimestamp();
+        Volatile.Write(ref _createdAt, now);
+        Volatile.Write(ref _lastAccessed, now);
+    }
 
-        // 1. Read the fixed-length header so we know how many body bytes
-        //    to expect. Header offsets:
-        //       0  i32 MessageType
-        //       4  i32 MessageLength    <- bytes occupied by the Parts payload
-        //       8  i32 NumParts
-        //      12  i32 TransactionId
-        //      16  u8  EarlyAck
-        var frame = new byte[TcrMessage.HeaderLength];
-        await stream
-            .ReadExactlyAsync(frame.AsMemory(0, TcrMessage.HeaderLength), cancellationToken)
-            .ConfigureAwait(false);
+    /// <summary>
+    /// Has this connection been unused longer than <paramref name="idleTimeout"/>?
+    /// Mirrors cppcache <c>TcrConnection::isIdle</c>
+    /// (<c>cppcache/src/TcrConnection.cpp:1193</c>).
+    /// </summary>
+    public bool IsIdle(TimeSpan idleTimeout)
+    {
+        if (idleTimeout <= TimeSpan.Zero) return false;
+        var elapsed = Stopwatch.GetElapsedTime(Volatile.Read(ref _lastAccessed));
+        return elapsed > idleTimeout;
+    }
 
-        var messageLength = BinaryPrimitives.ReadInt32BigEndian(frame.AsSpan(4, sizeof(int)));
-        if (messageLength < 0)
+    /// <summary>
+    /// Has this connection lived longer than <paramref name="loadConditioningInterval"/>
+    /// since it was opened? Mirrors cppcache <c>TcrConnection::hasExpired</c>
+    /// (<c>cppcache/src/TcrConnection.cpp:1183</c>).
+    /// </summary>
+    /// <remarks>
+    /// Applies the <see cref="_expiryTimeVariancePercentage"/> jitter from
+    /// cppcache (default 0 = exact threshold; non-zero spreads expiry
+    /// across a pool to avoid synchronised mass-rotation).
+    /// </remarks>
+    public bool HasExpired(TimeSpan loadConditioningInterval)
+    {
+        if (loadConditioningInterval <= TimeSpan.Zero) return false;
+        var jitter = loadConditioningInterval * _expiryTimeVariancePercentage / 100;
+        var threshold = loadConditioningInterval + jitter;
+        return Stopwatch.GetElapsedTime(Volatile.Read(ref _createdAt)) > threshold;
+    }
+
+    /// <summary>
+    /// Polite shutdown: send <see cref="MessageType.CloseConnection"/>
+    /// (18) so the server frees this socket's session immediately, then
+    /// <see cref="DisposeAsync"/> the underlying transport. Mirrors
+    /// cppcache <c>TcrConnection::close()</c>
+    /// (<c>cppcache/src/TcrConnection.cpp:933-951</c>).
+    /// </summary>
+    /// <param name="keepAlive">
+    /// Tells the server whether to keep this client's subscription queue
+    /// (Phase 2+ HA / durable client). Phase 1.1 callers always pass
+    /// <c>false</c> ??we have no subscription state worth preserving.
+    /// </param>
+    /// <remarks>
+    /// Fire-and-forget: cppcache does not await any reply (the server
+    /// just closes its side after receiving the frame) and swallows
+    /// every exception (<c>LOGINFO</c> only) ??by definition this is
+    /// the destruction path, so a half-dead socket failing the write is
+    /// not an error worth propagating.
+    /// </remarks>
+    public async Task CloseAsync(bool keepAlive, CancellationToken ct = default)
+    {
+        if (_disposed)
         {
-            throw new InvalidDataException(
-                $"Received header advertises negative MessageLength={messageLength}.");
+            return;
         }
 
-        logger.LogTrace(
-            "TcrConnection received header, MessageLength={messageLength}", messageLength);
+        // Builder is ctor-injected; cppcache pulls it lazily off DataOutput.
 
-        // 2. Grow the buffer and read the parts payload, if any.
-        if (messageLength > 0)
+        // Use TcrMessageBuilder.Create (direct new) rather than ActivatorUtilities:
+        // CloseAsync runs on the sp-teardown path, and ActivatorUtilities would
+        // re-enter the (already disposing) ServiceProvider to resolve other deps,
+        // throwing ObjectDisposedException. The static factory doesn't query DI.
+        var builder = TcrMessageBuilder
+            .Create(serviceProvider, MessageType.CloseConnection)
+            .AddKeepAlivePart(keepAlive);
+        var closeMsg = await builder.BuildAsync(ct);
+
+        // 2-second send budget mirrors cppcache TcrConnection.cpp:944
+        // (`send(..., std::chrono::seconds(2), false)`). The connection is
+        // dying anyway ??don't let a slow / half-dead socket hold up shutdown.
+        using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        sendCts.CancelAfter(TimeSpan.FromSeconds(2));
+
+        try
         {
-            Array.Resize(ref frame, TcrMessage.HeaderLength + messageLength);
-            await stream
-                .ReadExactlyAsync(
-                    frame.AsMemory(TcrMessage.HeaderLength, messageLength), cancellationToken)
-                .ConfigureAwait(false);
+            await SendAsync(closeMsg.Encode(), sendCts.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // cppcache LOGINFO("Close connection message failed with msg: %s")
+            // (TcrConnection.cpp:947). By definition we're tearing down ??a
+            // failed write isn't actionable, just informational. Caller's ct
+            // cancellation flows through but we still dispose below.
+            logger.LogInformation(ex, "Close connection message failed");
         }
 
-        // Catalogue #20 ??receivedBytes. cppcache instruments at every
-        // socket receive (TcrConnection.cpp:513); ours fires once per
-        // full frame, sum identical. Null when conn is opened pre-pool
-        // (handshake reads ??see PoolDM xmldoc caveat).
-        PoolDM?.RecordReceivedBytes(frame.Length);
-
-        return frame;
+        await DisposeAsync().ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Send a <see cref="TcrMessage"/> request and read the next framed
-    /// message from the wire as the reply. The message-level building
-    /// block on top of <see cref="SendAsync"/> / <see cref="ReceiveAsync"/>;
-    /// every operation (Ping, Put, Get, ?? ultimately composes through
-    /// here. Mirrors cppcache <c>TcrConnection::sendRequest</c>.
+    /// Stamp this connection's last-access time. Mirrors cppcache
+    /// <c>TcrConnection::touch()</c>
+    /// (<c>cppcache/src/TcrConnection.cpp:1201</c>) ??pool managers call
+    /// it on borrow / return so <c>cleanStaleConnections</c> /
+    /// <see cref="IsIdle"/> can distinguish idle conns from active ones.
     /// </summary>
-    /// <remarks>
-    /// Pure request-response: assumes one in-flight request per
-    /// connection. Doesn't interpret the reply ??callers branch on
-    /// <see cref="TcrMessage.MessageType"/> themselves (e.g. Reply vs
-    /// Exception). Phase 6 connection-pool dispatch will lift this to be
-    /// the only public entry point used by the operation layer.
-    /// </remarks>
-    public async Task<TcrMessage> SendRequestAsync(
-        TcrMessage request,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-
-        await SendAsync(request.Encode(), cancellationToken).ConfigureAwait(false);
-        var replyBytes = await ReceiveAsync(cancellationToken).ConfigureAwait(false);
-        return TcrMessage.Decode(replyBytes, ServiceProvider);
-    }
+    public void Touch()
+        => Volatile.Write(ref _lastAccessed, Stopwatch.GetTimestamp());
 
     /// <summary>
     /// Chunked-reply variant of <see cref="SendRequestAsync(TcrMessage, CancellationToken)"/>.
@@ -770,7 +682,7 @@ internal sealed class TcrConnection(
         // Synthesise a TcrMessage carrying just the header fields the
         // caller branches on. Body is owned by chunkedResult.
         return ActivatorUtilities.CreateInstance<TcrMessage>(
-            ServiceProvider,
+            serviceProvider,
             (MessageType)msgType,
             txId,
             (byte)0,
@@ -833,6 +745,66 @@ internal sealed class TcrConnection(
             ChunkLen: BinaryPrimitives.ReadInt32BigEndian(buffer.AsSpan(0, 4)),
             Flags: buffer[4]);
     }
+}
+
+/*
+using System.Buffers;
+using System.Buffers.Binary;
+using System.Diagnostics;
+using System.IO;
+using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Text;
+using Geode.Client.Internal;
+using Geode.Client.Options;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+
+namespace Geode.Client.Protocol;
+
+/// <summary>
+/// One framed TCP connection to a Geode server-cache port (default 40404).
+/// Mirrors <c>cppcache/src/TcrConnection.cpp</c>.
+/// </summary>
+internal sealed class TcrConnection(
+    IServiceProvider serviceProvider,
+    ILogger<TcrConnection> logger,
+    CacheScopeContext scopeContext,
+    ClientProxyMembershipIdBuilder membershipIdBuilder,
+    TcrMessageBuilder messageBuilder)
+    : IAsyncDisposable
+{
+
+    public IServiceProvider ServiceProvider { get; } = serviceProvider;
+
+
+    // Read options through the scope context so named registrations route
+    // to the right cache (plain IOptions<T> always returned the unnamed
+    // default). Currently consumed by HandshakeAsync step 7
+    // (Subscription.ConflateEvents); Phase 6+ pool / TLS / auth code
+    // will read further fields.
+    private readonly GeodeClientOptions _options = scopeContext.Options;
+
+
+
+
+#pragma warning disable CS0169, CS0414, CS0649 // placeholder mirror fields wired up phase by phase
+    private long _connectionId;                                 // connectionId
+    private TcrConnectionManager? _connectionManager;           // connectionManager_
+    // _tcpClient + _stream above cover cppcache `conn_` (Connector).
+    private ushort _port;                                       // port_
+    private object? _chunksProcessSemaphore;                    // binary_semaphore chunks_process_semaphore_ (??SemaphoreSlim)
+
+    private int _isBeingUsed;                                   // volatile bool isBeingUsed_ (Interlocked 0/1)
+    private uint _isUsed;                                       // atomic<uint32_t> isUsed_
+
+#pragma warning restore CS0169, CS0414, CS0649
+
+
+
+
+
+
 
     /// <summary>
     /// Send a <see cref="MessageType.Ping"/> (5) and wait for the server's
@@ -855,84 +827,9 @@ internal sealed class TcrConnection(
         }
     }
 
-    /// <summary>
-    /// Polite shutdown: send <see cref="MessageType.CloseConnection"/>
-    /// (18) so the server frees this socket's session immediately, then
-    /// <see cref="DisposeAsync"/> the underlying transport. Mirrors
-    /// cppcache <c>TcrConnection::close()</c>
-    /// (<c>cppcache/src/TcrConnection.cpp:933-951</c>).
-    /// </summary>
-    /// <param name="keepAlive">
-    /// Tells the server whether to keep this client's subscription queue
-    /// (Phase 2+ HA / durable client). Phase 1.1 callers always pass
-    /// <c>false</c> ??we have no subscription state worth preserving.
-    /// </param>
-    /// <remarks>
-    /// Fire-and-forget: cppcache does not await any reply (the server
-    /// just closes its side after receiving the frame) and swallows
-    /// every exception (<c>LOGINFO</c> only) ??by definition this is
-    /// the destruction path, so a half-dead socket failing the write is
-    /// not an error worth propagating.
-    /// </remarks>
-    public async Task CloseAsync(bool keepAlive, CancellationToken ct = default)
-    {
-        if (_disposed)
-        {
-            return;
-        }
 
-        // Builder is ctor-injected; cppcache pulls it lazily off DataOutput.
-        var closeMsg = messageBuilder.CloseConnection(keepAlive);
 
-        // 2-second send budget mirrors cppcache TcrConnection.cpp:944
-        // (`send(..., std::chrono::seconds(2), false)`). The connection is
-        // dying anyway ??don't let a slow / half-dead socket hold up shutdown.
-        using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        sendCts.CancelAfter(TimeSpan.FromSeconds(2));
 
-        try
-        {
-            await SendAsync(closeMsg.Encode(), sendCts.Token).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            // cppcache LOGINFO("Close connection message failed with msg: %s")
-            // (TcrConnection.cpp:947). By definition we're tearing down ??a
-            // failed write isn't actionable, just informational. Caller's ct
-            // cancellation flows through but we still dispose below.
-            logger.LogInformation(ex, "Close connection message failed");
-        }
-
-        await DisposeAsync().ConfigureAwait(false);
-    }
-
-    private bool _disposed;
-
-    public async ValueTask DisposeAsync()
-    {
-        if (_disposed)
-        {
-            return;
-        }
-        _disposed = true;
-
-        // Dispose the stream first so any pending async work (e.g. TLS
-        // close_notify once Phase 8 swaps in SslStream) gets a chance to
-        // flush; then drop the underlying socket. _stream is null if
-        // ConnectAsync was never called.
-        if (_stream is not null)
-        {
-            await _stream.DisposeAsync().ConfigureAwait(false);
-        }
-        _tcpClient.Dispose();
-
-        // Return the per-endpoint slot the pool reserved for this conn
-        // (set by CreatePoolConnection* paths). Pool-wide _capSlots is
-        // still released manually by ThinClientPoolDM at each close site ??        // intentional asymmetry while pool-wide accounting stays in the DM.
-        if (OwnsEndpointSlot)
-        {
-            Endpoint?.ReleaseSlot();
-            OwnsEndpointSlot = false;
-        }
-    }
 }
+
+*/

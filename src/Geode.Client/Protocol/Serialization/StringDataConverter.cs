@@ -1,4 +1,4 @@
-using Geode.Client.Services;
+using Geode.Client.Internal;
 
 namespace Geode.Client.Protocol.Serialization;
 
@@ -62,15 +62,15 @@ namespace Geode.Client.Protocol.Serialization;
 /// total) rather than the 4-byte UTF-8 form. We cannot reuse
 /// <see cref="System.Text.Encoding.UTF8"/> ??hand-rolled in
 /// <see cref="DataOutput.WriteJavaModifiedUtf8"/> /
-/// <see cref="BigEndianBinaryReader.ReadJavaModifiedUtf8"/>.
+/// <see cref="DataInput.ReadJavaModifiedUtf8"/>.
 /// </para>
 /// </remarks>
-internal sealed class StringDataConverter(CacheScopeContext cacheScopeContext)
+internal sealed class StringDataConverter(GeodeCache cache)
     : DataConverter<string>
 {
     // 87/88/42/89 cover the four encode forms; 69 is read-only
     // tolerance for null-string sentinels coming from the server.
-    private static readonly byte[] s_dsCodes =
+    private static readonly byte[] _dsCodes =
     {
         DSCode.CacheableASCIIString,        // 87
         DSCode.CacheableASCIIStringHuge,    // 88
@@ -87,9 +87,9 @@ internal sealed class StringDataConverter(CacheScopeContext cacheScopeContext)
     /// the same reason as the array converters' <c>_maxArrayLength</c>.
     /// </summary>
     private readonly int _maxStringLength
-        = cacheScopeContext.Options.Serialization.MaxStringLength;
+        = cache.CacheProperties.MaxStringLength;
 
-    public override byte[] DsCodes => s_dsCodes;
+    public override byte[] DsCodes => _dsCodes;
 
     /// <summary>
     /// Pick which of the four encode DSCodes to emit for
@@ -174,7 +174,7 @@ internal sealed class StringDataConverter(CacheScopeContext cacheScopeContext)
         return ValueTask.CompletedTask;
     }
 
-    public override string? Read(BigEndianBinaryReader reader, byte dsCode, int depth)
+    public override string? Read(DataInput reader, byte dsCode, int depth)
     {
         switch (dsCode)
         {
@@ -263,7 +263,7 @@ internal sealed class StringDataConverter(CacheScopeContext cacheScopeContext)
     /// Read <paramref name="count"/> ASCII bytes as a string. Each
     /// byte becomes one <see cref="char"/> via direct widening.
     /// </summary>
-    private static string ReadAsciiBytes(BigEndianBinaryReader reader, int count)
+    private static string ReadAsciiBytes(DataInput reader, int count)
     {
         if (count == 0) return string.Empty;
         var chars = new char[count];

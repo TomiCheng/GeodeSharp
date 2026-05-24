@@ -118,9 +118,9 @@ internal interface IDataConverter
     /// Boxed instance of <see cref="ManagedType"/>, or <c>null</c>
     /// for value types whose stored representation is "no value".
     /// </returns>
-    object? Read(BigEndianBinaryReader reader, byte dsCode, int depth);
+    object? Read(DataInput reader, byte dsCode, int depth);
 
     /// <summary>Async 版本的 <see cref="Read"/>;default interface method,wrap sync。</summary>
-    ValueTask<object?> ReadAsync(BigEndianBinaryReader reader, byte dsCode, int depth, CancellationToken ct) =>
+    ValueTask<object?> ReadAsync(DataInput reader, byte dsCode, int depth, CancellationToken ct) =>
         ValueTask.FromResult(Read(reader, dsCode, depth));
 }

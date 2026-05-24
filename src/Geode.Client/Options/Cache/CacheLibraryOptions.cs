@@ -47,3 +47,4 @@ public class CacheLibraryOptions : ICloneable
         yield break;
     }
 }
+

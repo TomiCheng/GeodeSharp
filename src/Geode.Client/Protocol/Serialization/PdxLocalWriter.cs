@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 using Geode.Client.Pdx;
-using Geode.Client.Services;
+using Geode.Client.Internal;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol.Serialization;
@@ -40,7 +40,7 @@ internal class PdxLocalWriter(IServiceProvider serviceProvider)
     {
         return ActivatorUtilities.CreateInstance<PdxType>(serviceProvider, className, _fields);
     }
-    private readonly StringDataConverter _stringConverter = new(serviceProvider.GetRequiredService<CacheScopeContext>());
+    private readonly StringDataConverter _stringConverter = new(serviceProvider.GetRequiredService<GeodeCache>());
 
     public IPdxWriter WriteBoolean(string fieldName, bool value)
     {
@@ -227,3 +227,4 @@ internal class PdxLocalWriter(IServiceProvider serviceProvider)
             // so Count-1 = the slot id just claimed for this field.
             VarLenFieldIdx: _varLenOffsets.Count - 1));
 }
+

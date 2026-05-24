@@ -52,7 +52,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// </remarks>
 internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
 {
-    private static readonly byte[] s_dsCodes = { DSCode.CacheableObjectArray };
+    private static readonly byte[] _dsCodes = { DSCode.CacheableObjectArray };
 
     private const string JavaObjectClassName = "java.lang.Object";
 
@@ -75,7 +75,7 @@ internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
         _registry = registry;
     }
 
-    public override byte[] DsCodes => s_dsCodes;
+    public override byte[] DsCodes => _dsCodes;
 
     public override async ValueTask WriteAsync(DataOutput writer, object[] value, byte dsCode, int depth, CancellationToken ct)
     {
@@ -95,7 +95,7 @@ internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
         }
     }
 
-    public override object[] Read(BigEndianBinaryReader reader, byte dsCode, int depth)
+    public override object[] Read(DataInput reader, byte dsCode, int depth)
     {
         var length = reader.ReadArrayLen();
         if (length <= 0)

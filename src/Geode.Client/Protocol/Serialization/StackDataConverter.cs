@@ -39,7 +39,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// </remarks>
 internal sealed class StackDataConverter : IDataConverter
 {
-    private static readonly byte[] s_dsCodes = { DSCode.CacheableStack };
+    private static readonly byte[] _dsCodes = { DSCode.CacheableStack };
 
     private readonly SerializationRegistry _registry;
 
@@ -49,7 +49,7 @@ internal sealed class StackDataConverter : IDataConverter
         _registry = registry;
     }
 
-    public byte[] DsCodes => s_dsCodes;
+    public byte[] DsCodes => _dsCodes;
 
     public Type ManagedType => typeof(Stack<>);
 
@@ -78,7 +78,7 @@ internal sealed class StackDataConverter : IDataConverter
         }
     }
 
-    public object? Read(BigEndianBinaryReader reader, byte dsCode, int depth)
+    public object? Read(DataInput reader, byte dsCode, int depth)
     {
         var length = reader.ReadArrayLen();
         var stack = new Stack<object?>();

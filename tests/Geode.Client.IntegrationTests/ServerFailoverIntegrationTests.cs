@@ -1,6 +1,7 @@
-using Geode.Client.Options;
-using Geode.Client.Services;
+using Geode.Client;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Geode.Client.IntegrationTests;
@@ -18,7 +19,6 @@ namespace Geode.Client.IntegrationTests;
 [Collection(nameof(GeodeCollection))]
 public class ServerFailoverIntegrationTests(GeodeFixture fx)
 {
-    private readonly GeodeFixture _fx = fx;
     private static readonly TimeSpan TestTimeout = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan FreshConnectionSettleDelay = TimeSpan.FromSeconds(3);
     private const string RegionName = "test";
@@ -29,54 +29,34 @@ public class ServerFailoverIntegrationTests(GeodeFixture fx)
         using var cts = new CancellationTokenSource(TestTimeout);
 
         await using var services = new ServiceCollection()
-            .AddLogging()
-            .AddGeodeClient(config => config.Cache = new CacheOptions
-            {
-                Pools =
-                {
-                    // Pool MUST be locator-mode so the retry frame's
-                    // SelectEndpointAsync goes through the locator and
-                    // can pick a different server when the prior one
-                    // is excluded. Static-server lists would defeat
-                    // the test (no failover path exercised).
-                    new CachePoolOptions
-                    {
-                        Name = "default",
-                        Locators =
-                        {
-                            new CacheHostPortOptions
-                            {
-                                Host = _fx.LocatorHost,
-                                Port = _fx.LocatorPort,
-                            },
-                            new CacheHostPortOptions
-                            {
-                                Host = _fx.LocatorHost,
-                                Port = _fx.LocatorPort2,
-                            },
-                        },
-                        // Disable the periodic locator-list refresh: the
-                        // per-request excludeServers carries srv1 quarantine
-                        // through the retry frame already, so refresh adds
-                        // no value here and just opens a race window if the
-                        // peer list returned by the locator hasn't fully
-                        // propagated the srv1 stop event yet.
-                        UpdateLocatorListInterval = TimeSpan.Zero,
-                    },
-                },
-                Regions =
-                {
-                    new CacheRegionOptions { Name = RegionName },
-                },
-            })
+            .AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance)
+            .AddSingleton(typeof(ILogger<>), typeof(NullLogger<>))
+            .AddGeodeFactory()
             .BuildServiceProvider();
 
-        var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();
-        await cache.EnsureInitializedAsync(cts.Token);
+        var cache = await services.GetRequiredService<IGeodeCacheFactory>().CreateAsync("c", cts.Token);
+
+        // Pool MUST be locator-mode so the retry frame's
+        // SelectEndpointAsync goes through the locator and can pick a
+        // different server when the prior one is excluded. Static-server
+        // lists would defeat the test (no failover path exercised).
+        //
+        // Disable the periodic locator-list refresh: the per-request
+        // excludeServers carries srv1 quarantine through the retry frame
+        // already, so refresh adds no value here and just opens a race
+        // window if the peer list returned by the locator hasn't fully
+        // propagated the srv1 stop event yet.
+        await cache.PoolManager.CreateFactory()
+            .AddLocator(fx.LocatorHost, fx.LocatorPort)
+            .AddLocator(fx.LocatorHost, fx.LocatorPort2)
+            .SetUpdateLocatorListInterval(TimeSpan.Zero)
+            .SetMinConnections(1)
+            .BuildAsync("default", cts.Token);
+
         await Task.Delay(FreshConnectionSettleDelay, cts.Token);
 
-        var region = cache.GetRegion<int, int>(RegionName);
-        Assert.NotNull(region);
+        var region = await cache.CreateRegionFactory(RegionShortcut.Proxy)
+            .CreateAsync<int, int>(RegionName, cts.Token);
 
         // Sanity round trip on the full 3-server cluster.
         const int sentinel = 0x6000_0001;
@@ -94,7 +74,7 @@ public class ServerFailoverIntegrationTests(GeodeFixture fx)
             // hand it back srv1 (membership lag) and fall into the same
             // catch on connect-refused. Either path proves the retry
             // frame fires.
-            await _fx.GfshAsync("stop server --name=srv1", cts.Token);
+            await fx.GfshAsync("stop server --name=srv1", cts.Token);
 
             // Step 2 — drive enough traffic that the locator round-robin
             // has multiple chances to return srv1, and any cached conn
@@ -113,22 +93,14 @@ public class ServerFailoverIntegrationTests(GeodeFixture fx)
         }
         finally
         {
-            // Restart srv1 so any downstream tests in the same
-            // collection-fixture run see the full 3-server topology.
-            // Stop is permanent until the container is recycled, so the
-            // restart has to happen even on test failure — hence the
-            // try / finally rather than a separate Dispose path.
-            //
-            // --dir is left at gfsh's default (the container's working
-            // directory at exec time) since `_container.ExecAsync`
-            // doesn't carry the original `cd /work` from fixture init;
-            // membership rejoin only needs --locators, not the file
-            // layout, and the log file location for the relaunched srv1
-            // is incidental to test correctness.
-            await _fx.GfshAsync(
-                $"start server --name=srv1 --server-port={_fx.ServerPort} "
+            // Restart srv1 so downstream tests in the same collection
+            // fixture see the full 3-server topology again.
+            // --dir is left at gfsh's default; membership rejoin only
+            // needs --locators, log file location is incidental.
+            await fx.GfshAsync(
+                $"start server --name=srv1 --server-port={fx.ServerPort} "
                 + "--hostname-for-clients=localhost "
-                + $"--locators=localhost[{_fx.LocatorPort}],localhost[{_fx.LocatorPort2}]",
+                + $"--locators=localhost[{fx.LocatorPort}],localhost[{fx.LocatorPort2}]",
                 cts.Token);
         }
 

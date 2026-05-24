@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
 using Geode.Client.Protocol.Serialization;
-using Geode.Client.Services;
+using Geode.Client.Internal;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -32,14 +32,30 @@ namespace Geode.Client.Internal;
 internal sealed partial class ThinClientRegion(
     IServiceProvider serviceProvider,
     ILogger<ThinClientRegion> logger,
-    TcrMessageBuilder tcrMessageBuilder,
-    SerializationRegistry serializationRegistry,
-    EventIdGenerator eventIdGenerator,
+    //TcrMessageBuilder tcrMessageBuilder,
+    //SerializationRegistry serializationRegistry,
+    //EventIdGenerator eventIdGenerator,
     string name,
-    CacheRegionAttributesOptions attributes,
+    RegionAttributes attributes,
     ThinClientBaseDM dm)
     : LocalRegion(name, null, attributes)
 {
+    // One TcrMessageHelper per region — stateless apart from its
+    // logger, so we instantiate via ActivatorUtilities rather than
+    // registering as a DI service. Passed positionally to the
+    // ChunkedXxxResponse handlers so their primary ctor's positional
+    // arg resolves without TcrMessageHelper needing a DI alias.
+    private readonly TcrMessageHelper _tcrMessageHelper =
+        ActivatorUtilities.CreateInstance<TcrMessageHelper>(serviceProvider);
+
+    /// <summary>
+    /// Shortcut to the owning cache's <see cref="SerializationRegistry"/>;
+    /// chunked-reply handlers pass it positionally into per-chunk
+    /// <see cref="VersionedCacheableObjectPartList"/> ctors so the
+    /// registry doesn't need a DI alias.
+    /// </summary>
+    internal SerializationRegistry SerializationRegistry => dm.Cache.SerializationRegistry;
+
 
     /// <summary>
     /// Decode a value-bearing part the way cppcache
@@ -63,14 +79,14 @@ internal sealed partial class ThinClientRegion(
     {
         if (part.Payload.Length == 0)
         {
-            // lenObj==0, isObj==0: key absent. lenObj==0, isObj==2:
-            // empty byte[] (unsupported until BytesDataConverter).
+            // cppcache readObjectPart empty branch (TcrMessage.cpp:469-487):
+            //   IsObject=0 → key absent → null
+            //   IsObject=2 → empty byte[] sentinel
+            //   other → wire error
             return part.IsObject switch
             {
                 0 => null,
-                2 => throw new NotSupportedException(
-                    "Empty CacheableBytes (IsObject=2) reply not yet supported; " +
-                    "needs BytesDataConverter (Phase 1.2.c)."),
+                2 => Array.Empty<byte>(),
                 _ => throw new GeodeException(
                     $"Unexpected empty value part with IsObject={part.IsObject} " +
                     $"on Get '{FullPath}'."),
@@ -79,23 +95,21 @@ internal sealed partial class ThinClientRegion(
 
         if (part.IsObject == 1)
         {
-            // Standard DSCode-tagged path. Registry consumes the DSCode
-            // byte and dispatches to the converter (NullObj returns null).
-            var reader = new BigEndianBinaryReader(part.Payload);
-            return serializationRegistry.ReadObject(reader);
+            // Standard DSCode-tagged path. SerializationRegistry consumes
+            // the DSCode byte and dispatches to the converter (NullObj
+            // returns null).
+            var reader = new DataInput(part.Payload);
+            return dm.Cache.SerializationRegistry.ReadObject(reader);
         }
 
-        // IsObject=0 with non-empty payload = CacheableBytes shortcut
-        // (cppcache writeObjectPart's special-case). Phase 1.2 only
-        // exercises int32 values which always use IsObject=1; the
-        // shortcut path stays NIE until BytesDataConverter lands.
-        throw new NotSupportedException(
-            $"Get '{FullPath}': IsObject=0 raw-bytes shortcut reply " +
-            "not yet supported (needs BytesDataConverter, Phase 1.2.c).");
+        // IsObject=0 + non-empty payload = CacheableBytes shortcut
+        // (cppcache writeObjectPart's special-case). The shortcut emits
+        // raw bytes (no DSCode), server side reconstructs as byte[].
+        return part.Payload.ToArray();
     }
 
     [GeneratedRegex(@"^\s*(?:select|import)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant)]
-    private static partial Regex FullQueryRegex1();
+    private static partial Regex FullQueryRegex();
 
     /// <summary>
     /// Shared OQL routing for region convenience methods
@@ -130,16 +144,25 @@ internal sealed partial class ThinClientRegion(
             "Region::query: region={RegionPath}, predicate={Predicate}",
             FullPath, predicate);
 
-        var oql = FullQueryRegex1().IsMatch(predicate)
+        // cppcache ThinClientRegion.cpp:524-535 — if predicate is already
+        // a full OQL (starts with SELECT/IMPORT), pass through verbatim;
+        // otherwise wrap as `select distinct * from <FullPath> this where <pred>`.
+        // The `this` alias is required for `WHERE this = ...` /
+        // `WHERE this.field` to resolve server-side.
+        var oql = FullQueryRegex().IsMatch(predicate)
             ? predicate
             : $"select distinct * from {FullPath} this where {predicate}";
 
+        // Non-pool DM routing is deferred (memory pool-only-no-non-pool).
         if (dm is not ThinClientPoolDM poolDm)
         {
             throw new NotImplementedException(
                 "Non-pool DistributionManager query routing is not implemented.");
         }
 
+        // <object> mirrors cppcache shared_ptr<Serializable> — row type is
+        // untyped at the API boundary; TypedResultAdapter short-circuits to
+        // identity when the IRegion caller asks for object.
         var query = poolDm.QueryService.NewQuery<object>(oql);
         return await query.ExecuteAsync(ct).ConfigureAwait(false);
     }
@@ -176,7 +199,7 @@ internal sealed partial class ThinClientRegion(
                 $"part, got {part.Payload.Length} bytes.");
         }
 
-        var reader = new BigEndianBinaryReader(part.Payload);
+        var reader = new DataInput(part.Payload);
         return reader.ReadInt32();
     }
 
@@ -189,40 +212,25 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task ClearAsync(CancellationToken ct = default)
     {
+        // Mirrors cppcache ThinClientRegion::clear (ThinClientRegion.cpp:767-808)
+        // + TcrMessageClearRegion ctor (TcrMessage.cpp:1644-1682). Wire layout
+        // is 2 parts (Region + EventId); callback arg + response-timeout
+        // optional slots are skipped.
         logger.LogTrace("ClearAsync: region={RegionPath}", FullPath);
 
-        // Mirrors cppcache ThinClientRegion::clear
-        // (cppcache/src/ThinClientRegion.cpp:767-808) +
-        // TcrMessageClearRegion ctor (TcrMessage.cpp:1644-1682).
-        // localClearNoThrow + post-clear listener invocation are
-        // local-cache machinery — Phase 2+ when caching-enabled lands.
-        //
-        // ─── Step 1+2: build request frame ────────────────────
-        var (threadId, sequenceId) = eventIdGenerator.Next();
-        var request = await tcrMessageBuilder.ClearRegionAsync(
-            regionName: FullPath,
-            eventThreadId: threadId,
-            eventSequenceId: sequenceId,
-            ct: ct);
+        var (threadId, sequenceId) = dm.Cache.EventIdGenerator.Next();
+        var request = await TcrMessageBuilder
+            .Create(serviceProvider, MessageType.ClearRegion)
+            .AddRegionNamePart(FullPath)
+            .AddEventIdPart(threadId, sequenceId)
+            .BuildAsync(ct);
 
-        // ─── Step 3: dispatch via DM ─────────────────────────
-        var reply = await dm
-            .SendSyncRequestAsync(request, ct: ct)
-            .ConfigureAwait(false);
+        var reply = await dm.SendSyncRequestAsync(request, ct: ct).ConfigureAwait(false);
 
-        // ─── Step 4: reply decoding ──────────────────────────
-        // cppcache clear reply switch
-        // (ThinClientRegion.cpp:782-802):
-        //   REPLY                    → success + LogDebug breadcrumb
-        //   EXCEPTION                → throw
-        //   CLEAR_REGION_DATA_ERROR  → throw (cppcache LogError "endpoint X")
-        //   default                  → throw
         switch (reply.MessageType)
         {
             case MessageType.Reply:
-                logger.LogDebug(
-                    "Region {RegionPath} clear message sent to server successfully",
-                    FullPath);
+                logger.LogDebug("Region {RegionPath} clear sent to server", FullPath);
                 return;
 
             case MessageType.Exception:
@@ -231,16 +239,10 @@ internal sealed partial class ThinClientRegion(
                     TcrMessageHelper.DecodeExceptionPreview(reply));
 
             case MessageType.ClearRegionDataError:
-                logger.LogError(
-                    "Region clear read error occurred on endpoint for region {RegionPath}",
-                    FullPath);
                 throw new GeodeException(
                     $"Server returned ClearRegionDataError on '{FullPath}'.");
 
             default:
-                logger.LogError(
-                    "Unknown message type {MessageType} during region clear on {RegionPath}",
-                    reply.MessageType, FullPath);
                 throw new GeodeException(
                     $"Unexpected reply type {reply.MessageType} for Clear on '{FullPath}'.");
         }
@@ -250,37 +252,21 @@ internal sealed partial class ThinClientRegion(
     {
         logger.LogTrace("ContainsKeyAsync: region={RegionPath}, key={Key}", FullPath, key);
 
-        // Mirrors cppcache ThinClientRegion::containsKeyOnServer
-        // (cppcache/src/ThinClientRegion.cpp:676-720) +
-        // TcrMessageContainsKey ctor (TcrMessage.cpp:1808-1843).
-        //
-        // ─── Step 1+2: build request frame ────────────────────
-        // Region FullPath + DSCode-tagged key via
-        // SerializationRegistry; partial source:
-        // Protocol/TcrMessageBuilder.ContainsKey.cs.
-        var request = await tcrMessageBuilder.ContainsKeyAsync(FullPath, key, ct: ct);
+        var request = await TcrMessageBuilder
+            .Create(serviceProvider, MessageType.ContainsKey)
+            .AddRegionNamePart(FullPath)
+            .AddKeyPart(dm.Cache, key)
+            .AddInt32Part(0) // 0 = containsKey, 1 = containsValueForKey (cppcache TcrMessage.cpp:1837)
+            .BuildAsync(ct);
 
-        // ─── Step 3: dispatch via DM ─────────────────────────
-        // ThinClientPoolDM.SendSyncRequestAsync picks the (single in
-        // MVP) endpoint, routes through SendRequestToEndpointAsync
-        // (conn borrow / fallback create / send / put-back).
-        var reply = await dm
-            .SendSyncRequestAsync(request, ct: ct)
-            .ConfigureAwait(false);
+        var reply = await dm.SendSyncRequestAsync(request, ct: ct).ConfigureAwait(false);
 
-        // ─── Step 4: reply decoding ──────────────────────────
-        // cppcache containsKeyOnServer reply switch
-        // (ThinClientRegion.cpp:691-712): Response → bool, Exception
-        // → throw, anything else → throw.
         switch (reply.MessageType)
         {
             case MessageType.Response:
                 {
-                    // Part 0 payload = [DSCode.CacheableBoolean][0/1].
-                    // Registry consumes the DSCode and dispatches to
-                    // BooleanDataConverter for the 1-byte body.
-                    var partReader = new BigEndianBinaryReader(reply.Parts[0].Payload);
-                    var value = serializationRegistry.ReadObject(partReader);
+                    var partReader = new DataInput(reply.Parts[0].Payload);
+                    var value = dm.Cache.SerializationRegistry.ReadObject(partReader);
                     if (value is bool b)
                     {
                         return b;
@@ -312,196 +298,115 @@ internal sealed partial class ThinClientRegion(
     public override async Task<IReadOnlyDictionary<object, object?>> GetAllAsync(
         IReadOnlyCollection<object> keys, CancellationToken ct = default)
     {
+        // Mirrors cppcache ThinClientRegion::getAllNoThrow_remote
+        // (ThinClientRegion.cpp:1089-1172) + TcrMessageGetAll ctor
+        // (TcrMessage.cpp:2470-2502). Wire: 3 parts (Region + keys-as-
+        // CacheableObjectArray + int(0) callback placeholder).
         ArgumentNullException.ThrowIfNull(keys);
         if (keys.Count == 0)
         {
-            throw new ArgumentException(
-                "GetAll requires at least one key.", nameof(keys));
+            throw new ArgumentException("GetAll requires at least one key.", nameof(keys));
         }
 
-        logger.LogTrace(
-            "GetAllAsync: region={RegionPath}, keyCount={KeyCount}",
-            FullPath, keys.Count);
+        logger.LogTrace("GetAllAsync: region={RegionPath}, keyCount={KeyCount}", FullPath, keys.Count);
 
-        // Mirrors cppcache ThinClientRegion::getAllNoThrow_remote
-        // (cppcache/src/ThinClientRegion.cpp:1089-1172) +
-        // TcrMessageGetAll ctor (TcrMessage.cpp:2470-2523).
-
-        // ─── Step 1: materialise keys for positional access ───
-        // The chunked reply indexes back into the original key list via
-        // Keys[index + keysOffset] (cppcache passes &m_keys to each
-        // per-chunk VersionedCacheableObjectPartList); the caller's
-        // IReadOnlyCollection<object> is not indexable. Cheap fast path
-        // for the common case where RegionView already produced an
-        // object[] (see RegionView.GetAllAsync's boxing step).
+        // Materialise to IReadOnlyList<object> so the chunked handler can
+        // index by position (cppcache passes &m_keys to per-chunk VCOPL).
         var keyList = keys as IReadOnlyList<object> ?? [.. keys];
 
-        // ─── Step 2: build request frame ──────────────────────
-        // 3 parts (region / keys-as-CacheableObjectArray / int(0)
-        // callback placeholder); see TcrMessageBuilder.GetAll.cs for
-        // the layout discussion. No EventId — GetAll has no per-key
-        // mutation concept, so the EventIdGenerator isn't touched.
-        var request = await tcrMessageBuilder.GetAllAsync(
-            regionName: FullPath,
-            keys: keyList,
-            ct: ct);
+        var request = await TcrMessageBuilder
+            .Create(serviceProvider, MessageType.GetAll70)
+            .AddRegionNamePart(FullPath)
+            .AddValuePart(dm.Cache, keyList.ToArray())   // CacheableObjectArray DSCode + N elements
+            .AddInt32Part(0)                              // callback placeholder
+            .BuildAsync(ct);
 
-        // ─── Step 3: register chunked-result + dispatch ──────
-        // cppcache hangs a fresh ChunkedGetAllResponse off the
-        // TcrMessageReply via setChunkedResultHandler before the send;
-        // our DM overload takes the handler directly. The handler
-        // accumulates the per-key result into its Values dict across
-        // all chunks; we read it back after dispatch returns.
-        //
-        // addToLocalCache semantics mirror cppcache exactly
-        // (ThinClientRegion.cpp:1100):
-        //   addToLocalCache = caller-requested && caching-enabled
-        // cppcache LocalRegion::getAll_internal hard-codes the
-        // caller-requested side to `true` (LocalRegion.cpp:585), so the
-        // effective value collapses to whatever caching-enabled is.
-        // Phase 1.3 MVP regions are proxy-only (caching-enabled false /
-        // null → false), so this lands at false today and the VCOPL
-        // step-7 putLocal merge stays skipped. Wiring it through now
-        // (not hard-coding false here) keeps the Phase 4+ retrofit a
-        // one-line attribute flip instead of a call-graph edit.
-        //
-        // updateCountMap / destroyTracker — same Phase 4+ (client-side
-        // caching) concerns; cppcache populates them ahead of the
-        // request and prunes after, but only when addToLocalCache &&
-        // !concurrencyChecksEnabled. Phase 1.3 skips both.
-        const bool addToLocalCacheRequested = true; // cppcache LocalRegion::getAll_internal default
-        var addToLocalCache = addToLocalCacheRequested
-            && (Attributes.CachingEnabled ?? false); // null = unspecified, treat as false (cppcache default for proxy)
+        // addToLocalCache mirrors cppcache LocalRegion::getAll_internal default
+        // (caller-requested=true) AND caching-enabled. Proxy regions
+        // (caching=false) collapse to false; VCOPL.FromData step 7 stays
+        // skipped. Phase 4+ retrofit: flip when client-side caching ships.
+        var addToLocalCache = Attributes.CachingEnabled;
 
         var chunkedResult = ActivatorUtilities.CreateInstance<ChunkedGetAllResponse>(
-            serviceProvider, this, keyList, addToLocalCache);
+            serviceProvider, _tcrMessageHelper, this, keyList, addToLocalCache);
         var reply = await dm
             .SendSyncRequestAsync(request, chunkedResult, ct: ct)
             .ConfigureAwait(false);
 
-        // ─── Step 4: reply decoding ──────────────────────────
-        // cppcache reply switch (ThinClientRegion.cpp:1148-1170):
-        //   RESPONSE           → success (chunks already populated Values)
-        //   EXCEPTION          → throw GeodeException
-        //   GET_ALL_DATA_ERROR → throw GeodeException (LogError "endpoint X")
-        //   default            → throw GeodeException (LogError "Unknown")
         switch (reply.MessageType)
         {
             case MessageType.Response:
-                break;
+                return chunkedResult.Values;
 
             case MessageType.Exception:
-                // cppcache surfaces server-side exception text via
-                // reply.getException(); our chunked path leaves the
-                // exception bytes inside the handler (Phase 1.3 doesn't
-                // decode them — same gap as PutAll / RemoveAll).
                 throw new GeodeException(
-                    $"Server exception on GetAll '{FullPath}' "
-                    + $"(keyCount={keys.Count}).");
+                    $"Server exception on GetAll '{FullPath}' (keyCount={keys.Count}).");
 
             case MessageType.GetAllDataError:
-                logger.LogError(
-                    "Region get-all: a read error occurred on the endpoint for region {RegionPath}",
-                    FullPath);
-                throw new GeodeException(
-                    $"Server returned GetAllDataError on '{FullPath}'.");
+                throw new GeodeException($"Server returned GetAllDataError on '{FullPath}'.");
 
             default:
-                logger.LogError(
-                    "Unknown message type {MessageType} during region get-all on {RegionPath}",
-                    reply.MessageType, FullPath);
                 throw new GeodeException(
                     $"Unexpected reply type {reply.MessageType} for GetAll on '{FullPath}'.");
         }
-
-        // ─── Step 5: return result ───────────────────────────
-        // chunkedResult.Values is Dictionary<object, object?> exposed as
-        // IReadOnlyDictionary<object, object?>; the caller (RegionView /
-        // user) can't mutate it after return. Missing-on-server keys
-        // appear with null value (cppcache m_byteArray[i]==3 stores
-        // null) — the public XML doc on IRegion.GetAllAsync calls this
-        // out.
-        return chunkedResult.Values;
     }
+
 
     public override async Task<object?> GetAsync(object key, CancellationToken ct = default)
     {
-        ArgumentNullException.ThrowIfNull(key);
-
         logger.LogTrace("GetAsync: region={RegionPath}, key={Key}", FullPath, key);
+        var request = await TcrMessageBuilder
+          .Create(serviceProvider, MessageType.Request)
+          .AddRegionNamePart(FullPath)
+          .AddKeyPart(dm.Cache, key)
+          .BuildAsync(ct);
 
-        // Mirrors cppcache ThinClientRegion::getNoThrow_remote
-        // (cppcache/src/ThinClientRegion.cpp:810-850) +
-        // TcrMessageRequest ctor (TcrMessage.cpp:1858-1898).
-        //
-        // ─── Step 1+2: build request frame ────────────────────
-        var request = await tcrMessageBuilder.GetAsync(FullPath, key, ct: ct);
-
-        // ─── Step 3: dispatch via DM ─────────────────────────
         var reply = await dm
             .SendSyncRequestAsync(request, ct: ct)
             .ConfigureAwait(false);
 
-        // ─── Step 4: reply decoding ──────────────────────────
-        // cppcache getNoThrow_remote reply switch
-        // (ThinClientRegion.cpp:826-849): Response → value /
-        // Exception → throw / REQUEST_DATA_ERROR → throw /
-        // anything else → throw.
         switch (reply.MessageType)
         {
             case MessageType.Response:
                 if (reply.Parts.Count == 0)
                 {
-                    throw new GeodeException(
-                        $"Get on '{FullPath}': Response with zero parts.");
+                    throw new GeodeException($"Get on '{FullPath}': Response with zero parts.");
                 }
                 return DecodeValuePart(reply.Parts[0]);
 
             case MessageType.Exception:
-                throw new GeodeException(
-                    $"Server exception on Get '{FullPath}': " +
+                throw new GeodeException($"Server exception on Get '{FullPath}': " +
                     TcrMessageHelper.DecodeExceptionPreview(reply));
 
             default:
-                throw new GeodeException(
-                    $"Unexpected reply type {reply.MessageType} for Get on '{FullPath}'.");
+                throw new GeodeException($"Unexpected reply type {reply.MessageType} for Get on '{FullPath}'.");
         }
     }
 
     public override async Task InvalidateAsync(object key, CancellationToken ct = default)
     {
+        // Mirrors cppcache ThinClientRegion::invalidateNoThrow_remote
+        // (ThinClientRegion.cpp:852-886) + TcrMessageInvalidate ctor
+        // (TcrMessage.cpp:1896-1932). Wire: 3 parts (Region + Key + EventId);
+        // callback arg optional slot skipped.
         ArgumentNullException.ThrowIfNull(key);
-
         logger.LogTrace("InvalidateAsync: region={RegionPath}, key={Key}", FullPath, key);
 
-        // Mirrors cppcache ThinClientRegion::invalidateNoThrow_remote
-        // (cppcache/src/ThinClientRegion.cpp:852-886) +
-        // TcrMessageInvalidate ctor (TcrMessage.cpp:1896-1932).
-        //
-        // ─── Step 1+2: build request frame ────────────────────
-        var (threadId, sequenceId) = eventIdGenerator.Next();
-        var request = await tcrMessageBuilder.InvalidateAsync(
-            regionName: FullPath,
-            key: key,
-            eventThreadId: threadId,
-            eventSequenceId: sequenceId,
-            ct: ct);
+        var (threadId, sequenceId) = dm.Cache.EventIdGenerator.Next();
+        var request = await TcrMessageBuilder
+            .Create(serviceProvider, MessageType.Invalidate)
+            .AddRegionNamePart(FullPath)
+            .AddKeyPart(dm.Cache, key)
+            .AddEventIdPart(threadId, sequenceId)
+            .BuildAsync(ct);
 
-        // ─── Step 3: dispatch via DM ─────────────────────────
-        var reply = await dm
-            .SendSyncRequestAsync(request, ct: ct)
-            .ConfigureAwait(false);
+        var reply = await dm.SendSyncRequestAsync(request, ct: ct).ConfigureAwait(false);
 
-        // ─── Step 4: reply decoding ──────────────────────────
-        // cppcache invalidateNoThrow_remote reply switch
-        // (ThinClientRegion.cpp:865-884):
-        //   REPLY            → success (versionTag dropped Phase 1.2-style)
-        //   EXCEPTION        → throw
-        //   INVALIDATE_ERROR → throw
-        //   default          → throw
         switch (reply.MessageType)
         {
             case MessageType.Reply:
+                // cppcache REPLY branch reads versionTag here; Phase 4
+                // concurrency-checks territory, dropped for now.
                 return;
 
             case MessageType.Exception:
@@ -521,6 +426,10 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task PutAllAsync(IReadOnlyDictionary<object, object> map, CancellationToken ct = default)
     {
+        // Mirrors cppcache ThinClientRegion::multiHopPutAllNoThrow_remote
+        // (ThinClientRegion.cpp:1476-1540) + TcrMessagePutAll ctor
+        // (TcrMessage.cpp:2354-2422). Wire: 5 + 2N parts (Region +
+        // EventId + reserved-i32(0) + flags + count + N*(Key, Value)).
         ArgumentNullException.ThrowIfNull(map);
         if (map.Count == 0)
         {
@@ -528,83 +437,64 @@ internal sealed partial class ThinClientRegion(
                 "PutAll requires at least one entry.", nameof(map));
         }
 
-        logger.LogTrace(
-            "PutAllAsync: region={RegionPath}, entryCount={EntryCount}",
-            FullPath, map.Count);
+        logger.LogTrace("PutAllAsync: region={RegionPath}, entryCount={EntryCount}", FullPath, map.Count);
 
-        // Mirrors cppcache ThinClientRegion::multiHopPutAllNoThrow_remote
-        // (cppcache/src/ThinClientRegion.cpp:1476-1540) +
-        // TcrMessagePutAll ctor (TcrMessage.cpp:2354-2422).
+        // cppcache writeEventIdPart(map.size() - 1): only the base
+        // (threadId, baseSeq) hits the wire; local sequence counter
+        // advances by N so subsequent ops dont reuse the per-entry
+        // logical ids the server derives as baseSeq+i.
+        var (threadId, baseSequenceId) = dm.Cache.EventIdGenerator.NextRange(map.Count);
 
-        // ─── Step 1: reserve N event ids ──────────────────────
-        // cppcache writeEventIdPart(map.size() - 1): only one
-        // (threadId, baseSeq) pair goes on the wire, but the
-        // per-thread sequence counter is bumped by N-1 extra slots so
-        // the server can dedup each entry's logical event as
-        // (clientId, threadId, baseSeq+i) for i ∈ [0, N). Same scheme
-        // as RemoveAll — NextRange does the Interlocked.Add(N) under
-        // the hood.
-        var (threadId, baseSequenceId) = eventIdGenerator.NextRange(map.Count);
+        // cppcache TcrMessage.cpp:2396-2404 flags byte:
+        //   1 = EMPTY (no client-side caching), 2 = concurrency checks.
+        const int FlagEmpty = 1;
+        const int FlagConcurrencyChecks = 2;
+        var flags = 0;
+        if (!Attributes.CachingEnabled) flags |= FlagEmpty;
+        if (Attributes.ConcurrencyChecksEnabled) flags |= FlagConcurrencyChecks;
 
-        // ─── Step 2: build request frame ──────────────────────
-        // 5+2N parts (region / eventId / skipCallbacks=0 / flags=0 /
-        // count / N×(key,value)); see TcrMessageBuilder.PutAll.cs
-        // for the layout discussion.
-        var request = await tcrMessageBuilder.PutAllAsync(
-            regionName: FullPath,
-            map: map,
-            eventThreadId: threadId,
-            eventSequenceId: baseSequenceId,
-            ct: ct);
+        var builder = TcrMessageBuilder
+            .Create(serviceProvider, MessageType.PutAll)
+            .AddRegionNamePart(FullPath)
+            .AddEventIdPart(threadId, baseSequenceId)
+            .AddInt32Part(0)            // reserved (cppcache writeIntPart(0))
+            .AddInt32Part(flags)
+            .AddInt32Part(map.Count);
+        foreach (var kvp in map)
+        {
+            builder = builder
+                .AddKeyPart(dm.Cache, kvp.Key)
+                .AddValuePart(dm.Cache, kvp.Value);
+        }
+        var request = await builder.BuildAsync(ct);
 
-        // ─── Step 3: register chunked-result + dispatch ──────
-        // cppcache hangs a fresh ChunkedPutAllResponse off the
-        // TcrMessageReply via setChunkedResultHandler before the send;
-        // our DM overload takes the handler directly. Phase 1.3 drops
-        // per-key version tags on the floor, but the handler still has
-        // to drain chunk bodies so the reader loop terminates cleanly.
-        var chunkedResult = ActivatorUtilities.CreateInstance<ChunkedPutAllResponse>(serviceProvider, this);
+        // Chunked reply  per-key version tags dropped on the floor
+        // (RemoveAll/PutAll only ship tags, no values). Handler still
+        // drains chunks so the reader loop terminates cleanly.
+        var chunkedResult = ActivatorUtilities.CreateInstance<ChunkedPutAllResponse>(
+            serviceProvider, _tcrMessageHelper, this);
         var reply = await dm
             .SendSyncRequestAsync(request, chunkedResult, ct: ct)
             .ConfigureAwait(false);
 
-        // ─── Step 4: reply decoding ──────────────────────────
-        // cppcache reply switch (ThinClientRegion.cpp:1512-1538):
-        //   REPLY           → success, no log
-        //   RESPONSE        → success + LogDebug breadcrumb
-        //   EXCEPTION       → throw GeodeException (cppcache handleServerException)
-        //   PUT_DATA_ERROR  → throw GeodeException (cppcache GF_CACHESERVER_EXCEPTION)
-        //   default         → throw GeodeException (cppcache LogError "Unknown message type")
         switch (reply.MessageType)
         {
             case MessageType.Reply:
                 return;
 
             case MessageType.Response:
-                logger.LogDebug(
-                    "multiHopPutAllNoThrow_remote TcrMessage::RESPONSE {RegionPath}",
-                    FullPath);
+                logger.LogDebug("PutAll on {RegionPath} responded RESPONSE", FullPath);
                 return;
 
             case MessageType.Exception:
-                // cppcache surfaces server-side exception text via
-                // reply.getException(); our chunked path leaves exception
-                // bytes inside the handler (Phase 1.3 doesn't decode them
-                // — same gap as RemoveAll). Throw with the message type;
-                // surfacing exception text lands when an integration test
-                // demands it.
                 throw new GeodeException(
-                    $"Server exception on PutAll '{FullPath}' "
-                    + $"(entryCount={map.Count}).");
+                    $"Server exception on PutAll '{FullPath}' (entryCount={map.Count}).");
 
             case MessageType.PutDataError:
                 throw new GeodeException(
                     $"Server returned PutDataError on PutAll '{FullPath}'.");
 
             default:
-                logger.LogError(
-                    "Unknown message type {MessageType} during region put-all on {RegionPath}",
-                    reply.MessageType, FullPath);
                 throw new GeodeException(
                     $"Unexpected reply type {reply.MessageType} for PutAll on '{FullPath}'.");
         }
@@ -612,54 +502,33 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task PutAsync(object key, object value, CancellationToken ct = default)
     {
-        ArgumentNullException.ThrowIfNull(key);
-        ArgumentNullException.ThrowIfNull(value);
-
         logger.LogTrace("PutAsync: region={RegionPath}, key={Key}", FullPath, key);
+        var (threadId, sequenceId) = dm.Cache.EventIdGenerator.Next();
+        var request = await TcrMessageBuilder
+         .Create(serviceProvider, MessageType.Put)   // cppcache TcrMessage.cpp:1999 — m_msgType = TcrMessage::PUT
+         .AddRegionNamePart(FullPath)
+         .AddNullObjectPart()
+         .AddInt32Part(0)
+         .AddKeyPart(dm.Cache, key)
+         .AddCacheableBooleanPart(false)  // isDelta
+         .AddValuePart(dm.Cache, value)
+         .AddEventIdPart(threadId, sequenceId)
+         .BuildAsync(ct);
 
-        // Mirrors cppcache ThinClientRegion::putNoThrow_remote
-        // (cppcache/src/ThinClientRegion.cpp:888-947) +
-        // TcrMessagePut ctor (TcrMessage.cpp:1989-2034).
-        //
-        // ─── Step 1+2: build request frame ────────────────────
-        // Region FullPath + DSCode-tagged key/value/callback via
-        // SerializationRegistry; EventId pair from the per-cache
-        // generator (cppcache EventIdTSS::initFromTSS). Delta is hard-
-        // coded false — Phase 4 territory.
-        var (threadId, sequenceId) = eventIdGenerator.Next();
-        var request = await tcrMessageBuilder.PutAsync(
-            regionName: FullPath,
-            key: key,
-            value: value,
-            callbackArgument: null,
-            eventThreadId: threadId,
-            eventSequenceId: sequenceId,
-            ct: ct);
-
-        // ─── Step 3: dispatch via DM ─────────────────────────
-        // ThinClientPoolDM.SendSyncRequestAsync picks the (single in
-        // MVP) endpoint, routes through SendRequestToEndpointAsync
-        // (conn borrow / fallback create / send / put-back).
         var reply = await dm
             .SendSyncRequestAsync(request, ct: ct)
             .ConfigureAwait(false);
 
-        // ─── Step 4: reply decoding ──────────────────────────
-        // cppcache putNoThrow_remote reply switch
-        // (ThinClientRegion.cpp:928-947): Reply OK / Exception → throw
-        // / PUT_DATA_ERROR → throw / anything else → throw.
+
         switch (reply.MessageType)
         {
             case MessageType.Reply:
-                // cppcache REPLY branch reads versionTag here; we don't
-                // surface version tags yet (Phase 4 concurrency checks).
                 return;
 
             case MessageType.Exception:
                 throw new GeodeException(
                     $"Server exception on Put '{FullPath}': " +
                     TcrMessageHelper.DecodeExceptionPreview(reply));
-
             default:
                 throw new GeodeException(
                     $"Unexpected reply type {reply.MessageType} for Put on '{FullPath}'.");
@@ -668,6 +537,10 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task RemoveAllAsync(IReadOnlyCollection<object> keys, CancellationToken ct = default)
     {
+        // Mirrors cppcache ThinClientRegion::multiHopRemoveAllNoThrow_remote
+        // (ThinClientRegion.cpp:1810-1863) + TcrMessageRemoveAll ctor
+        // (TcrMessage.cpp:2424-2468). Wire: 5 + N parts (Region +
+        // EventId + flags + NullObj(callback) + count + N*Key).
         ArgumentNullException.ThrowIfNull(keys);
         if (keys.Count == 0)
         {
@@ -675,78 +548,47 @@ internal sealed partial class ThinClientRegion(
                 "RemoveAll requires at least one key.", nameof(keys));
         }
 
-        logger.LogTrace(
-            "RemoveAllAsync: region={RegionPath}, keyCount={KeyCount}",
-            FullPath, keys.Count);
+        logger.LogTrace("RemoveAllAsync: region={RegionPath}, keyCount={KeyCount}", FullPath, keys.Count);
 
-        // Mirrors cppcache ThinClientRegion::multiHopRemoveAllNoThrow_remote
-        // (cppcache/src/ThinClientRegion.cpp:1810-1863) +
-        // TcrMessageRemoveAll ctor (TcrMessage.cpp:2424-2468).
+        var (threadId, baseSequenceId) = dm.Cache.EventIdGenerator.NextRange(keys.Count);
 
-        // ─── Step 1+2: build request frame ────────────────────
-        // EventIdGenerator.NextRange reserves N consecutive seq ids in
-        // one Interlocked op so the server can dedup each key's event
-        // as (clientId, threadId, baseSeq+i) for i ∈ [0, N).
-        // cppcache writeEventIdPart(keys.size()-1) parity.
-        var (threadId, baseSequenceId) = eventIdGenerator.NextRange(keys.Count);
-        var request = await tcrMessageBuilder.RemoveAllAsync(
-            regionName: FullPath,
-            keys: keys,
-            eventThreadId: threadId,
-            eventSequenceId: baseSequenceId,
-            ct: ct);
+        const int FlagEmpty = 1;
+        const int FlagConcurrencyChecks = 2;
+        var flags = 0;
+        if (!Attributes.CachingEnabled) flags |= FlagEmpty;
+        if (Attributes.ConcurrencyChecksEnabled) flags |= FlagConcurrencyChecks;
 
-        // ─── Step 3: register chunked-result + dispatch ──────
-        // cppcache hangs a fresh ChunkedRemoveAllResponse off the
-        // TcrMessageReply via setChunkedResultHandler before the send;
-        // our DM overload takes the handler directly. Phase 1.3 drops
-        // per-key version tags / miss flags on the floor, but the
-        // handler still has to drain chunk bodies so the reader loop
-        // terminates cleanly.
-        //
-        // TODOs still pending (each throws NotImplementedException
-        // today, surfaced through this call stack):
-        // [ ] ThinClientPoolDM.SendSyncRequestAsync(req, handler, ...)
-        //     body — currently NIE; needs SelectEndpoint → AddEP →
-        //     SendRequestToEndpointAsync(req, handler, ep, ct).
-        // [ ] SendRequestToEndpointAsync chunked overload — borrow
-        //     conn → TcrConnection.SendRequestAsync(req, handler, ct)
-        //     → put-back / disconnect-on-error.
-        // [ ] ChunkedRemoveAllResponse.HandleChunk / Reset — currently
-        //     NIE; needs VersionedCacheableObjectPartList decoder
-        //     (Phase 1.3.b step 5).
-        var chunkedResult = ActivatorUtilities.CreateInstance<ChunkedRemoveAllResponse>(serviceProvider, this);
+        var builder = TcrMessageBuilder
+            .Create(serviceProvider, MessageType.RemoveAll)
+            .AddRegionNamePart(FullPath)
+            .AddEventIdPart(threadId, baseSequenceId)
+            .AddInt32Part(flags)
+            .AddNullObjectPart()        // callback arg = null
+            .AddInt32Part(keys.Count);
+        foreach (var key in keys)
+        {
+            builder = builder.AddKeyPart(dm.Cache, key);
+        }
+        var request = await builder.BuildAsync(ct);
+
+        var chunkedResult = ActivatorUtilities.CreateInstance<ChunkedRemoveAllResponse>(
+            serviceProvider, _tcrMessageHelper, this);
         var reply = await dm
             .SendSyncRequestAsync(request, chunkedResult, ct: ct)
             .ConfigureAwait(false);
 
-        // ─── Step 4: reply decoding ──────────────────────────
-        // cppcache reply switch (ThinClientRegion.cpp:1841-1862):
-        //   REPLY     → success (cppcache's "no chunks needed" branch)
-        //   RESPONSE  → success (chunks already consumed by handler)
-        //   EXCEPTION → throw
-        //   default   → throw
         switch (reply.MessageType)
         {
             case MessageType.Reply:
             case MessageType.Response:
                 logger.LogDebug(
-                    "Region {RegionPath} removeAll of {KeyCount} keys acked by server " +
-                    "(type={MessageType})",
+                    "RemoveAll on {RegionPath} of {KeyCount} keys acked (type={MessageType})",
                     FullPath, keys.Count, reply.MessageType);
                 return;
 
             case MessageType.Exception:
-                // cppcache surfaces the server-side exception text via
-                // reply.getException(); our chunked path leaves
-                // exception bytes inside the handler (Phase 1.3 doesn't
-                // decode them — the handler is RemoveAll-shaped). For
-                // now we throw with just the message type; surfacing
-                // exception text lands when an integration test
-                // demands it.
                 throw new GeodeException(
-                    $"Server exception on RemoveAll '{FullPath}' " +
-                    $"(keyCount={keys.Count}).");
+                    $"Server exception on RemoveAll '{FullPath}' (keyCount={keys.Count}).");
 
             default:
                 throw new GeodeException(
@@ -756,55 +598,35 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task<bool> RemoveAsync(object key, CancellationToken ct = default)
     {
+        // Mirrors cppcache ThinClientRegion::destroyNoThrow_remote
+        // (ThinClientRegion.cpp:959-999) + TcrMessageDestroy ctor null-value
+        // branch (TcrMessage.cpp:1974-1985). Wire: 5 parts
+        // (Region + Key + NullObj(expectedOldValue) + NullObj(operation) + EventId).
         ArgumentNullException.ThrowIfNull(key);
-
         logger.LogTrace("RemoveAsync: region={RegionPath}, key={Key}", FullPath, key);
 
-        // Mirrors cppcache ThinClientRegion::destroyNoThrow_remote
-        // (cppcache/src/ThinClientRegion.cpp:959-999) +
-        // TcrMessageDestroy ctor value=null branch
-        // (TcrMessage.cpp:1934-1986).
-        //
-        // ─── Step 1+2: build request frame ────────────────────
-        var (threadId, sequenceId) = eventIdGenerator.Next();
-        var request = await tcrMessageBuilder.DestroyAsync(
-            regionName: FullPath,
-            key: key,
-            eventThreadId: threadId,
-            eventSequenceId: sequenceId,
-            ct: ct);
+        var (threadId, sequenceId) = dm.Cache.EventIdGenerator.Next();
+        var request = await TcrMessageBuilder
+            .Create(serviceProvider, MessageType.Destroy)
+            .AddRegionNamePart(FullPath)
+            .AddKeyPart(dm.Cache, key)
+            .AddNullObjectPart()    // expectedOldValue = null
+            .AddNullObjectPart()    // operation = null (server treats as plain DESTROY)
+            .AddEventIdPart(threadId, sequenceId)
+            .BuildAsync(ct);
 
-        // ─── Step 3: dispatch via DM ─────────────────────────
-        var reply = await dm
-            .SendSyncRequestAsync(request, ct: ct)
-            .ConfigureAwait(false);
+        var reply = await dm.SendSyncRequestAsync(request, ct: ct).ConfigureAwait(false);
 
-        // ─── Step 4: reply decoding ──────────────────────────
-        // cppcache destroyNoThrow_remote reply switch
-        // (ThinClientRegion.cpp:973-998):
-        //   REPLY → check entryNotFound flag → success xor "not found"
-        //   EXCEPTION → throw
-        //   DESTROY_DATA_ERROR → throw
-        //   default → throw
         switch (reply.MessageType)
         {
             case MessageType.Reply:
-                {
-                    // Reply body layout for Destroy (cppcache
-                    // TcrMessage.cpp:1317-1330):
-                    //   Part flags         i32   (always present)
-                    //   Part versionTag    var   (only if flags & 0x01)
-                    //   Part prMetaData    1-2 bytes
-                    //   Part entryNotFound i32   (0 = destroyed, 1 = absent)
-                    //
-                    // Phase 1.2 doesn't drive concurrency checks (flags
-                    // stays 0 so no versionTag), so the entryNotFound
-                    // part is the last in the list — that's the
-                    // contract we read against until version-tag
-                    // handling lands and we walk parts in order.
-                    var entryNotFound = ReadDestroyEntryNotFound(reply);
-                    return entryNotFound == 0;
-                }
+                // Reply body layout (cppcache TcrMessage.cpp:1317-1330):
+                //   flags i32 + (versionTag if flags & 0x01) + prMetaData
+                //   + entryNotFound i32.  Phase 1.x doesn't drive
+                //   concurrency-checks so flags stays 0, no versionTag,
+                //   and entryNotFound lives in the last part.
+                var entryNotFound = ReadDestroyEntryNotFound(reply);
+                return entryNotFound == 0;
 
             case MessageType.Exception:
                 throw new GeodeException(

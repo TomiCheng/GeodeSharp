@@ -17,3 +17,4 @@ namespace Geode.Client.Internal;
 /// roadmap (see <c>ThinClientPoolDM.UpdateLocatorsLocalAsync</c>).
 /// </remarks>
 internal sealed record ServerLocation(string Host, int Port);
+

@@ -1,5 +1,5 @@
 using Geode.Client.Options;
-using Geode.Client.Services;
+using Geode.Client.Internal;
 using Microsoft.Extensions.Logging;
 
 namespace Geode.Client.Internal;
@@ -22,10 +22,10 @@ namespace Geode.Client.Internal;
 internal sealed class ThinClientPoolHADM(
     IServiceProvider serviceProvider,
     ILogger<ThinClientPoolDM> logger,
-    CachePoolOptions xmlPool,
-    GeodeClientOptions options,
-    TcrConnectionManager connManager)
-    : ThinClientPoolDM(serviceProvider, logger, xmlPool, options, connManager)
+    PoolManager poolManager,
+    string name,
+    PoolAttributes attributes)
+    : ThinClientPoolDM(serviceProvider, logger, poolManager, name, attributes)
 {
     /// <summary>
     /// Drop this HA pool's subscription-channel reference to
@@ -44,3 +44,4 @@ internal sealed class ThinClientPoolHADM(
         return Task.CompletedTask;
     }
 }
+

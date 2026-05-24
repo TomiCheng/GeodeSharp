@@ -41,9 +41,9 @@ namespace Geode.Client.Protocol.Serialization;
 /// </remarks>
 internal sealed class DateTimeDataConverter : DataConverter<DateTime>
 {
-    private static readonly byte[] s_dsCodes = { DSCode.CacheableDate };
+    private static readonly byte[] _dsCodes = { DSCode.CacheableDate };
 
-    public override byte[] DsCodes => s_dsCodes;
+    public override byte[] DsCodes => _dsCodes;
 
     public override ValueTask WriteAsync(DataOutput writer, DateTime value, byte dsCode, int depth, CancellationToken ct)
     {
@@ -65,7 +65,7 @@ internal sealed class DateTimeDataConverter : DataConverter<DateTime>
         return ValueTask.CompletedTask;
     }
 
-    public override DateTime Read(BigEndianBinaryReader reader, byte dsCode, int depth)
+    public override DateTime Read(DataInput reader, byte dsCode, int depth)
     {
         long ms = reader.ReadInt64();
         // DateTime.UnixEpoch is Kind=Utc; AddTicks preserves Kind.

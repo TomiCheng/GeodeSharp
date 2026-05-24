@@ -81,7 +81,7 @@ internal sealed class ClientProxyMembershipID(SerializationRegistry serializatio
     /// cppcache then calls <c>initObjectVars</c> with the parsed
     /// values + dummies; we inline the field assignments.
     /// </remarks>
-    internal void ReadEssentialData(BigEndianBinaryReader reader)
+    internal void ReadEssentialData(DataInput reader)
     {
         ArgumentNullException.ThrowIfNull(reader);
 

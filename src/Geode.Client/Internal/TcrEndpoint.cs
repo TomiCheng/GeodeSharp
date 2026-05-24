@@ -1,7 +1,7 @@
 using System.Net;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
-using Geode.Client.Services;
+using Geode.Client.Internal;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -40,13 +40,23 @@ namespace Geode.Client.Internal;
 internal class TcrEndpoint(
     IServiceProvider serviceProvider,
     ILogger<TcrEndpoint> logger,
-    CacheScopeContext cacheScopeContext,
-    DnsEndPoint endpoint) : IAsyncDisposable
+    DnsEndPoint endpoint,
+    TcrConnectionManager connectionManager) //: IAsyncDisposable
 {
+    /// <summary>
+    /// Owning <see cref="TcrConnectionManager"/>. Mirrors cppcache's
+    /// <c>TcrEndpoint::m_cacheImpl-&gt;tcrConnectionManager()</c>
+    /// indirection (we collapse the hop because TCCM is the layer that
+    /// actually owns this endpoint registry).
+    /// </summary>
+    internal TcrConnectionManager ConnectionManager => connectionManager;
 
-    private int _connected;               // connected_ (atomic<bool> → Interlocked 0/1)
-
-    private int _disposed;
+    /// <summary>
+    /// connected_ (atomic<bool> → Interlocked 0/1)
+    /// </summary>
+    private int _connected;
+    private int _numRegions;
+    //    private int _disposed;
 
     /// <summary>
     /// DMs that have registered interest in this endpoint via
@@ -68,24 +78,25 @@ internal class TcrEndpoint(
     /// </summary>
     private readonly Lock _distMgrsLock = new();
 
-    /// <summary>
-    /// cppcache <c>m_maxConnections</c> — per-endpoint conn cap from
-    /// <see cref="PoolOptions.ConnectionPoolSize"/>. <c>0</c> = unlimited
-    /// (our re-interpretation; cppcache's <c>0</c> is a separate "lazy
-    /// single conn" mode we don't port).
-    /// </summary>
-    private readonly int _maxConnections = cacheScopeContext.Options.Pool.ConnectionPoolSize;
+    //    /// <summary>
+    //    /// cppcache <c>m_maxConnections</c> — per-endpoint conn cap from
+    //    /// <see cref="PoolOptions.ConnectionPoolSize"/>. <c>0</c> = unlimited
+    //    /// (our re-interpretation; cppcache's <c>0</c> is a separate "lazy
+    //    /// single conn" mode we don't port).
+    //    /// </summary>
+    //    private readonly int _maxConnections = cacheScopeContext.Options.Pool.ConnectionPoolSize;
 
-    private bool _msgSent;                // m_msgSent (volatile)
+    private bool _msgSent;
 
-    private readonly SemaphoreSlim _notificationCleanupSignal = new(0, int.MaxValue);  // notification_cleanup_semaphore_
-    private bool _pingSent;               // m_pingSent (volatile)
+    private readonly SemaphoreSlim _notificationCleanupSignal = new(0, int.MaxValue);
+    private bool _pingSent;
+    private int _pingTimeouts;
 
     /// <summary>
     /// Slot semaphore enforcing <see cref="_maxConnections"/>. Null when
     /// <see cref="_maxConnections"/> is <c>0</c> (unlimited).
     /// </summary>
-    private readonly SemaphoreSlim? _slots = MakeSlotSemaphore(cacheScopeContext.Options.Pool.ConnectionPoolSize);
+    private readonly SemaphoreSlim? _slots = MakeSlotSemaphore(5); // todo
 
     private static SemaphoreSlim? MakeSlotSemaphore(int size) =>
         size > 0 ? new SemaphoreSlim(size, size) : null;
@@ -113,18 +124,20 @@ internal class TcrEndpoint(
     /// <returns>The new reference count.</returns>
     internal int IncrementNumRegions() => Interlocked.Increment(ref _numRegions);
 
-    /// <summary>Release a slot reserved via <see cref="AcquireSlotAsync"/>.</summary>
+    /// <summary>
+    /// Release a slot reserved via <see cref="AcquireSlotAsync"/>.
+    /// </summary>
     internal void ReleaseSlot() => _slots?.Release();
 
-    /// <summary>
-    /// Run the auth handshake on a freshly-opened connection. Mirrors
-    /// cppcache <c>TcrEndpoint::authenticateEndpoint</c>.
-    /// </summary>
-    public Task AuthenticateEndpointAsync(object connection, CancellationToken ct = default)
-    {
-        // TODO Phase 3 (security): send credentials, read uniqueId.
-        throw new NotImplementedException("TODO: TcrEndpoint.AuthenticateEndpointAsync");
-    }
+    //    /// <summary>
+    //    /// Run the auth handshake on a freshly-opened connection. Mirrors
+    //    /// cppcache <c>TcrEndpoint::authenticateEndpoint</c>.
+    //    /// </summary>
+    //    public Task AuthenticateEndpointAsync(object connection, CancellationToken ct = default)
+    //    {
+    //        // TODO Phase 3 (security): send credentials, read uniqueId.
+    //        throw new NotImplementedException("TODO: TcrEndpoint.AuthenticateEndpointAsync");
+    //    }
 
     /// <summary>
     /// Open a fresh TCP/TLS connection and run the handshake. Mirrors
@@ -133,6 +146,7 @@ internal class TcrEndpoint(
     /// 1 (modern .NET sockets don't need it).
     /// </summary>
     public async Task<TcrConnection> CreateNewConnectionAsync(
+        ThinClientPoolDM pool,
         bool isClientNotification,
         bool isSecondary,
         TimeSpan? connectTimeout = null,
@@ -144,24 +158,21 @@ internal class TcrEndpoint(
             // notification channels (port list, no read-timeout). Our
             // TcrConnection.HandshakeAsync still throws NIE on that branch
             // (Phase 2+ subscription / CQ).
-            throw new NotImplementedException(
-                "TODO Phase 2+: notification-channel handshake.");
+            throw new NotImplementedException("TODO Phase 2+: notification-channel handshake.");
         }
         _ = isSecondary;     // only meaningful with isClientNotification.
 
         ct.ThrowIfCancellationRequested();
 
-        // cppcache LOGFINE entry log (TcrEndpoint.cpp:188-191) — simplified:
-        // we don't have m_needToConnectInLock / appThreadRequest, so just
-        // log host:port and let TcrConnection log its own handshake steps.
         logger.LogDebug("TcrEndpoint.CreateNewConnection: opening request/response connection to {Host}:{Port}",
             endpoint.Host, endpoint.Port);
 
         // Pull TcrConnection through DI so its own deps (ILogger<TcrConnection>,
         // IOptions<GeodeClientOptions>, ClientProxyMembershipIdBuilder)
-        // resolve cleanly. cppcache constructs TcrConnection directly with
-        // the TcrConnectionManager reference; we let DI compose instead.
-        var conn = ActivatorUtilities.CreateInstance<TcrConnection>(serviceProvider);
+        // resolve cleanly; `this` (Endpoint) + `pool` ride as positional
+        // args so the conn carries both its target server identity and
+        // its owning pool from ctor onwards.
+        var conn = ActivatorUtilities.CreateInstance<TcrConnection>(serviceProvider, this, pool);
 
         try
         {
@@ -173,7 +184,6 @@ internal class TcrEndpoint(
             //   • SocketException / IOException — TCP failure.
             //   • OperationCanceledException — ct cancelled.
             await conn.ConnectAsync(endpoint.Host, endpoint.Port, connectTimeout, ct).ConfigureAwait(false);
-            conn.Endpoint = this;
 
             // Endpoint state flags are caller-driven (mirror cppcache):
             //   • SetConnected — ThinClientPoolDM::createPoolConnection
@@ -191,18 +201,18 @@ internal class TcrEndpoint(
         }
     }
 
-    public ValueTask DisposeAsync()
-    {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0) return ValueTask.CompletedTask;
+    //    public ValueTask DisposeAsync()
+    //    {
+    //        if (Interlocked.Exchange(ref _disposed, 1) != 0) return ValueTask.CompletedTask;
 
-        _connectLock.Dispose();
-        _notificationCleanupSignal.Dispose();
-        _slots?.Dispose();
+    //        _connectLock.Dispose();
+    //        _notificationCleanupSignal.Dispose();
+    //        _slots?.Dispose();
 
-        // TODO: close _opConnections, _notifyConnection, await
-        //       _notifyReceiver task; release endpoint resources.
-        return ValueTask.CompletedTask;
-    }
+    //        // TODO: close _opConnections, _notifyConnection, await
+    //        //       _notifyReceiver task; release endpoint resources.
+    //        return ValueTask.CompletedTask;
+    //    }
 
     /// <summary>
     /// Send <c>MessageType.Ping</c> through <paramref name="poolDM"/> and
@@ -258,12 +268,11 @@ internal class TcrEndpoint(
         {
             // cppcache TcrEndpoint.cpp:514-516 falls back to this->send(...).
             // Standalone / non-pool DM is Phase 2+.
-            throw new NotImplementedException(
-                "TODO Phase 2+: standalone endpoint.send(ping) path (non-pool DM).");
+            throw new NotImplementedException("TODO Phase 2+: standalone endpoint.send(ping) path (non-pool DM).");
         }
 
-        var messageBuilder = serviceProvider.GetRequiredService<TcrMessageBuilder>();
-        var pingRequest = messageBuilder.Ping();
+        var messageBuilder = TcrMessageBuilder.Create(serviceProvider, MessageType.Ping);
+        var pingRequest = await messageBuilder.BuildAsync(ct);
 
         logger.LogTrace("Sending ping message to endpoint {Endpoint}", Name);
 
@@ -307,23 +316,21 @@ internal class TcrEndpoint(
             SetConnected(connected);
         }
 
-        // cppcache LOGFINEST("Completed sending ping message") (L539)
-        logger.LogTrace(
-            "Completed sending ping message to endpoint {Endpoint} (replyType={ReplyType})",
+        logger.LogTrace("Completed sending ping message to endpoint {Endpoint} (replyType={ReplyType})",
             Name, reply.MessageType);
     }
 
-    /// <summary>
-    /// Receiver loop body for the subscription channel; mirrors
-    /// cppcache <c>TcrEndpoint::receiveNotification</c>. Drives event
-    /// dispatch to registered listeners.
-    /// </summary>
-    public Task ReceiveNotificationsAsync(CancellationToken ct = default)
-    {
-        // TODO Phase 2+: blocking read on _notifyConnection, decode
-        //   message, dispatch to ThinClientRegion listeners. Phase 2+.
-        throw new NotImplementedException("TODO: TcrEndpoint.ReceiveNotificationsAsync");
-    }
+    //    /// <summary>
+    //    /// Receiver loop body for the subscription channel; mirrors
+    //    /// cppcache <c>TcrEndpoint::receiveNotification</c>. Drives event
+    //    /// dispatch to registered listeners.
+    //    /// </summary>
+    //    public Task ReceiveNotificationsAsync(CancellationToken ct = default)
+    //    {
+    //        // TODO Phase 2+: blocking read on _notifyConnection, decode
+    //        //   message, dispatch to ThinClientRegion listeners. Phase 2+.
+    //        throw new NotImplementedException("TODO: TcrEndpoint.ReceiveNotificationsAsync");
+    //    }
 
     /// <summary>
     /// Register a DM as a user of this endpoint; opens the dedicated
@@ -341,12 +348,12 @@ internal class TcrEndpoint(
     /// (3) flip <c>_isActiveEndpoint</c> for redundancy manager &#x2014;
     /// Phase 2+ (HA).
     /// </remarks>
-    public Task<int /*GfErrType*/> RegisterDMAsync(
-        bool clientNotification,
-        bool isSecondary,
-        bool isActiveEndpoint,
-        ThinClientBaseDM? distributionManager = null,
-        CancellationToken ct = default)
+    public Task<int> RegisterDMAsync(
+            bool clientNotification,
+            bool isSecondary,
+            bool isActiveEndpoint,
+            ThinClientBaseDM? distributionManager = null,
+            CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -364,7 +371,7 @@ internal class TcrEndpoint(
 
         if (distributionManager is null)
         {
-            return Task.FromResult(/*GF_NOERR*/ 0);
+            return Task.FromResult(0);
         }
 
         // Dedupe under the lock so repeated AddRefToTcrEndpoint calls
@@ -377,37 +384,37 @@ internal class TcrEndpoint(
             }
         }
 
-        return Task.FromResult(/*GF_NOERR*/ 0);
+        return Task.FromResult(0);
     }
 
-    /// <summary>
-    /// Send a request and wait for reply, choosing a connection from
-    /// <c>_opConnections</c>. Mirrors cppcache
-    /// <c>TcrEndpoint::send(request, reply)</c>.
-    /// </summary>
-    public Task<int /*GfErrType*/> SendAsync(
-        object request,                   // TcrMessage
-        object reply,                     // TcrMessageReply
-        CancellationToken ct = default)
-    {
-        // TODO: dequeue from _opConnections; conn.Send(request, reply);
-        //       enqueue back; on error → CloseFailedConnection +
-        //       set _connected = 0 + signal _failoverSignal.
-        throw new NotImplementedException("TODO: TcrEndpoint.SendAsync");
-    }
+    //    /// <summary>
+    //    /// Send a request and wait for reply, choosing a connection from
+    //    /// <c>_opConnections</c>. Mirrors cppcache
+    //    /// <c>TcrEndpoint::send(request, reply)</c>.
+    //    /// </summary>
+    //    public Task<int /*GfErrType* /> SendAsync(
+    //        object request,                   // TcrMessage
+    //        object reply,                     // TcrMessageReply
+    //        CancellationToken ct = default)
+    //    {
+    //        // TODO: dequeue from _opConnections; conn.Send(request, reply);
+    //        //       enqueue back; on error → CloseFailedConnection +
+    //        //       set _connected = 0 + signal _failoverSignal.
+    //        throw new NotImplementedException("TODO: TcrEndpoint.SendAsync");
+    //    }
 
-    /// <summary>
-    /// Send with retries against this endpoint's pool. Mirrors cppcache
-    /// <c>TcrEndpoint::sendRequestWithRetry</c>.
-    /// </summary>
-    public Task<int /*GfErrType*/> SendRequestWithRetryAsync(
-        object request,
-        object reply,
-        int maxSendRetries,
-        CancellationToken ct = default)
-    {
-        throw new NotImplementedException("TODO: TcrEndpoint.SendRequestWithRetryAsync");
-    }
+    //    /// <summary>
+    //    /// Send with retries against this endpoint's pool. Mirrors cppcache
+    //    /// <c>TcrEndpoint::sendRequestWithRetry</c>.
+    //    /// </summary>
+    //    public Task<int /*GfErrType* /> SendRequestWithRetryAsync(
+    //        object request,
+    //        object reply,
+    //        int maxSendRetries,
+    //        CancellationToken ct = default)
+    //    {
+    //        throw new NotImplementedException("TODO: TcrEndpoint.SendRequestWithRetryAsync");
+    //    }
 
     /// <summary>
     /// Flip <see cref="IsConnected"/> and, on a real 0&#x2194;1 transition,
@@ -447,24 +454,24 @@ internal class TcrEndpoint(
         }
     }
 
-    /// <summary>
-    /// Drop a DM. Mirrors cppcache <c>TcrEndpoint::unregisterDM</c>.
-    /// When the last DM leaves and notification was started, close
-    /// the subscription connection.
-    /// </summary>
-    public Task UnregisterDMAsync(
-        bool clientNotification,
-        object? distributionManager = null,
-        CancellationToken ct = default)
-    {
-        // TODO: drop dm from _distMgrs; if last + clientNotification,
-        //       stopNotifyReceiverAndCleanup.
-        throw new NotImplementedException("TODO: TcrEndpoint.UnregisterDMAsync");
-    }
+    //    /// <summary>
+    //    /// Drop a DM. Mirrors cppcache <c>TcrEndpoint::unregisterDM</c>.
+    //    /// When the last DM leaves and notification was started, close
+    //    /// the subscription connection.
+    //    /// </summary>
+    //    public Task UnregisterDMAsync(
+    //        bool clientNotification,
+    //        object? distributionManager = null,
+    //        CancellationToken ct = default)
+    //    {
+    //        // TODO: drop dm from _distMgrs; if last + clientNotification,
+    //        //       stopNotifyReceiverAndCleanup.
+    //        throw new NotImplementedException("TODO: TcrEndpoint.UnregisterDMAsync");
+    //    }
 
-    public DnsEndPoint Endpoint => endpoint;
+    //    public DnsEndPoint Endpoint => endpoint;
 
-    public bool IsAuthenticated => _isAuthenticated;
+    //    public bool IsAuthenticated => _isAuthenticated;
 
     public bool IsConnected => Volatile.Read(ref _connected) != 0;
 
@@ -477,71 +484,71 @@ internal class TcrEndpoint(
         set => Volatile.Write(ref _numRegions, value);
     }
 
-    public long UniqueId => Interlocked.Read(ref _uniqueId);
+    //    public long UniqueId => Interlocked.Read(ref _uniqueId);
 
-#pragma warning disable CS0169, CS0414, CS0649 // placeholder fields mirroring TcrEndpoint; wired up phase by phase
+    //#pragma warning disable CS0169, CS0414, CS0649 // placeholder fields mirroring TcrEndpoint; wired up phase by phase
 
-    // ── Per-endpoint connection pool (TcrEndpoint.hpp:185-188) ──
-    private object? _opConnections;       // m_opConnections (ConnectionQueue<TcrConnection>)
-
-
-    private bool _needToConnectInLock;    // m_needToConnectInLock
-    private bool _connCreatedWhenMaxConnsIsZero; // m_connCreatedWhenMaxConnsIsZero
+    //    // ── Per-endpoint connection pool (TcrEndpoint.hpp:185-188) ──
+    //    private object? _opConnections;       // m_opConnections (ConnectionQueue<TcrConnection>)
 
 
-
-    // ── Subscription channel (Phase 2+; TcrEndpoint.hpp:178-184) ──
-    private object? _notifyConnection;        // m_notifyConnection (TcrConnection*)
-    private Task? _notifyReceiver;            // m_notifyReceiver (Task<TcrEndpoint>)
-    private readonly List<object?> _notifyReceiverList = [];    // m_notifyReceiverList
-    private readonly List<object?> _notifyConnectionList = [];  // m_notifyConnectionList
-
-    // ── DM registration (TcrEndpoint.hpp:211-216) ──
-    // Pool mode (option B in design notes) routes DMs through _distMgrs
-    // only — m_baseDM stays unused. Non-pool mode (Phase 2+) may revive
-    // m_baseDM as a back-pointer to the owning region's DM.
-    private object? _baseDM;              // m_baseDM (ThinClientBaseDM*) — non-pool only
-
-    private readonly Lock _connectionLock = new();
-    private readonly SemaphoreSlim _connectLock = new(1, 1);       // m_connectLock (timed_mutex; .NET uses await with timeout)
-    private readonly Lock _notifyReceiverLock = new();
-    private readonly Lock _endpointAuthenticationLock = new();
-
-    // ── Health (TcrEndpoint.hpp:219-228) ──
-
-    private int _pingTimeouts;            // m_pingTimeouts
+    //    private bool _needToConnectInLock;    // m_needToConnectInLock
+    //    private bool _connCreatedWhenMaxConnsIsZero; // m_connCreatedWhenMaxConnsIsZero
 
 
-    // ── Auth (TcrEndpoint.hpp:207, 224, 227) ──
-    private bool _isAuthenticated;        // m_isAuthenticated
-    private long _uniqueId;               // m_uniqueId (server-issued auth token, set after handshake)
-    private bool _isMultiUserMode;        // m_isMultiUserMode (Phase 3)
 
-    // ── HA / queue state (TcrEndpoint.hpp:189, 229-234) ──
-    private bool _isQueueHosted;          // m_isQueueHosted
-    private bool _isActiveEndpoint;       // m_isActiveEndpoint
-    private int _serverQueueStatus;       // m_serverQueueStatus (enum ServerQueueStatus)
-    private int _queueSize;               // m_queueSize
-    private bool _isServerQueueStatusSet; // m_isServerQueueStatusSet
-    private ushort _distributedMemId;     // m_distributedMemId
+    //    // ── Subscription channel (Phase 2+; TcrEndpoint.hpp:178-184) ──
+    //    private object? _notifyConnection;        // m_notifyConnection (TcrConnection*)
+    //    private Task? _notifyReceiver;            // m_notifyReceiver (Task<TcrEndpoint>)
+    //    private readonly List<object?> _notifyReceiverList = [];    // m_notifyReceiverList
+    //    private readonly List<object?> _notifyConnectionList = [];  // m_notifyConnectionList
 
-    // ── Counters (TcrEndpoint.hpp:187, 220-223) ──
-    private int _numRegionListener;       // m_numRegionListener
-    private int _numRegions;              // m_numRegions
-    private int _notifyCount;             // m_notifyCount
-    private uint _dupCount;               // m_dupCount
+    //    // ── DM registration (TcrEndpoint.hpp:211-216) ──
+    //    // Pool mode (option B in design notes) routes DMs through _distMgrs
+    //    // only — m_baseDM stays unused. Non-pool mode (Phase 2+) may revive
+    //    // m_baseDM as a back-pointer to the owning region's DM.
+    //    private object? _baseDM;              // m_baseDM (ThinClientBaseDM*) — non-pool only
 
-    // ── TCCM coordination semaphores (TcrEndpoint.hpp:208-210, 217) ──
-    // cppcache passes binary_semaphore& from TCCM into the endpoint ctor;
-    // .NET takes them as ctor refs (or via DI) when TCCM truly drives them.
-    private SemaphoreSlim? _failoverSignal;            // failover_semaphore_
-    private SemaphoreSlim? _cleanupSignal;             // cleanup_semaphore_
-    private SemaphoreSlim? _redundancySignal;          // redundancy_semaphore_
+    //    private readonly Lock _connectionLock = new();
+    //    private readonly SemaphoreSlim _connectLock = new(1, 1);       // m_connectLock (timed_mutex; .NET uses await with timeout)
+    //    private readonly Lock _notifyReceiverLock = new();
+    //    private readonly Lock _endpointAuthenticationLock = new();
+
+    //    // ── Health (TcrEndpoint.hpp:219-228) ──
 
 
 
 
-#pragma warning restore CS0169, CS0414, CS0649
+    //    // ── Auth (TcrEndpoint.hpp:207, 224, 227) ──
+    //    private bool _isAuthenticated;        // m_isAuthenticated
+    //    private long _uniqueId;               // m_uniqueId (server-issued auth token, set after handshake)
+    //    private bool _isMultiUserMode;        // m_isMultiUserMode (Phase 3)
+
+    //    // ── HA / queue state (TcrEndpoint.hpp:189, 229-234) ──
+    //    private bool _isQueueHosted;          // m_isQueueHosted
+    //    private bool _isActiveEndpoint;       // m_isActiveEndpoint
+    //    private int _serverQueueStatus;       // m_serverQueueStatus (enum ServerQueueStatus)
+    //    private int _queueSize;               // m_queueSize
+    //    private bool _isServerQueueStatusSet; // m_isServerQueueStatusSet
+    //    private ushort _distributedMemId;     // m_distributedMemId
+
+    //    // ── Counters (TcrEndpoint.hpp:187, 220-223) ──
+    //    private int _numRegionListener;       // m_numRegionListener
+    //    private int _numRegions;              // m_numRegions
+    //    private int _notifyCount;             // m_notifyCount
+    //    private uint _dupCount;               // m_dupCount
+
+    //    // ── TCCM coordination semaphores (TcrEndpoint.hpp:208-210, 217) ──
+    //    // cppcache passes binary_semaphore& from TCCM into the endpoint ctor;
+    //    // .NET takes them as ctor refs (or via DI) when TCCM truly drives them.
+    //    private SemaphoreSlim? _failoverSignal;            // failover_semaphore_
+    //    private SemaphoreSlim? _cleanupSignal;             // cleanup_semaphore_
+    //    private SemaphoreSlim? _redundancySignal;          // redundancy_semaphore_
+
+
+
+
+    //#pragma warning restore CS0169, CS0414, CS0649
 
 
 }

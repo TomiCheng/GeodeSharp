@@ -49,7 +49,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// </remarks>
 internal sealed class HashSetDataConverter : IDataConverter
 {
-    private static readonly byte[] s_dsCodes = { DSCode.CacheableHashSet };
+    private static readonly byte[] _dsCodes = { DSCode.CacheableHashSet };
 
     private readonly SerializationRegistry _registry;
 
@@ -59,7 +59,7 @@ internal sealed class HashSetDataConverter : IDataConverter
         _registry = registry;
     }
 
-    public byte[] DsCodes => s_dsCodes;
+    public byte[] DsCodes => _dsCodes;
 
     /// <summary>
     /// Open-generic <c>HashSet&lt;&gt;</c>. Registry's write dispatch
@@ -90,7 +90,7 @@ internal sealed class HashSetDataConverter : IDataConverter
         }
     }
 
-    public object? Read(BigEndianBinaryReader reader, byte dsCode, int depth)
+    public object? Read(DataInput reader, byte dsCode, int depth)
     {
         var length = reader.ReadArrayLen();
         if (length <= 0)

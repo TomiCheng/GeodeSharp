@@ -1,5 +1,5 @@
 using Geode.Client.Options;
-using Geode.Client.Services;
+using Geode.Client.Internal;
 using Microsoft.Extensions.Logging;
 
 namespace Geode.Client.Internal;
@@ -23,10 +23,10 @@ namespace Geode.Client.Internal;
 internal sealed class ThinClientPoolStickyDM(
     IServiceProvider serviceProvider,
     ILogger<ThinClientPoolDM> logger,
-    CachePoolOptions xmlPool,
-    GeodeClientOptions options,
-    TcrConnectionManager connManager)
-    : ThinClientPoolDM(serviceProvider, logger, xmlPool, options, connManager)
+    PoolManager poolManager,
+    string name,
+    PoolAttributes attributes)
+    : ThinClientPoolDM(serviceProvider, logger, poolManager, name, attributes)
 {
     /// <summary>
     /// Dispatch the per-tick sticky-conn aging sweep into
@@ -35,5 +35,9 @@ internal sealed class ThinClientPoolStickyDM(
     /// (<c>ThinClientPoolStickyDM.cpp:134-140</c>).
     /// </summary>
     protected override Task CleanStickyConnectionsAsync(CancellationToken ct)
-        => _stickyManager?.CleanStaleStickyConnectionAsync(ct) ?? Task.CompletedTask;
+    {
+        throw new NotImplementedException();
+        //   => _stickyManager?.CleanStaleStickyConnectionAsync(ct) ?? Task.CompletedTask;
+    }
+
 }

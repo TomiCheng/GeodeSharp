@@ -249,3 +249,4 @@ public class CachePoolOptions : ICloneable
     public TimeSpan UpdateLocatorListInterval { get; set; } = TimeSpan.FromSeconds(5);
 
 }
+

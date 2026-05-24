@@ -1,60 +1,17 @@
 using System.Buffers;
 using System.Buffers.Binary;
-using Geode.Client.Internal;
-using Geode.Client.Protocol.Serialization;
+using Geode.Client.Protocol;
 
-namespace Geode.Client.Protocol;
-
-/// <summary>
-/// Owned, seekable big-endian write buffer. Mirror of cppcache
-/// <c>DataOutput</c> (<c>cppcache/include/geode/DataOutput.hpp</c>).
-/// Replaces <c>DataOutput</c>'s forward-only model
-/// with a single mutable byte buffer + cursor, enabling header
-/// back-fill (TcrMessage length, PdxLocalWriter header, etc.) in
-/// place instead of via local-buffer-per-unit indirection.
-/// </summary>
-/// <remarks>
-/// <para>
-/// Buffer rented from <see cref="ArrayPool{T}.Shared"/>; returned on
-/// <see cref="Dispose"/>. Matches cppcache <c>TSSDataOutput</c>
-/// thread-local pool semantics (default rent size 8192 bytes).
-/// </para>
-/// <para>
-/// Holds <see cref="SerializationRegistry"/> (and optionally an
-/// <see cref="IPool"/>) for nested encode dispatch. cppcache reaches
-/// these through <c>m_cache->getSerializationRegistry()</c> /
-/// <c>m_pool</c>; we inject them directly because both are already
-/// scoped DI services. Cache itself isn't needed here.
-/// </para>
-/// <para>
-/// Construct via
-/// <see cref="Microsoft.Extensions.DependencyInjection.ActivatorUtilities.CreateInstance{T}(IServiceProvider, object[])"/>,
-/// not raw <c>new</c>, so <see cref="SerializationRegistry"/> resolves
-/// from the scoped container:
-/// <code>
-/// using var output = ActivatorUtilities.CreateInstance&lt;DataOutput&gt;(sp);
-/// using var output = ActivatorUtilities.CreateInstance&lt;DataOutput&gt;(sp, pool);
-/// </code>
-/// </para>
-/// </remarks>
-internal sealed class DataOutput(SerializationRegistry registry, IPool? pool = null)
+internal sealed class DataOutput
     : IDisposable, IBufferWriter<byte>
 {
-    // cppcache TSSDataOutput::getBuffer default = 8192. Keep identical
-    // so the typical message rent doesn't grow.
+
     private const int InitialSize = 8192;
 
     private byte[] _bytes = ArrayPool<byte>.Shared.Rent(InitialSize);
     private int _disposed;
     private int _position;
     private int _writtenCount;
-
-    /// <summary>
-    /// 拿 DataOutput 對應的 <see cref="SerializationRegistry"/>;PDX deserialize
-    /// 流程未來需要它(read 端 schema 查 / register)。目前是讓 ctor 參數
-    /// 不被當 unused 抱怨的存在,實際讀取方還沒接上。
-    /// </summary>
-    internal SerializationRegistry Registry => registry;
 
     private void EnsureCapacity(int additionalBytes)
     {
@@ -146,7 +103,9 @@ internal sealed class DataOutput(SerializationRegistry registry, IPool? pool = n
         _position -= n;
     }
 
-    /// <summary>Copy of the written bytes ??caller-owned.</summary>
+    /// <summary>
+    /// Copy of the written bytes ??caller-owned.
+    /// </summary>
     public byte[] ToArray() => _bytes.AsSpan(0, _writtenCount).ToArray();
 
     /// <summary>
@@ -222,7 +181,6 @@ internal sealed class DataOutput(SerializationRegistry registry, IPool? pool = n
         _position += sizeof(short);
         if (_position > _writtenCount) _writtenCount = _position;
     }
-
     public void WriteInt32(int value)
     {
         EnsureCapacity(sizeof(int));
@@ -230,6 +188,8 @@ internal sealed class DataOutput(SerializationRegistry registry, IPool? pool = n
         _position += sizeof(int);
         if (_position > _writtenCount) _writtenCount = _position;
     }
+
+
 
     public void WriteInt64(long value)
     {
@@ -239,7 +199,9 @@ internal sealed class DataOutput(SerializationRegistry registry, IPool? pool = n
         if (_position > _writtenCount) _writtenCount = _position;
     }
 
-    /// <summary>Java modified UTF-8 with u16 byte-length prefix. Mirrors cppcache <c>writeJavaModifiedUtf8</c>.</summary>
+    /// <summary>
+    /// Java modified UTF-8 with u16 byte-length prefix. Mirrors cppcache <c>writeJavaModifiedUtf8</c>.
+    /// </summary>
     public void WriteJavaModifiedUtf8(string? value)
     {
         var s = value ?? string.Empty;
@@ -288,10 +250,6 @@ internal sealed class DataOutput(SerializationRegistry registry, IPool? pool = n
 
     public void WriteSByte(sbyte value) => WriteByte((byte)value);
 
-    /// <summary>
-    /// DSCode-tagged string. Mirrors cppcache <c>DataOutput::writeString</c>.
-    /// Null ??<c>CacheableNullString</c>; ASCII (??0xFFFF chars) ??    /// <c>CacheableASCIIString</c>; non-ASCII (mod-UTF-8 ??0xFFFF bytes) ??    /// <c>CacheableString</c>. Huge variants (88/89) NIE for now.
-    /// </summary>
     public void WriteString(string? value)
     {
         if (value is null) { WriteByte(DSCode.CacheableNullString); return; }
@@ -323,7 +281,9 @@ internal sealed class DataOutput(SerializationRegistry registry, IPool? pool = n
         if (_position > _writtenCount) _writtenCount = _position;
     }
 
-    /// <summary>Mirrors cppcache <c>writeChar</c> (Java <c>char</c> = u16).</summary>
+    /// <summary>
+    /// Mirrors cppcache <c>writeChar</c> (Java <c>char</c> = u16).
+    /// </summary>
     public void WriteUInt16(ushort value)
     {
         EnsureCapacity(sizeof(ushort));
@@ -348,20 +308,6 @@ internal sealed class DataOutput(SerializationRegistry registry, IPool? pool = n
         if (_position > _writtenCount) _writtenCount = _position;
     }
 
-    /// <summary>
-    /// Target pool for this buffer's eventual wire send;
-    /// <see langword="null"/> when not bound to a specific pool
-    /// (e.g. before <c>EnsureInitializedAsync</c> registers a default).
-    /// Mirrors cppcache <c>DataOutput::getPool()</c>; used by PDX
-    /// type-id resolution to send <c>GetPdxIdForType</c> via the
-    /// correct cluster (typeIds are per-cluster).
-    /// </summary>
-    public IPool? Pool => pool;
-
-    /// <summary>
-    /// Current cursor position. Setter is restricted to the existing
-    /// written range ??use <see cref="AdvanceCursor"/> to grow.
-    /// </summary>
     public int Position
     {
         get => _position;
@@ -377,10 +323,14 @@ internal sealed class DataOutput(SerializationRegistry registry, IPool? pool = n
         }
     }
 
-    /// <summary>Total bytes written so far (high-water mark, not current cursor).</summary>
+    /// <summary>
+    /// Total bytes written so far (high-water mark, not current cursor).
+    /// </summary>
     public int WrittenCount => _writtenCount;
 
-    /// <summary>Bytes written so far (up to the high-water mark).</summary>
+    /// <summary>
+    /// Bytes written so far (up to the high-water mark).
+    /// </summary>
     public ReadOnlySpan<byte> WrittenSpan => _bytes.AsSpan(0, _writtenCount);
 
 }

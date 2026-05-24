@@ -147,9 +147,12 @@ internal sealed class PdxTypeRegistry(
     /// — its body needs <c>PdxType.ToData(DataOutput)</c> to be implemented
     /// before it can serialise the schema.
     /// </remarks>
-    private ValueTask<TcrMessage> BuildGetPdxIdForTypeRequestAsync(PdxType nType, CancellationToken ct) =>
-        serviceProvider.GetRequiredService<TcrMessageBuilder>()
-            .GetPdxIdForTypeAsync(nType, ct);
+    private ValueTask<TcrMessage> BuildGetPdxIdForTypeRequestAsync(PdxType nType, CancellationToken ct)
+    {
+        throw new NotImplementedException();
+        //serviceProvider.GetRequiredService<TcrMessageBuilder>()
+        //    .GetPdxIdForTypeAsync(nType, ct);
+    }
 
     /// <summary>
     /// Send <paramref name="request"/> through <paramref name="pool"/>'s
@@ -192,7 +195,8 @@ internal sealed class PdxTypeRegistry(
                 "Mirror of cppcache SerializationRegistry.cpp:547.");
         }
 
-        return await dm.SendSyncRequestAsync(request, ct: ct);
+        throw new NotImplementedException();
+        //return await dm.SendSyncRequestAsync(request, ct: ct);
     }
 
     /// <summary>
@@ -210,7 +214,7 @@ internal sealed class PdxTypeRegistry(
             throw new GeodeException($"GET_PDX_ID_FOR_TYPE reply: expected 1 part, got {reply.Parts.Count}.");
         }
 
-        var reader = new BigEndianBinaryReader(reply.Parts[0].Payload);
+        var reader = new DataInput(reply.Parts[0].Payload);
         var dsCode = reader.ReadByte();
         if (dsCode != DSCode.CacheableInt32)
         {
@@ -222,8 +226,11 @@ internal sealed class PdxTypeRegistry(
     }
 
     /// <summary>Short string from a <c>MessageType.Exception</c> reply for diagnostics.</summary>
-    private static string DecodeExceptionPreview(TcrMessage reply) =>
-        TcrMessageHelper.DecodeExceptionPreview(reply);
+    private static string DecodeExceptionPreview(TcrMessage reply)
+    {
+        throw new NotImplementedException();
+        // TcrMessageHelper.DecodeExceptionPreview(reply);
+    }
 
     /// <summary>Look up cached schema by typeId; <see langword="null"/> on miss.</summary>
     public PdxType? GetPdxType(int typeId) =>

@@ -1,6 +1,8 @@
 using System.Text.RegularExpressions;
-using Geode.Client.Options;
+using Geode.Client;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Geode.Client.IntegrationTests;
@@ -43,36 +45,6 @@ public class ScalarRoundTripIntegrationTests(GeodeFixture fx)
 
     private const string RegionName = "test";
 
-    private void ConfigureCache(GeodeClientOptions config)
-    {
-        config.Cache = new CacheOptions
-        {
-            Pools =
-            {
-                new CachePoolOptions
-                {
-                    Name = "testPool",
-                    Servers =
-                    {
-                        new CacheHostPortOptions
-                        {
-                            Host = fx.LocatorHost,
-                            Port = fx.ServerPort,
-                        },
-                    },
-                },
-            },
-            Regions =
-            {
-                new CacheRegionOptions
-                {
-                    Name = RegionName,
-                    Attributes = { PoolName = "testPool" },
-                },
-            },
-        };
-    }
-
     private async Task<(ServiceProvider Services, IRegion<TKey, TValue> Region, CancellationToken Ct, CancellationTokenSource Cts)>
         OpenAsync<TKey, TValue>()
         where TKey : IEquatable<TKey>
@@ -80,17 +52,21 @@ public class ScalarRoundTripIntegrationTests(GeodeFixture fx)
         var cts = new CancellationTokenSource(TestTimeout);
 
         var services = new ServiceCollection()
-            .AddLogging()
-            .AddGeodeClient(ConfigureCache)
+            .AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance)
+            .AddSingleton(typeof(ILogger<>), typeof(NullLogger<>))
+            .AddGeodeFactory()
             .BuildServiceProvider();
 
-        var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();
-        await cache.EnsureInitializedAsync(cts.Token);
+        var cache = await services.GetRequiredService<IGeodeCacheFactory>().CreateAsync("c", cts.Token);
+        await cache.PoolManager.CreateFactory()
+            .AddServer(fx.LocatorHost, fx.ServerPort)
+            .SetMinConnections(1)
+            .BuildAsync("p", cts.Token);
 
         await Task.Delay(FreshConnectionSettleDelay, cts.Token);
 
-        var region = cache.GetRegion<TKey, TValue>(RegionName);
-        Assert.NotNull(region);
+        var region = await cache.CreateRegionFactory(RegionShortcut.Proxy)
+            .CreateAsync<TKey, TValue>(RegionName, cts.Token);
 
         return (services, region, cts.Token, cts);
     }

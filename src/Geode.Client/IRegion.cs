@@ -1,3 +1,4 @@
+
 namespace Geode.Client;
 
 /// <summary>

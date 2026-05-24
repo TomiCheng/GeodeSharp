@@ -48,7 +48,7 @@ internal sealed class DiskVersionTag(
     /// <c>m_internalMemId</c> / <c>m_previousMemId</c> ushort slots
     /// pointing into the registry.
     /// </remarks>
-    protected override void ReadMembers(ushort flags, BigEndianBinaryReader reader)
+    protected override void ReadMembers(ushort flags, DataInput reader)
     {
         ArgumentNullException.ThrowIfNull(reader);
         _ = flags;
@@ -56,3 +56,4 @@ internal sealed class DiskVersionTag(
             "DiskVersionTag.ReadMembers pending Phase 4+ (persistent regions).");
     }
 }
+

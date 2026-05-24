@@ -120,7 +120,7 @@ internal sealed class ChunkedQueryResponse<T>(
         //   L3351: createDataInput(chunk, chunkLen, pool). Matches
         //   ChunkedGetAllResponse pattern (DI-built reader so future
         //   per-reader deps flow in without ctor churn).
-        var reader = ActivatorUtilities.CreateInstance<BigEndianBinaryReader>(
+        var reader = ActivatorUtilities.CreateInstance<DataInput>(
             serviceProvider, payload);
 
         // C3 — Read chunk part header. cppcache L3354-3357. Classifier:
@@ -176,7 +176,7 @@ internal sealed class ChunkedQueryResponse<T>(
     /// <param name="partLen">First part's payload length (cppcache
     /// <c>partLen</c>). Used by C8 to advance past the metadata part
     /// once C7 has extracted any Struct field names.</param>
-    private void HandleObjectChunk(BigEndianBinaryReader reader, int partLen)
+    private void HandleObjectChunk(DataInput reader, int partLen)
     {
         // C4 — Skip the outer collection type's parent-class header
         // (cppcache L3380's skipClass). server tags the wrapper as
@@ -369,7 +369,7 @@ internal sealed class ChunkedQueryResponse<T>(
     /// (<c>ThinClientRegion.cpp:3296-3345</c>). Recursive: StructSet
     /// nesting re-enters with <paramref name="isResultSet"/>=<see langword="true"/>.
     /// </summary>
-    private void ReadObjectPartList(BigEndianBinaryReader reader, bool isResultSet)
+    private void ReadObjectPartList(DataInput reader, bool isResultSet)
     {
         // R1 — readBoolean — must be false. cppcache L3298-3301:
         //   if (input.readBoolean()) throw IllegalStateException(
@@ -445,7 +445,7 @@ internal sealed class ChunkedQueryResponse<T>(
     /// <c>m_queryResults</c>; we use a local buffer so caller can
     /// build a single <see cref="QueryStruct"/> per row.
     /// </summary>
-    private List<object?> ReadStructRow(BigEndianBinaryReader reader)
+    private List<object?> ReadStructRow(DataInput reader)
     {
         // Inner header: readBoolean keys-flag (must be false) +
         // readInt32 K. Mirrors cppcache readObjectPartList opening.
@@ -482,7 +482,7 @@ internal sealed class ChunkedQueryResponse<T>(
     /// servers seldom use them for exception text).
     /// </summary>
     [System.Diagnostics.CodeAnalysis.DoesNotReturn]
-    private static void ReadExceptionAndThrow(BigEndianBinaryReader reader)
+    private static void ReadExceptionAndThrow(DataInput reader)
     {
         reader.AdvanceCursor(reader.ReadArrayLength());
         var msg = ReadShortString(reader, "per-entry exception message");
@@ -503,7 +503,7 @@ internal sealed class ChunkedQueryResponse<T>(
     /// works for both. Huge variants land with the Phase 4 large-string
     /// reader.
     /// </summary>
-    private static string ReadShortString(BigEndianBinaryReader reader, string context)
+    private static string ReadShortString(DataInput reader, string context)
     {
         var dscode = reader.ReadByte();
         if (dscode == DSCode.CacheableString || dscode == DSCode.CacheableASCIIString)
@@ -520,7 +520,7 @@ internal sealed class ChunkedQueryResponse<T>(
     /// (<c>ThinClientRegion.cpp:3468-3480</c>). Skips a Java
     /// <c>Class</c> header in the wire stream.
     /// </summary>
-    private static void SkipClass(BigEndianBinaryReader reader)
+    private static void SkipClass(DataInput reader)
     {
         // S1 — read DSCode; expect Class (43); else throw. cppcache
         //   L3469-3478:

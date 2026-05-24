@@ -61,38 +61,35 @@ internal sealed partial class ThinClientRegion(
     /// </remarks>
     private object? DecodeValuePart(TcrPart part)
     {
-        throw new NotImplementedException();
-        //if (part.Payload.Length == 0)
-        //{
-        //    // lenObj==0, isObj==0: key absent. lenObj==0, isObj==2:
-        //    // empty byte[] (unsupported until BytesDataConverter).
-        //    return part.IsObject switch
-        //    {
-        //        0 => null,
-        //        2 => throw new NotSupportedException(
-        //            "Empty CacheableBytes (IsObject=2) reply not yet supported; " +
-        //            "needs BytesDataConverter (Phase 1.2.c)."),
-        //        _ => throw new GeodeException(
-        //            $"Unexpected empty value part with IsObject={part.IsObject} " +
-        //            $"on Get '{FullPath}'."),
-        //    };
-        //}
+        if (part.Payload.Length == 0)
+        {
+            // cppcache readObjectPart empty branch (TcrMessage.cpp:469-487):
+            //   IsObject=0 → key absent → null
+            //   IsObject=2 → empty byte[] sentinel
+            //   other → wire error
+            return part.IsObject switch
+            {
+                0 => null,
+                2 => Array.Empty<byte>(),
+                _ => throw new GeodeException(
+                    $"Unexpected empty value part with IsObject={part.IsObject} " +
+                    $"on Get '{FullPath}'."),
+            };
+        }
 
-        //if (part.IsObject == 1)
-        //{
-        //    // Standard DSCode-tagged path. Registry consumes the DSCode
-        //    // byte and dispatches to the converter (NullObj returns null).
-        //    var reader = new BigEndianBinaryReader(part.Payload);
-        //    return serializationRegistry.ReadObject(reader);
-        //}
+        if (part.IsObject == 1)
+        {
+            // Standard DSCode-tagged path. SerializationRegistry consumes
+            // the DSCode byte and dispatches to the converter (NullObj
+            // returns null).
+            var reader = new DataInput(part.Payload);
+            return dm.Cache.SerializationRegistry.ReadObject(reader);
+        }
 
-        //// IsObject=0 with non-empty payload = CacheableBytes shortcut
-        //// (cppcache writeObjectPart's special-case). Phase 1.2 only
-        //// exercises int32 values which always use IsObject=1; the
-        //// shortcut path stays NIE until BytesDataConverter lands.
-        //throw new NotSupportedException(
-        //    $"Get '{FullPath}': IsObject=0 raw-bytes shortcut reply " +
-        //    "not yet supported (needs BytesDataConverter, Phase 1.2.c).");
+        // IsObject=0 + non-empty payload = CacheableBytes shortcut
+        // (cppcache writeObjectPart's special-case). The shortcut emits
+        // raw bytes (no DSCode), server side reconstructs as byte[].
+        return part.Payload.ToArray();
     }
 
     [GeneratedRegex(@"^\s*(?:select|import)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant)]
@@ -251,58 +248,41 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task<bool> ContainsKeyAsync(object key, CancellationToken ct = default)
     {
-        throw new NotImplementedException();
-        //logger.LogTrace("ContainsKeyAsync: region={RegionPath}, key={Key}", FullPath, key);
+        logger.LogTrace("ContainsKeyAsync: region={RegionPath}, key={Key}", FullPath, key);
 
-        //// Mirrors cppcache ThinClientRegion::containsKeyOnServer
-        //// (cppcache/src/ThinClientRegion.cpp:676-720) +
-        //// TcrMessageContainsKey ctor (TcrMessage.cpp:1808-1843).
-        ////
-        //// ─── Step 1+2: build request frame ────────────────────
-        //// Region FullPath + DSCode-tagged key via
-        //// SerializationRegistry; partial source:
-        //// Protocol/TcrMessageBuilder.ContainsKey.cs.
-        //var request = await tcrMessageBuilder.ContainsKeyAsync(FullPath, key, ct: ct);
+        var request = await TcrMessageBuilder
+            .Create(serviceProvider, MessageType.ContainsKey)
+            .AddRegionNamePart(FullPath)
+            .AddKeyPart(dm.Cache, key)
+            .AddInt32Part(0) // 0 = containsKey, 1 = containsValueForKey (cppcache TcrMessage.cpp:1837)
+            .BuildAsync(ct);
 
-        //// ─── Step 3: dispatch via DM ─────────────────────────
-        //// ThinClientPoolDM.SendSyncRequestAsync picks the (single in
-        //// MVP) endpoint, routes through SendRequestToEndpointAsync
-        //// (conn borrow / fallback create / send / put-back).
-        //var reply = await dm
-        //    .SendSyncRequestAsync(request, ct: ct)
-        //    .ConfigureAwait(false);
+        var reply = await dm.SendSyncRequestAsync(request, ct: ct).ConfigureAwait(false);
 
-        //// ─── Step 4: reply decoding ──────────────────────────
-        //// cppcache containsKeyOnServer reply switch
-        //// (ThinClientRegion.cpp:691-712): Response → bool, Exception
-        //// → throw, anything else → throw.
-        //switch (reply.MessageType)
-        //{
-        //    case MessageType.Response:
-        //        {
-        //            // Part 0 payload = [DSCode.CacheableBoolean][0/1].
-        //            // Registry consumes the DSCode and dispatches to
-        //            // BooleanDataConverter for the 1-byte body.
-        //            var partReader = new BigEndianBinaryReader(reply.Parts[0].Payload);
-        //            var value = serializationRegistry.ReadObject(partReader);
-        //            if (value is bool b)
-        //            {
-        //                return b;
-        //            }
-        //            throw new GeodeException(
-        //                $"ContainsKey on '{FullPath}': expected bool reply, " +
-        //                $"got {value?.GetType().Name ?? "null"}.");
-        //        }
+        switch (reply.MessageType)
+        {
+            case MessageType.Response:
+                {
+                    var partReader = new DataInput(reply.Parts[0].Payload);
+                    var value = dm.Cache.SerializationRegistry.ReadObject(partReader);
+                    if (value is bool b)
+                    {
+                        return b;
+                    }
+                    throw new GeodeException(
+                        $"ContainsKey on '{FullPath}': expected bool reply, " +
+                        $"got {value?.GetType().Name ?? "null"}.");
+                }
 
-        //    case MessageType.Exception:
-        //        throw new GeodeException(
-        //            $"Server exception on ContainsKey '{FullPath}': " +
-        //            TcrMessageHelper.DecodeExceptionPreview(reply));
+            case MessageType.Exception:
+                throw new GeodeException(
+                    $"Server exception on ContainsKey '{FullPath}': " +
+                    TcrMessageHelper.DecodeExceptionPreview(reply));
 
-        //    default:
-        //        throw new GeodeException(
-        //            $"Unexpected reply type {reply.MessageType} for ContainsKey on '{FullPath}'.");
-        //}
+            default:
+                throw new GeodeException(
+                    $"Unexpected reply type {reply.MessageType} for ContainsKey on '{FullPath}'.");
+        }
     }
 
     public override async Task<bool> ExistsValueAsync(string predicate, CancellationToken ct = default)
@@ -431,47 +411,33 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task<object?> GetAsync(object key, CancellationToken ct = default)
     {
-        throw new NotImplementedException();
-        //ArgumentNullException.ThrowIfNull(key);
+        logger.LogTrace("GetAsync: region={RegionPath}, key={Key}", FullPath, key);
+        var request = await TcrMessageBuilder
+          .Create(serviceProvider, MessageType.Request)
+          .AddRegionNamePart(FullPath)
+          .AddKeyPart(dm.Cache, key)
+          .BuildAsync(ct);
 
-        //logger.LogTrace("GetAsync: region={RegionPath}, key={Key}", FullPath, key);
+        var reply = await dm
+            .SendSyncRequestAsync(request, ct: ct)
+            .ConfigureAwait(false);
 
-        //// Mirrors cppcache ThinClientRegion::getNoThrow_remote
-        //// (cppcache/src/ThinClientRegion.cpp:810-850) +
-        //// TcrMessageRequest ctor (TcrMessage.cpp:1858-1898).
-        ////
-        //// ─── Step 1+2: build request frame ────────────────────
-        //var request = await tcrMessageBuilder.GetAsync(FullPath, key, ct: ct);
+        switch (reply.MessageType)
+        {
+            case MessageType.Response:
+                if (reply.Parts.Count == 0)
+                {
+                    throw new GeodeException($"Get on '{FullPath}': Response with zero parts.");
+                }
+                return DecodeValuePart(reply.Parts[0]);
 
-        //// ─── Step 3: dispatch via DM ─────────────────────────
-        //var reply = await dm
-        //    .SendSyncRequestAsync(request, ct: ct)
-        //    .ConfigureAwait(false);
+            case MessageType.Exception:
+                throw new GeodeException($"Server exception on Get '{FullPath}': " +
+                    TcrMessageHelper.DecodeExceptionPreview(reply));
 
-        //// ─── Step 4: reply decoding ──────────────────────────
-        //// cppcache getNoThrow_remote reply switch
-        //// (ThinClientRegion.cpp:826-849): Response → value /
-        //// Exception → throw / REQUEST_DATA_ERROR → throw /
-        //// anything else → throw.
-        //switch (reply.MessageType)
-        //{
-        //    case MessageType.Response:
-        //        if (reply.Parts.Count == 0)
-        //        {
-        //            throw new GeodeException(
-        //                $"Get on '{FullPath}': Response with zero parts.");
-        //        }
-        //        return DecodeValuePart(reply.Parts[0]);
-
-        //    case MessageType.Exception:
-        //        throw new GeodeException(
-        //            $"Server exception on Get '{FullPath}': " +
-        //            TcrMessageHelper.DecodeExceptionPreview(reply));
-
-        //    default:
-        //        throw new GeodeException(
-        //            $"Unexpected reply type {reply.MessageType} for Get on '{FullPath}'.");
-        //}
+            default:
+                throw new GeodeException($"Unexpected reply type {reply.MessageType} for Get on '{FullPath}'.");
+        }
     }
 
     public override async Task InvalidateAsync(object key, CancellationToken ct = default)
@@ -620,59 +586,37 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task PutAsync(object key, object value, CancellationToken ct = default)
     {
-        throw new NotImplementedException();
-        //ArgumentNullException.ThrowIfNull(key);
-        //ArgumentNullException.ThrowIfNull(value);
+        logger.LogTrace("PutAsync: region={RegionPath}, key={Key}", FullPath, key);
+        var (threadId, sequenceId) = dm.Cache.EventIdGenerator.Next();
+        var request = await TcrMessageBuilder
+         .Create(serviceProvider, MessageType.Put)   // cppcache TcrMessage.cpp:1999 — m_msgType = TcrMessage::PUT
+         .AddRegionNamePart(FullPath)
+         .AddNullObjectPart()
+         .AddInt32Part(0)
+         .AddKeyPart(dm.Cache, key)
+         .AddCacheableBooleanPart(false)  // isDelta
+         .AddValuePart(dm.Cache, value)
+         .AddEventIdPart(threadId, sequenceId)
+         .BuildAsync(ct);
 
-        //logger.LogTrace("PutAsync: region={RegionPath}, key={Key}", FullPath, key);
+        var reply = await dm
+            .SendSyncRequestAsync(request, ct: ct)
+            .ConfigureAwait(false);
 
-        //// Mirrors cppcache ThinClientRegion::putNoThrow_remote
-        //// (cppcache/src/ThinClientRegion.cpp:888-947) +
-        //// TcrMessagePut ctor (TcrMessage.cpp:1989-2034).
-        ////
-        //// ─── Step 1+2: build request frame ────────────────────
-        //// Region FullPath + DSCode-tagged key/value/callback via
-        //// SerializationRegistry; EventId pair from the per-cache
-        //// generator (cppcache EventIdTSS::initFromTSS). Delta is hard-
-        //// coded false — Phase 4 territory.
-        //var (threadId, sequenceId) = eventIdGenerator.Next();
-        //var request = await tcrMessageBuilder.PutAsync(
-        //    regionName: FullPath,
-        //    key: key,
-        //    value: value,
-        //    callbackArgument: null,
-        //    eventThreadId: threadId,
-        //    eventSequenceId: sequenceId,
-        //    ct: ct);
 
-        //// ─── Step 3: dispatch via DM ─────────────────────────
-        //// ThinClientPoolDM.SendSyncRequestAsync picks the (single in
-        //// MVP) endpoint, routes through SendRequestToEndpointAsync
-        //// (conn borrow / fallback create / send / put-back).
-        //var reply = await dm
-        //    .SendSyncRequestAsync(request, ct: ct)
-        //    .ConfigureAwait(false);
+        switch (reply.MessageType)
+        {
+            case MessageType.Reply:
+                return;
 
-        //// ─── Step 4: reply decoding ──────────────────────────
-        //// cppcache putNoThrow_remote reply switch
-        //// (ThinClientRegion.cpp:928-947): Reply OK / Exception → throw
-        //// / PUT_DATA_ERROR → throw / anything else → throw.
-        //switch (reply.MessageType)
-        //{
-        //    case MessageType.Reply:
-        //        // cppcache REPLY branch reads versionTag here; we don't
-        //        // surface version tags yet (Phase 4 concurrency checks).
-        //        return;
-
-        //    case MessageType.Exception:
-        //        throw new GeodeException(
-        //            $"Server exception on Put '{FullPath}': " +
-        //            TcrMessageHelper.DecodeExceptionPreview(reply));
-
-        //    default:
-        //        throw new GeodeException(
-        //            $"Unexpected reply type {reply.MessageType} for Put on '{FullPath}'.");
-        //}
+            case MessageType.Exception:
+                throw new GeodeException(
+                    $"Server exception on Put '{FullPath}': " +
+                    TcrMessageHelper.DecodeExceptionPreview(reply));
+            default:
+                throw new GeodeException(
+                    $"Unexpected reply type {reply.MessageType} for Put on '{FullPath}'.");
+        }
     }
 
     public override async Task RemoveAllAsync(IReadOnlyCollection<object> keys, CancellationToken ct = default)

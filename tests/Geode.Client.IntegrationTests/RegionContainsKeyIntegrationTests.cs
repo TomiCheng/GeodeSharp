@@ -1,85 +1,95 @@
-/*
-using Geode.Client.Options;
+using Geode.Client;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Geode.Client.IntegrationTests;
 
 /// <summary>
-/// Phase 1.2 walking-skeleton check: the full consumer call chain
-///
-///   <c>cache.GetRegion&lt;int, byte[]&gt;("test").ContainsKeyAsync(...)</c>
-///
-/// runs end-to-end against a real Apache Geode server and returns
-/// <c>false</c>. Exercises the entire path: build request via
-/// <c>TcrMessageBuilder.ContainsKey</c>, dispatch via
-/// <c>ThinClientPoolDM.SendSyncRequestAsync</c>, decode reply
-/// (<c>Response</c> → bool via <c>SerializationRegistry</c>).
+/// End-to-end check for <see cref="IRegion.ContainsKeyAsync"/> against a
+/// real Apache Geode server: the unit tests lock the wire layout, this
+/// file exercises the full call chain
+/// (<see cref="RegionFactory.CreateAsync{TKey, TValue}(string, CancellationToken)"/>
+/// → wire frame → server reply → bool decode). Keys are pre-populated
+/// via <c>gfsh put</c> because <c>PutAsync</c> isn't implemented yet.
 /// </summary>
+/// <remarks>
+/// Key range <c>9000s</c> picked to stay clear of other integration
+/// suites' ranges. Tests in the shared <see cref="GeodeCollection"/>
+/// run sequentially so the pre-put / remove pattern is race-free.
+/// </remarks>
 [Collection(nameof(GeodeCollection))]
 public class RegionContainsKeyIntegrationTests(GeodeFixture fx)
 {
-    private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(30);
+    private const string RegionName = "test";
 
     /// <summary>
-    /// Path-(a) declarative config: one pool pointing at the fixture
-    /// container, plus one region named "test" (which gfsh already
-    /// pre-creates as REPLICATE inside the container). Pure defaults
-    /// — no overrides, matches cppcache default usage.
+    /// Cold-container ClientHealthMonitor registration race
+    /// (<c>geode-fresh-conn-race.md</c>): the server takes 100ms–3s to
+    /// register a fresh client connection. First op without this buffer
+    /// surfaces as a <c>RegionDestroyedException</c>.
     /// </summary>
-    private void ConfigureCache(GeodeClientOptions config)
+    private static readonly TimeSpan FreshConnectionSettleDelay = TimeSpan.FromSeconds(3);
+
+    private static ServiceProvider BuildSp()
     {
-        config.Cache = new CacheOptions
-        {
-            Pools =
-            {
-                new CachePoolOptions
-                {
-                    Name = "testPool",
-                    Servers =
-                    {
-                        new CacheHostPortOptions
-                        {
-                            Host = fx.LocatorHost,
-                            Port = fx.ServerPort,
-                        },
-                    },
-                },
-            },
-            Regions =
-            {
-                new CacheRegionOptions
-                {
-                    Name = "test",
-                    Attributes = { PoolName = "testPool" },
-                },
-            },
-        };
+        var services = new ServiceCollection();
+        services.AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance);
+        services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
+        services.AddGeodeFactory();
+        return services.BuildServiceProvider();
+    }
+
+    private async Task<IRegion<int, string>> BuildRegionAsync(ServiceProvider sp, CancellationToken ct)
+    {
+        var cache = await sp.GetRequiredService<IGeodeCacheFactory>().CreateAsync("c", ct);
+        await cache.PoolManager.CreateFactory()
+            .AddServer(fx.LocatorHost, fx.ServerPort)
+            .SetMinConnections(1)
+            .BuildAsync("p", ct);
+
+        await Task.Delay(FreshConnectionSettleDelay, ct);
+
+        return await cache.CreateRegionFactory(RegionShortcut.Proxy)
+            .CreateAsync<int, string>(RegionName, ct);
     }
 
     [Fact]
-    public async Task ContainsKeyAsync_returns_false_through_full_call_chain()
+    public async Task ContainsKeyAsync_AbsentKey_ReturnsFalse()
     {
-        using var cts = new CancellationTokenSource(TestTimeout);
+        var ct = TestContext.Current.CancellationToken;
+        await using var sp = BuildSp();
+        var region = await BuildRegionAsync(sp, ct);
 
-        await using var services = new ServiceCollection()
-            .AddLogging()
-            .AddGeodeClient(ConfigureCache)
-            .BuildServiceProvider();
+        // 9001 belongs to a key range we never populate via gfsh.
+        Assert.False(await region.ContainsKeyAsync(9001, ct));
+    }
 
-        var cache = services.GetRequiredService<IGeodeCacheFactory>().Create();
-        await cache.EnsureInitializedAsync(cts.Token);
+    [Fact]
+    public async Task ContainsKeyAsync_PrePutKey_ReturnsTrue()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        const int key = 9002;
 
-        // Look up the XML-declared region. Returns null if init didn't
-        // register it — that would be a wiring failure, not a server-
-        // side problem.
-        var region = cache.GetRegion<int, byte[]>("test");
-        Assert.NotNull(region);
+        // Pre-populate via gfsh — PutAsync isn't implemented (Phase 1.x).
+        await fx.GfshAsync(
+            $"put --region=/{RegionName} --key={key} --key-class=java.lang.Integer --value=hello --value-class=java.lang.String",
+            ct);
+        try
+        {
+            await using var sp = BuildSp();
+            var region = await BuildRegionAsync(sp, ct);
 
-        Assert.False(await region.ContainsKeyAsync(123, cts.Token));
-
-        await cache.CloseAsync(cts.Token);
+            Assert.True(await region.ContainsKeyAsync(key, ct));
+        }
+        finally
+        {
+            // Deterministic cleanup so re-runs against the same fixture
+            // don't carry residue keys.
+            await fx.GfshAsync(
+                $"remove --region=/{RegionName} --key={key} --key-class=java.lang.Integer",
+                ct);
+        }
     }
 }
-
-*/

@@ -21,6 +21,7 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
     private readonly TypeRegistry _typeRegistry;
     private readonly PdxTypeRegistry _pdxTypeRegistry;
     private readonly Lazy<SerializationRegistry> _serializationRegistry;
+    private readonly EventIdGenerator _eventIdGenerator = new();
     public GeodeCache(IServiceProvider serviceProvider, string name)
     {
         _name = name;
@@ -108,6 +109,7 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
     internal PdxTypeRegistry PdxTypeRegistry => _pdxTypeRegistry;
     internal SerializationRegistry SerializationRegistry => _serializationRegistry.Value;
     internal TcrConnectionManager ConnectionManager => _tcrConnectionManager.Value;
+    internal EventIdGenerator EventIdGenerator => _eventIdGenerator;
 
     //    /// <summary>
     //    /// Build pools and regions from an already-bound

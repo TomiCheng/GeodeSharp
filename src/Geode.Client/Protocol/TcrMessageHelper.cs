@@ -1,4 +1,3 @@
-/*
 using System.Text;
 using Microsoft.Extensions.Logging;
 
@@ -64,7 +63,7 @@ internal sealed class TcrMessageHelper(ILogger<TcrMessageHelper> logger)
     /// (only consumed via <c>readExceptionPart</c> on the EXCEPTION
     /// branch).</param>
     public ChunkObjectType ReadChunkPartHeader(
-        BigEndianBinaryReader reader,
+        DataInput reader,
         byte expectedDsCode,
         int expectedPartType,
         string methodName,
@@ -73,26 +72,16 @@ internal sealed class TcrMessageHelper(ILogger<TcrMessageHelper> logger)
     {
         ArgumentNullException.ThrowIfNull(reader);
 
-        // Mirrors cppcache TcrMessageHelper::readChunkPartHeader
-        // (cppcache/src/TcrMessage.cpp:3191-3251).
-        //
-        // ?�?�?� Step 1: read partLen + isObj ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
         partLen = reader.ReadInt32();
         var isObj = reader.ReadBool();
 
-        // ?�?�?� Step 2: partLen == 0 ??NullObject ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
-        // cppcache comment: "special null object is case for scalar
-        // query result". Phase 1.3 ChunkedRemoveAllResponse uses
-        // this to recognise an empty-batch reply.
+
         if (partLen == 0)
         {
             return ChunkObjectType.NullObject;
         }
 
-        // ?�?�?� Step 3: !isObj ??Exception ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
-        // cppcache: "otherwise we're currently always expecting an
-        // object" ??non-object part with non-zero length signals
-        // an exception payload.
+      
         if (!isObj)
         {
             logger.LogDebug(
@@ -101,24 +90,10 @@ internal sealed class TcrMessageHelper(ILogger<TcrMessageHelper> logger)
             return ChunkObjectType.Exception;
         }
 
-        // ?�?�?� Step 4: read DSCode byte ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
-        // cppcache reads the byte twice into rawByte / partType
-        // (latter cast to DSCode); our DSCode is a byte-constant
-        // class so no cast needed. compId defaults to partType and
-        // gets overwritten in step 7's FixedIDByte/FixedIDShort
-        // branches with the trailing 1- or 2-byte fixed-id.
+      
         var partType = reader.ReadByte();
         var compId = (int)partType;
 
-        // ?�?�?� Step 5: JavaSerializable ??Exception ?�?�?�?�?�?�?�?�?�?�?�?�?�?�
-        // cppcache rewinds (input.reset) + calls readExceptionPart to
-        // decode the Java-serialised exception body and mutates the
-        // reply msg type to EXCEPTION. Our record is immutable so we
-        // can't propagate the type change that way; the body decode
-        // also requires a Java exception deserialiser we don't have
-        // (Phase 2+ PDX territory). Phase 1.3 just signals Exception
-        // back to the caller, which throws GeodeException via the
-        // unhandled-chunkType path in ChunkedRemoveAllResponse.
         if (partType == DSCode.JavaSerializable)
         {
             logger.LogDebug(
@@ -128,21 +103,13 @@ internal sealed class TcrMessageHelper(ILogger<TcrMessageHelper> logger)
             return ChunkObjectType.Exception;
         }
 
-        // ?�?�?� Step 6: NullObj DSCode ??NullObject ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
-        // cppcache comment: "special null object is case for scalar
-        // query result". Same NullObject signal as step 2 but
-        // triggered by the inner DSCode tag rather than partLen=0.
+       
         if (partType == DSCode.NullObj)
         {
             return ChunkObjectType.NullObject;
         }
 
-        // ?�?�?� Step 7: enforce DSCode + read fixed-id compId ?�?�?�?�?�
-        // When caller passed a specific expected DSCode (Byte / Short
-        // fixed-id), verify partType matches and read the trailing
-        // 1/2-byte fixed-id into compId. expectedDsCode == 0
-        // (FixedIDDefault) means "any DSCode is fine"; skip whole
-        // block.
+
         if (expectedDsCode > DSCode.FixedIDDefault)
         {
             if (partType != expectedDsCode)
@@ -157,17 +124,11 @@ internal sealed class TcrMessageHelper(ILogger<TcrMessageHelper> logger)
             }
             else if (expectedDsCode == DSCode.FixedIDByte)
             {
-                // DSFid is a signed byte on the wire; cppcache reads it
-                // via int8_t. Without the (sbyte) cast 0xC5 reads back
-                // as 197 (unsigned) instead of -59 (CollectionTypeImpl),
-                // breaking the compId compare. Only matters for negative
-                // DSFid IDs ??the positive ones (VersionedObjectPartList,
-                // CacheableObjectPartList, etc.) round-trip either way.
                 compId = (sbyte)reader.ReadByte();
             }
         }
 
-        // ?�?�?� Step 8: compId mismatch ??throw ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
+        
         if (compId != expectedPartType)
         {
             throw new GeodeException(
@@ -176,10 +137,7 @@ internal sealed class TcrMessageHelper(ILogger<TcrMessageHelper> logger)
                 $"expected = {expectedPartType}, raw = {(int)partType}");
         }
 
-        // ?�?�?� Step 9: standard object chunk ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
-        // isLastChunk byte unused in our port ??cppcache only reads
-        // it via readExceptionPart (step 5 deferred) and the secure
-        // trailer (Phase 3+ auth).
+     
         _ = isLastChunk;
         return ChunkObjectType.Object;
     }
@@ -216,5 +174,3 @@ internal sealed class TcrMessageHelper(ILogger<TcrMessageHelper> logger)
         return sb.ToString();
     }
 }
-
-*/

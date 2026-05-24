@@ -35,8 +35,8 @@ namespace Geode.Client.Protocol;
 /// </remarks>
 internal sealed partial class TcrMessageBuilder
 {
-    IServiceProvider _serviceProvider;
-    MessageType _messageType;
+    readonly IServiceProvider _serviceProvider;
+    readonly MessageType _messageType;
     int _transactionId = -1;
     byte _earlyAck = 0;
     readonly List<TcrPartBuilder> _tcrPartBuilders = [];
@@ -52,9 +52,85 @@ internal sealed partial class TcrMessageBuilder
         return new TcrMessageBuilder(serviceProvider, messageType);
     }
 
+    public TcrMessageBuilder AddPart(Func<CancellationToken, ValueTask<TcrPart>> func)
+    {
+        _tcrPartBuilders.Add(new TcrPartBuilder(func));
+        return this;
+    }
+
     public TcrMessageBuilder AddKeepAlivePart(bool value)
     {
         _tcrPartBuilders.Add(TcrPartBuilder.KeepAlive(value));
+        return this;
+    }
+
+    public TcrMessageBuilder AddRegionNamePart(string regionName)
+    {
+        _tcrPartBuilders.Add(TcrPartBuilder.RegionName(_serviceProvider, regionName));
+        return this;
+    }
+
+    public TcrMessageBuilder AddKeyPart(GeodeCache cache, object key)
+    {
+        return AddPart(async (ct) =>
+        {
+            using var output = ActivatorUtilities.CreateInstance<DataOutput>(_serviceProvider);
+            await cache.SerializationRegistry.WriteObjectAsync(output, key, ct: ct);
+            return new TcrPart(IsObject: 1, output.WrittenSpan.ToArray());
+        });
+    }
+
+    public TcrMessageBuilder AddInt32Part(int value)
+    {
+        _tcrPartBuilders.Add(TcrPartBuilder.Int32(_serviceProvider, value));
+        return this;
+    }
+
+    public TcrMessageBuilder AddNullObjectPart()
+    {
+        _tcrPartBuilders.Add(TcrPartBuilder.NullObj());
+        return this;
+    }
+
+    /// <summary>
+    /// Add a <see cref="DSCode.CacheableBoolean"/>-tagged 1-byte part
+    /// (<c>IsObject=1</c>). Used for the <c>isDelta</c> slot in Put;
+    /// mirrors cppcache <c>writeObjectPart(CacheableBoolean::create(...))</c>.
+    /// </summary>
+    public TcrMessageBuilder AddCacheableBooleanPart(bool value)
+    {
+        _tcrPartBuilders.Add(TcrPartBuilder.CacheableBoolean(value));
+        return this;
+    }
+
+    /// <summary>
+    /// Add a DSCode-tagged serialized <paramref name="value"/> part
+    /// (<c>IsObject=1</c>); structurally identical to
+    /// <see cref="AddKeyPart"/>, named separately for caller semantics.
+    /// Mirrors cppcache <c>writeObjectPart(value, isDelta)</c> minus
+    /// delta support (Phase 4+).
+    /// </summary>
+    public TcrMessageBuilder AddValuePart(GeodeCache cache, object value)
+    {
+        return AddPart(async ct =>
+        {
+            using var output = ActivatorUtilities.CreateInstance<DataOutput>(_serviceProvider);
+            await cache.SerializationRegistry.WriteObjectAsync(output, value, ct: ct);
+            return new TcrPart(IsObject: 1, output.WrittenSpan.ToArray());
+        });
+    }
+
+    /// <summary>
+    /// Add the 18-byte EventId part (<c>IsObject=0</c>) mirroring
+    /// cppcache <c>writeEventIdPart</c>
+    /// (<c>cppcache/src/TcrMessage.cpp:834</c>): longCode-tagged
+    /// <paramref name="threadId"/> + <paramref name="sequenceId"/>,
+    /// both <see cref="long"/> BE. Pair sourced from
+    /// <see cref="Services.EventIdGenerator.Next"/>.
+    /// </summary>
+    public TcrMessageBuilder AddEventIdPart(long threadId, long sequenceId)
+    {
+        _tcrPartBuilders.Add(TcrPartBuilder.EventId(_serviceProvider, threadId, sequenceId));
         return this;
     }
 

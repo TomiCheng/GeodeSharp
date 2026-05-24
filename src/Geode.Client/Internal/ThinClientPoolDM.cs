@@ -1607,6 +1607,237 @@ internal class ThinClientPoolDM(
             $"Pool '{name}': all {total} configured servers are in excludeServers.");
     }
     #endregion
+
+    /// <summary>
+    /// DM-level send: pick an endpoint and route the request through
+    /// it. Mirrors cppcache
+    /// <c>ThinClientPoolDM::sendSyncRequest(request, reply, ...)</c>
+    /// (<c>ThinClientPoolDM.cpp:1380-1500</c>) — the path every region
+    /// op (Put / Get / ContainsKey / Destroy) takes when the caller
+    /// does not pin a specific endpoint.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Phase 1.2 slice — single endpoint, no failover, no retry.
+    /// cppcache wraps <see cref="SendRequestToEndpointAsync"/> in a
+    /// do-while loop driven by <c>isFatalError</c> classification +
+    /// <c>selectEndpoint(excludeServers)</c>; the retry logic lands in
+    /// Phase 1.5 once <c>GfErrType</c> taxonomy + <c>excludeServers</c>
+    /// thread through.
+    /// </para>
+    /// <para>
+    /// <paramref name="attemptFailover"/> and
+    /// <paramref name="isBackgroundThread"/> are accepted for cppcache
+    /// signature parity but currently ignored — failover is Phase 1.5,
+    /// background-thread stats hooks are Phase 1.5 stats work.
+    /// </para>
+    /// </remarks>
+    public override Task<TcrMessage> SendSyncRequestAsync(
+        TcrMessage request,
+        bool attemptFailover = true,
+        bool isBackgroundThread = false,
+        CancellationToken ct = default)
+        => SendSyncRequestCoreAsync(request, chunkedResult: null, attemptFailover, isBackgroundThread, ct);
+
+    /// <summary>
+    /// Chunked-reply variant of
+    /// <see cref="SendSyncRequestAsync(TcrMessage, bool, bool, CancellationToken)"/>.
+    /// </summary>
+    public override Task<TcrMessage> SendSyncRequestAsync(
+        TcrMessage request,
+        TcrChunkedResult chunkedResult,
+        bool attemptFailover = true,
+        bool isBackgroundThread = false,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(chunkedResult);
+        return SendSyncRequestCoreAsync(request, chunkedResult, attemptFailover, isBackgroundThread, ct);
+    }
+
+    /// <summary>
+    /// Shared body for both <see cref="SendSyncRequestAsync(TcrMessage, bool, bool, CancellationToken)"/>
+    /// overloads — selectEndpoint → addEP → endpoint-pinned send.
+    /// </summary>
+    private async Task<TcrMessage> SendSyncRequestCoreAsync(
+        TcrMessage request,
+        TcrChunkedResult? chunkedResult,
+        bool attemptFailover,
+        bool isBackgroundThread,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ct.ThrowIfCancellationRequested();
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _isDestroyed) != 0, this);
+
+        _ = isBackgroundThread;     // Phase 1.5: sticky flag + stats hook.
+
+        logger.LogDebug(
+            "ThinClientPoolDM::sendSyncRequest{Variant} type={MessageType} txId={TxId}",
+            chunkedResult is null ? "" : " (chunked)",
+            request.MessageType, request.TransactionId);
+
+        // Pool ReadTimeout linked onto caller ct for non-query types.
+        // cppcache:1281-1292 (query-family carries its own wire-level timeout).
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        if (!IsQueryFamilyType(request.MessageType))
+        {
+            linkedCts.CancelAfter(attributes.ReadTimeout);
+        }
+        var effectiveCt = linkedCts.Token;
+
+        // #15 in-progress + #16/#17 timing. cppcache bumps m_clientOps at
+        // entry (`:1272`) and decrements + records #16/#17/#18/#19 at every
+        // exit (`:1519, 1538`). Stopwatch only records on the success path;
+        // outer catch classifies non-success exits into #18 / #19 +
+        // re-throws. Caller-cancellation propagates without classification.
+        Interlocked.Increment(ref _clientOpsInProgress);
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            // Step A — retry frame state. cppcache:1294-1304.
+            // attemptFailover=false pins to a single attempt regardless of
+            // pool config (subscription / one-shot callers).
+            var retriesLeft = attemptFailover ? attributes.RetryAttempts + 1 : 1;
+            var retryAllEpsOnce = attemptFailover && attributes.RetryAttempts == -1;
+            var excludeServers = new HashSet<DnsEndPoint>();
+            var firstTry = true;
+            Exception? lastError = null;
+
+            // Step B — retry frame. cppcache:1294-1322.
+            while (retryAllEpsOnce || retriesLeft-- > 0)
+            {
+                // Step C — retry bit on resend. cppcache:1309.
+                if (!firstTry) request = request.UpdateHeaderForRetry();
+
+                // Step D — query-family timeout doesn't retry. cppcache:1312-1322.
+                if (lastError is OperationCanceledException && IsQueryFamilyType(request.MessageType))
+                {
+                    throw lastError;
+                }
+
+                // Hoisted for Step F (catch quarantines the failed location).
+                DnsEndPoint? attemptedLocation = null;
+                try
+                {
+                    // Step 1 — pick endpoint. cppcache: selectEndpoint(excludeServers).
+                    attemptedLocation = await SelectEndpointAsync(excludeServers, effectiveCt).ConfigureAwait(false);
+
+                    // Step 2 — get-or-create TcrEndpoint (cppcache inlines this in selectEndpoint).
+                    var endpoint = await AddEPAsync(attemptedLocation, effectiveCt).ConfigureAwait(false);
+
+                    // Step 3 — endpoint-pinned send.
+                    // TODO Phase 1.5 — sticky / isBGThread put-back flag
+                    // (cppcache:1427-1436: isBGThread || GET_ALL_70 ||
+                    // GET_ALL_WITH_CALLBACK || EXECUTE_REGION_FUNCTION_SINGLE_HOP).
+                    // Blocked on StickyManager landing.
+                    var reply = chunkedResult is null
+                        ? await SendRequestToEndpointAsync(request, endpoint, effectiveCt).ConfigureAwait(false)
+                        : await SendRequestToEndpointAsync(request, chunkedResult, endpoint, effectiveCt).ConfigureAwait(false);
+
+                    // TODO Phase 4 — PR single-hop metadata refresh
+                    // (cppcache:1484-1508: reply.getMetaDataVersion() +
+                    // request.forSingleHop() → EnqueueForMetadataRefresh).
+
+                    // #16 + #17 success record. cppcache:1521, 1541.
+                    _stats.ClientOp(stopwatch.Elapsed);
+                    return reply;
+                }
+                catch (Exception ex) when (IsRetryableTransportError(ex, ct))
+                {
+                    // Step E — transport-error catch (first-cut taxonomy in
+                    // IsRetryableTransportError; full GfErrType port deferred).
+                    lastError = ex;
+                    logger.LogDebug(
+                        ex,
+                        "ThinClientPoolDM::sendSyncRequest retry-eligible failure (type={MessageType} txId={TxId} endpoint={Endpoint}); attempts left {RetriesLeft}.",
+                        request.MessageType, request.TransactionId, attemptedLocation, retriesLeft);
+
+                    // Step F — quarantine the failed endpoint. cppcache:1453.
+                    if (attemptedLocation is not null)
+                    {
+                        excludeServers.Add(attemptedLocation);
+                    }
+                    firstTry = false;
+                }
+            }
+
+            // Step G — retries exhausted (cppcache: GfErrType return).
+            throw lastError ?? new GeodeException(
+                $"Pool '{name}': all retry attempts exhausted.");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Caller-driven cancellation — not an op failure, no #18/#19.
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // #18 / #19 classify-on-exit. cppcache:1522-1525, 1542-1545.
+            if (IsClientOpTimeout(ex)) _stats.ClientOpTimeout();
+            else _stats.ClientOpFailure();
+            throw;
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _clientOpsInProgress);
+        }
+    }
+
+    /// <summary>
+    /// True for the query / bulk / function message types that cppcache
+    /// <c>sendSyncRequest</c> treats specially at
+    /// <c>ThinClientPoolDM.cpp:1281-1292, 1312-1322</c>: they carry their
+    /// own wire-level <c>messageResponseTimeout</c> part, so the pool
+    /// skips its own <c>ReadTimeout</c> stamp and never retries them
+    /// after a timeout (the server already gave up).
+    /// </summary>
+    private static bool IsQueryFamilyType(MessageType type) => type is
+        MessageType.Query or
+        MessageType.QueryWithParameters or
+        MessageType.PutAll or
+        MessageType.PutAllWithCallback or
+        MessageType.ExecuteFunction or
+        MessageType.ExecuteRegionFunction or
+        MessageType.ExecuteRegionFunctionSingleHop or
+        MessageType.ExecuteCqWithIr;
+
+    /// <summary>
+    /// First-cut error taxonomy for the DM retry frame
+    /// (<see cref="SendSyncRequestCoreAsync"/>): true when
+    /// <paramref name="ex"/> is a transport-level failure that warrants
+    /// a retry on (eventually) another endpoint.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// cppcache's full taxonomy is a <c>GfErrType</c> enum classified per
+    /// call site (<c>handleEPError</c>, <c>isFatalError</c>, ...); the
+    /// fully-faithful port is a separate Phase 1.5 prereq. This first cut
+    /// covers IO / socket / timeout exceptions and the
+    /// <see cref="OperationCanceledException"/> raised by our
+    /// ReadTimeout-linked CTS (distinguished from caller cancellation by
+    /// the caller's <see cref="CancellationToken"/> not being cancelled).
+    /// </para>
+    /// </remarks>
+    private static bool IsRetryableTransportError(Exception ex, CancellationToken callerCt) => ex switch
+    {
+        OperationCanceledException => !callerCt.IsCancellationRequested,
+        System.Net.Sockets.SocketException => true,
+        IOException => true,
+        TimeoutException => true,
+        _ => false,
+    };
+
+    /// <summary>
+    /// True when <paramref name="ex"/> represents a pool-op timeout for
+    /// stat classification (cppcache <c>incTimeoutClientOps</c>, #19).
+    /// Caller-cancellation is filtered upstream by the outer
+    /// <c>catch (OperationCanceledException) when (ct.IsCancellationRequested)</c>,
+    /// so any <see cref="OperationCanceledException"/> reaching here was
+    /// driven by our linked CTS (ReadTimeout) or a query-family wire
+    /// timeout — both timeouts.
+    /// </summary>
+    private static bool IsClientOpTimeout(Exception ex) =>
+        ex is TimeoutException or OperationCanceledException;
 }
 
 /*
@@ -1693,248 +1924,6 @@ internal class ThinClientPoolDM(
     /// </summary>
     protected ThinClientStickyManager? _stickyManager;
 
-
-
-
-
-
-    public override async Task InitAsync(CancellationToken ct = default)
-    {
-
-    }
-
-    /// <summary>
-    /// DM-level send: pick an endpoint and route the request through
-    /// it. Mirrors cppcache
-    /// <c>ThinClientPoolDM::sendSyncRequest(request, reply, ...)</c>
-    /// (<c>ThinClientPoolDM.cpp:1380-1500</c>) — the path every region
-    /// op (Put / Get / ContainsKey / Destroy) takes when the caller
-    /// does not pin a specific endpoint.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Phase 1.2 slice — single endpoint, no failover, no retry.
-    /// cppcache wraps <see cref="SendRequestToEndpointAsync"/> in a
-    /// do-while loop driven by <c>isFatalError</c> classification +
-    /// <c>selectEndpoint(excludeServers)</c>; the retry logic lands in
-    /// Phase 1.5 once <c>GfErrType</c> taxonomy + <c>excludeServers</c>
-    /// thread through.
-    /// </para>
-    /// <para>
-    /// <paramref name="attemptFailover"/> and
-    /// <paramref name="isBackgroundThread"/> are accepted for cppcache
-    /// signature parity but currently ignored — failover is Phase 1.5,
-    /// background-thread stats hooks are Phase 1.5 stats work.
-    /// </para>
-    /// </remarks>
-    public override Task<TcrMessage> SendSyncRequestAsync(
-        TcrMessage request,
-        bool attemptFailover = true,
-        bool isBackgroundThread = false,
-        CancellationToken ct = default)
-        => SendSyncRequestCoreAsync(request, chunkedResult: null, attemptFailover, isBackgroundThread, ct);
-
-    /// <summary>
-    /// Chunked-reply variant of
-    /// <see cref="SendSyncRequestAsync(TcrMessage, bool, bool, CancellationToken)"/>.
-    /// </summary>
-    public override Task<TcrMessage> SendSyncRequestAsync(
-        TcrMessage request,
-        TcrChunkedResult chunkedResult,
-        bool attemptFailover = true,
-        bool isBackgroundThread = false,
-        CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(chunkedResult);
-        return SendSyncRequestCoreAsync(request, chunkedResult, attemptFailover, isBackgroundThread, ct);
-    }
-
-    /// <summary>
-    /// Shared body for both <see cref="SendSyncRequestAsync(TcrMessage, bool, bool, CancellationToken)"/>
-    /// overloads — selectEndpoint → addEP → endpoint-pinned send.
-    /// </summary>
-    private async Task<TcrMessage> SendSyncRequestCoreAsync(
-        TcrMessage request,
-        TcrChunkedResult? chunkedResult,
-        bool attemptFailover,
-        bool isBackgroundThread,
-        CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        ct.ThrowIfCancellationRequested();
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _isDestroyed) != 0, this);
-
-        _ = isBackgroundThread;     // Phase 1.5: sticky flag + stats hook.
-
-        logger.LogDebug(
-            "ThinClientPoolDM::sendSyncRequest{Variant} type={MessageType} txId={TxId}",
-            chunkedResult is null ? "" : " (chunked)",
-            request.MessageType, request.TransactionId);
-
-        // Pool ReadTimeout linked onto caller ct for non-query types.
-        // cppcache:1281-1292 (query-family carries its own wire-level timeout).
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        if (!IsQueryFamilyType(request.MessageType))
-        {
-            linkedCts.CancelAfter(xmlPool.ReadTimeout);
-        }
-        var effectiveCt = linkedCts.Token;
-
-        // #15 in-progress + #16/#17 timing. cppcache bumps m_clientOps at
-        // entry (`:1272`) and decrements + records #16/#17/#18/#19 at every
-        // exit (`:1519, 1538`). Stopwatch only records on the success path;
-        // outer catch classifies non-success exits into #18 / #19 +
-        // re-throws. Caller-cancellation propagates without classification.
-        Interlocked.Increment(ref _clientOpsInProgress);
-        var stopwatch = Stopwatch.StartNew();
-        try
-        {
-            // Step A — retry frame state. cppcache:1294-1304.
-            // attemptFailover=false pins to a single attempt regardless of
-            // pool config (subscription / one-shot callers).
-            var retriesLeft = attemptFailover ? xmlPool.RetryAttempts + 1 : 1;
-            var retryAllEpsOnce = attemptFailover && xmlPool.RetryAttempts == -1;
-            var excludeServers = new HashSet<DnsEndPoint>();
-            var firstTry = true;
-            Exception? lastError = null;
-
-            // Step B — retry frame. cppcache:1294-1322.
-            while (retryAllEpsOnce || retriesLeft-- > 0)
-            {
-                // Step C — retry bit on resend. cppcache:1309.
-                if (!firstTry) request = request.UpdateHeaderForRetry();
-
-                // Step D — query-family timeout doesn't retry. cppcache:1312-1322.
-                if (lastError is OperationCanceledException && IsQueryFamilyType(request.MessageType))
-                {
-                    throw lastError;
-                }
-
-                // Hoisted for Step F (catch quarantines the failed location).
-                DnsEndPoint? attemptedLocation = null;
-                try
-                {
-                    // Step 1 — pick endpoint. cppcache: selectEndpoint(excludeServers).
-                    attemptedLocation = await SelectEndpointAsync(excludeServers, effectiveCt).ConfigureAwait(false);
-
-                    // Step 2 — get-or-create TcrEndpoint (cppcache inlines this in selectEndpoint).
-                    var endpoint = await AddEPAsync(attemptedLocation, effectiveCt).ConfigureAwait(false);
-
-                    // Step 3 — endpoint-pinned send.
-                    // TODO Phase 1.5 — sticky / isBGThread put-back flag
-                    // (cppcache:1427-1436: isBGThread || GET_ALL_70 ||
-                    // GET_ALL_WITH_CALLBACK || EXECUTE_REGION_FUNCTION_SINGLE_HOP).
-                    // Blocked on StickyManager landing.
-                    var reply = chunkedResult is null
-                        ? await SendRequestToEndpointAsync(request, endpoint, effectiveCt).ConfigureAwait(false)
-                        : await SendRequestToEndpointAsync(request, chunkedResult, endpoint, effectiveCt).ConfigureAwait(false);
-
-                    // TODO Phase 4 — PR single-hop metadata refresh
-                    // (cppcache:1484-1508: reply.getMetaDataVersion() +
-                    // request.forSingleHop() → EnqueueForMetadataRefresh).
-
-                    // #16 + #17 success record. cppcache:1521, 1541.
-                    _stats.ClientOp(stopwatch.Elapsed);
-                    return reply;
-                }
-                catch (Exception ex) when (IsRetryableTransportError(ex, ct))
-                {
-                    // Step E — transport-error catch (first-cut taxonomy in
-                    // IsRetryableTransportError; full GfErrType port deferred).
-                    lastError = ex;
-                    logger.LogDebug(
-                        ex,
-                        "ThinClientPoolDM::sendSyncRequest retry-eligible failure (type={MessageType} txId={TxId} endpoint={Endpoint}); attempts left {RetriesLeft}.",
-                        request.MessageType, request.TransactionId, attemptedLocation, retriesLeft);
-
-                    // Step F — quarantine the failed endpoint. cppcache:1453.
-                    if (attemptedLocation is not null)
-                    {
-                        excludeServers.Add(attemptedLocation);
-                    }
-                    firstTry = false;
-                }
-            }
-
-            // Step G — retries exhausted (cppcache: GfErrType return).
-            throw lastError ?? new GeodeException(
-                $"Pool '{xmlPool.Name}': all retry attempts exhausted.");
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            // Caller-driven cancellation — not an op failure, no #18/#19.
-            throw;
-        }
-        catch (Exception ex)
-        {
-            // #18 / #19 classify-on-exit. cppcache:1522-1525, 1542-1545.
-            if (IsClientOpTimeout(ex)) _stats.ClientOpTimeout();
-            else _stats.ClientOpFailure();
-            throw;
-        }
-        finally
-        {
-            Interlocked.Decrement(ref _clientOpsInProgress);
-        }
-    }
-
-    /// <summary>
-    /// First-cut error taxonomy for the DM retry frame
-    /// (<see cref="SendSyncRequestCoreAsync"/>): true when
-    /// <paramref name="ex"/> is a transport-level failure that warrants
-    /// a retry on (eventually) another endpoint.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// cppcache's full taxonomy is a <c>GfErrType</c> enum classified per
-    /// call site (<c>handleEPError</c>, <c>isFatalError</c>, ...); the
-    /// fully-faithful port is a separate Phase 1.5 prereq. This first cut
-    /// covers IO / socket / timeout exceptions and the
-    /// <see cref="OperationCanceledException"/> raised by our
-    /// ReadTimeout-linked CTS (distinguished from caller cancellation by
-    /// the caller's <see cref="CancellationToken"/> not being cancelled).
-    /// </para>
-    /// </remarks>
-    private static bool IsRetryableTransportError(Exception ex, CancellationToken callerCt) => ex switch
-    {
-        OperationCanceledException => !callerCt.IsCancellationRequested,
-        System.Net.Sockets.SocketException => true,
-        IOException => true,
-        TimeoutException => true,
-        _ => false,
-    };
-
-    /// <summary>
-    /// True when <paramref name="ex"/> represents a pool-op timeout for
-    /// stat classification (cppcache <c>incTimeoutClientOps</c>, #19).
-    /// Caller-cancellation is filtered upstream by the outer
-    /// <c>catch (OperationCanceledException) when (ct.IsCancellationRequested)</c>,
-    /// so any <see cref="OperationCanceledException"/> reaching here was
-    /// driven by our linked CTS (ReadTimeout) or a query-family wire
-    /// timeout — both timeouts.
-    /// </summary>
-    private static bool IsClientOpTimeout(Exception ex) =>
-        ex is TimeoutException or OperationCanceledException;
-
-
-
-    /// <summary>
-    /// True for the query / bulk / function message types that cppcache
-    /// <c>sendSyncRequest</c> treats specially at
-    /// <c>ThinClientPoolDM.cpp:1281-1292, 1312-1322</c>: they carry their
-    /// own wire-level <c>messageResponseTimeout</c> part, so the pool
-    /// skips its own <c>ReadTimeout</c> stamp and never retries them
-    /// after a timeout (the server already gave up).
-    /// </summary>
-    private static bool IsQueryFamilyType(MessageType type) => type is
-        MessageType.Query or
-        MessageType.QueryWithParameters or
-        MessageType.PutAll or
-        MessageType.PutAllWithCallback or
-        MessageType.ExecuteFunction or
-        MessageType.ExecuteRegionFunction or
-        MessageType.ExecuteRegionFunctionSingleHop or
-        MessageType.ExecuteCqWithIr;
 
     public bool IsDestroyed => Volatile.Read(ref _isDestroyed) != 0;
 

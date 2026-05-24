@@ -40,26 +40,26 @@ internal sealed record TcrMessage(
     /// <summary>Fixed-size frame header: four i32 fields + one u8.</summary>
     public const int HeaderLength = 17;
 
-    ///// <summary>
-    ///// <see cref="EarlyAck"/> bit set by <see cref="UpdateHeaderForRetry"/>
-    ///// to flag a resent message; cppcache <c>TcrMessage::updateHeaderForRetry</c>
-    ///// ORs <c>0x4</c> into the EarlyAck byte so the server can dedupe.
-    ///// </summary>
-    //private const byte IsRetryBit = 0x4;
+    /// <summary>
+    /// <see cref="EarlyAck"/> bit set by <see cref="UpdateHeaderForRetry"/>
+    /// to flag a resent message; cppcache <c>TcrMessage::updateHeaderForRetry</c>
+    /// ORs <c>0x4</c> into the EarlyAck byte so the server can dedupe.
+    /// </summary>
+    private const byte IsRetryBit = 0x4;
 
-    ///// <summary>
-    ///// Return a copy with the retry bit set on <see cref="EarlyAck"/>, so
-    ///// the server's <c>ClientHealthMonitor</c> can dedupe a resent op
-    ///// against a prior attempt that may have made it through.
-    ///// </summary>
-    ///// <remarks>
-    ///// Mirrors cppcache <c>TcrMessage::updateHeaderForRetry</c>
-    ///// (<c>cppcache/src/TcrMessage.cpp:805-809</c>). cppcache patches the
-    ///// already-encoded byte buffer in place; we return a new record since
-    ///// <see cref="TcrMessage"/> is immutable and re-encodes on demand.
-    ///// </remarks>
-    //public TcrMessage UpdateHeaderForRetry() =>
-    //    this with { EarlyAck = (byte)(EarlyAck | IsRetryBit) };
+    /// <summary>
+    /// Return a copy with the retry bit set on <see cref="EarlyAck"/>, so
+    /// the server's <c>ClientHealthMonitor</c> can dedupe a resent op
+    /// against a prior attempt that may have made it through.
+    /// </summary>
+    /// <remarks>
+    /// Mirrors cppcache <c>TcrMessage::updateHeaderForRetry</c>
+    /// (<c>cppcache/src/TcrMessage.cpp:805-809</c>). cppcache patches the
+    /// already-encoded byte buffer in place; we return a new record since
+    /// <see cref="TcrMessage"/> is immutable and re-encodes on demand.
+    /// </remarks>
+    public TcrMessage UpdateHeaderForRetry() =>
+        this with { EarlyAck = (byte)(EarlyAck | IsRetryBit) };
 
     /// <summary>Encode this message to a freshly-allocated byte array.</summary>
     public byte[] Encode()

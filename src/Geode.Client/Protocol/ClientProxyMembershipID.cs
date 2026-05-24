@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Protocol.Serialization;
 
 namespace Geode.Client.Protocol;
@@ -82,7 +81,7 @@ internal sealed class ClientProxyMembershipID(SerializationRegistry serializatio
     /// cppcache then calls <c>initObjectVars</c> with the parsed
     /// values + dummies; we inline the field assignments.
     /// </remarks>
-    internal void ReadEssentialData(BigEndianBinaryReader reader)
+    internal void ReadEssentialData(DataInput reader)
     {
         ArgumentNullException.ThrowIfNull(reader);
 
@@ -118,5 +117,3 @@ internal sealed class ClientProxyMembershipID(SerializationRegistry serializatio
         _ = DC_PORT;         // reserved for the full initObjectVars port (Phase 4+)
     }
 }
-
-*/

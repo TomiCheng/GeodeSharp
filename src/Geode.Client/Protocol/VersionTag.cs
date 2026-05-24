@@ -1,4 +1,3 @@
-/*
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -107,7 +106,7 @@ internal class VersionTag(
     /// DUPLICATE_MEMBER_IDS / HAS_RVV_HIGH_BYTE) to read the
     /// variable-width fields.
     /// </remarks>
-    internal virtual void FromData(BigEndianBinaryReader reader)
+    internal virtual void FromData(DataInput reader)
     {
         ArgumentNullException.ThrowIfNull(reader);
 
@@ -196,7 +195,7 @@ internal class VersionTag(
     /// without re-implementing <see cref="FromData"/>. Phase 4+ when
     /// the actual member-id wire types land.
     /// </remarks>
-    protected virtual void ReadMembers(ushort flags, BigEndianBinaryReader reader)
+    protected virtual void ReadMembers(ushort flags, DataInput reader)
     {
         ArgumentNullException.ThrowIfNull(reader);
 
@@ -242,5 +241,3 @@ internal class VersionTag(
         }
     }
 }
-
-*/

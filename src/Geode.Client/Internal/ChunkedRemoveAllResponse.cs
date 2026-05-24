@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Protocol;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -93,7 +92,7 @@ internal sealed class ChunkedRemoveAllResponse(
         // cppcache: cacheImpl->createDataInput(chunk, chunkLen, pool).
         // pool / cacheImpl back-refs aren't needed yet (Phase 4+ when
         // single-hop / PDX type resolution lands).
-        var reader = ActivatorUtilities.CreateInstance<BigEndianBinaryReader>(serviceProvider, payload);
+        var reader = ActivatorUtilities.CreateInstance<DataInput>(serviceProvider, payload);
 
         // ─── Step 2: read chunk part header ────────────────────
         // Peels partLen + isObj + DSCode/FixedID combo, classifies
@@ -139,7 +138,7 @@ internal sealed class ChunkedRemoveAllResponse(
             // Phase 1.3 — endpointMemId always 0 (no single-hop);
             // responseLock not threaded through (single-task chunk drain).
             var vcObjPart = ActivatorUtilities.CreateInstance<VersionedCacheableObjectPartList>(
-                serviceProvider, region);
+                serviceProvider, region.SerializationRegistry, region);
             vcObjPart.FromData(reader);
 
             // Phase 1.3 caller doesn't supply `list`, so the merge is
@@ -210,4 +209,3 @@ internal sealed class ChunkedRemoveAllResponse(
     }
 }
 
-*/

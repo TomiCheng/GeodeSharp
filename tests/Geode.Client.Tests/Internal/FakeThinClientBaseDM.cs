@@ -26,11 +26,24 @@ internal sealed class FakeThinClientBaseDM(IServiceProvider sp, GeodeCache cache
             ?? throw new InvalidOperationException("CannedReply not set."));
     }
 
+    /// <summary>Chunks staged here are fed to <c>HandleChunk</c> in order before returning the canned reply.</summary>
+    public List<ReadOnlyMemory<byte>> StagedChunks { get; } = [];
+
     public override Task<TcrMessage> SendSyncRequestAsync(
         TcrMessage request, TcrChunkedResult chunkedResult,
         bool attemptFailover = true, bool isBackgroundThread = false,
-        CancellationToken ct = default) =>
-        throw new NotSupportedException("Unit-test fake — chunked overload not wired.");
+        CancellationToken ct = default)
+    {
+        LastRequest = request;
+        chunkedResult.Reset();
+        for (var i = 0; i < StagedChunks.Count; i++)
+        {
+            var isLast = i == StagedChunks.Count - 1;
+            chunkedResult.HandleChunk(StagedChunks[i], isLast);
+        }
+        return Task.FromResult(CannedReply
+            ?? throw new InvalidOperationException("CannedReply not set."));
+    }
 
     public override Task<TcrMessage> SendRequestToEndpointAsync(
         TcrMessage request, TcrEndpoint endpoint, CancellationToken ct = default) =>

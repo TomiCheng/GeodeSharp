@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Internal;
 using Geode.Client.Protocol.Serialization;
 using Microsoft.Extensions.DependencyInjection;
@@ -187,7 +186,7 @@ internal sealed class VersionedCacheableObjectPartList(
     /// (FLAG_NULL_TAG / FLAG_FULL_TAG / FLAG_TAG_WITH_NEW_ID /
     /// FLAG_TAG_WITH_NUMBER_ID branches).
     /// </remarks>
-    internal void FromData(BigEndianBinaryReader reader)
+    internal void FromData(DataInput reader)
     {
         ArgumentNullException.ThrowIfNull(reader);
 
@@ -501,7 +500,7 @@ internal sealed class VersionedCacheableObjectPartList(
     ///         specific.</item>
     /// </list>
     /// </remarks>
-    private void ReadObjectPart(int index, BigEndianBinaryReader reader, object key)
+    private void ReadObjectPart(int index, DataInput reader, object key)
     {
         var objType = reader.ReadByte();
         _byteArray[index] = objType;
@@ -594,4 +593,3 @@ internal sealed class VersionedCacheableObjectPartList(
     private readonly Lock _responseLock = new();
 }
 
-*/

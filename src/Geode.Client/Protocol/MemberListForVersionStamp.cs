@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Protocol;
 
 /// <summary>
@@ -95,5 +94,3 @@ internal sealed class MemberListForVersionStamp
 internal sealed record DistributedMemberWithIntIdentifier(
     object? Member,
     ushort Identifier);
-
-*/

@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Protocol;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -165,7 +164,7 @@ internal sealed class ChunkedGetAllResponse(
 
         // ─── Step 1: wrap chunk bytes ──────────────────────────
         // cppcache: cacheImpl->createDataInput(chunk, chunkLen, pool).
-        var reader = ActivatorUtilities.CreateInstance<BigEndianBinaryReader>(serviceProvider, payload);
+        var reader = ActivatorUtilities.CreateInstance<DataInput>(serviceProvider, payload);
 
         // ─── Step 2: read chunk part header ────────────────────
         // Peels partLen + isObj + DSCode/FixedID combo. Expected
@@ -206,7 +205,7 @@ internal sealed class ChunkedGetAllResponse(
         // 1.3 (no client-side caching), which gates VCOPL.FromData's
         // step 7 (putLocal merge) into a no-op.
         var vcObjPart = ActivatorUtilities.CreateInstance<VersionedCacheableObjectPartList>(
-            serviceProvider, region);
+            serviceProvider, region.SerializationRegistry, region);
         vcObjPart.Initialize(
             keys: keys,
             keysOffset: _keysOffset,
@@ -275,5 +274,3 @@ internal sealed class ChunkedGetAllResponse(
         // get replaced rather than removed.
     }
 }
-
-*/

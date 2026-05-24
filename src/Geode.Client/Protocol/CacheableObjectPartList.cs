@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Internal;
 
 namespace Geode.Client.Protocol;
@@ -89,5 +88,3 @@ internal class CacheableObjectPartList(RegionInternal region)
     /// cache. Phase 4+ when client-side caching lands.</summary>
     protected bool AddToLocalCache;
 }
-
-*/

@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Protocol;
 using Xunit;
 
@@ -128,5 +127,3 @@ public class DateTimeDataConverterTests
         Assert.Equal(input, result);
     }
 }
-
-*/

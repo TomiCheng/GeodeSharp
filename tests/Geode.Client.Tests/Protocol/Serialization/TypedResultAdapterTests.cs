@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Protocol.Serialization;
 using Xunit;
 
@@ -339,5 +338,3 @@ public class TypedResultAdapterTests
             () => _adapter.Convert<int[]>("not an enumerable"));
     }
 }
-
-*/

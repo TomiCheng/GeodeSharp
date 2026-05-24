@@ -1,4 +1,3 @@
-/*
 using System.Collections;
 
 namespace Geode.Client.Protocol.Serialization;
@@ -40,7 +39,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// </remarks>
 internal sealed class LinkedListDataConverter : IDataConverter
 {
-    private static readonly byte[] s_dsCodes = { DSCode.CacheableLinkedList };
+    private static readonly byte[] _dsCodes = { DSCode.CacheableLinkedList };
 
     private readonly SerializationRegistry _registry;
 
@@ -50,7 +49,7 @@ internal sealed class LinkedListDataConverter : IDataConverter
         _registry = registry;
     }
 
-    public byte[] DsCodes => s_dsCodes;
+    public byte[] DsCodes => _dsCodes;
 
     public Type ManagedType => typeof(LinkedList<>);
 
@@ -72,7 +71,7 @@ internal sealed class LinkedListDataConverter : IDataConverter
         }
     }
 
-    public object? Read(BigEndianBinaryReader reader, byte dsCode, int depth)
+    public object? Read(DataInput reader, byte dsCode, int depth)
     {
         var length = reader.ReadArrayLen();
         var list = new LinkedList<object?>();
@@ -96,5 +95,3 @@ internal sealed class LinkedListDataConverter : IDataConverter
         return list;
     }
 }
-
-*/

@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Protocol;
 using Xunit;
 
@@ -110,5 +109,3 @@ public class BytesDataConverterTests
         Assert.Equal(value, SerializationTestHelpers.RoundTrip(value));
     }
 }
-
-*/

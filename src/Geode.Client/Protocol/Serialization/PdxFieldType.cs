@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -31,5 +30,3 @@ internal enum PdxFieldType
     ObjectArray = 20,
     ArrayOfByteArrays = 21,
 }
-
-*/

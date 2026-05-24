@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -9,9 +8,9 @@ namespace Geode.Client.Protocol.Serialization;
 /// </summary>
 internal sealed class Int64DataConverter : DataConverter<long>
 {
-    private static readonly byte[] s_dsCodes = { DSCode.CacheableInt64 };
+    private static readonly byte[] _dsCodes = { DSCode.CacheableInt64 };
 
-    public override byte[] DsCodes => s_dsCodes;
+    public override byte[] DsCodes => _dsCodes;
 
     public override ValueTask WriteAsync(DataOutput writer, long value, byte dsCode, int depth, CancellationToken ct)
     {
@@ -19,8 +18,6 @@ internal sealed class Int64DataConverter : DataConverter<long>
         return ValueTask.CompletedTask;
     }
 
-    public override long Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>
+    public override long Read(DataInput reader, byte dsCode, int depth) =>
         reader.ReadInt64();
 }
-
-*/

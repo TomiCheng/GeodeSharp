@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -266,5 +265,3 @@ internal sealed class PdxType(
         }
     }
 }
-
-*/

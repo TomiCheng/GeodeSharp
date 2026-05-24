@@ -1,4 +1,3 @@
-/*
 using System.Buffers.Binary;
 using Geode.Client.Pdx;
 using Geode.Client.Services;
@@ -41,7 +40,7 @@ internal class PdxLocalWriter(IServiceProvider serviceProvider)
     {
         return ActivatorUtilities.CreateInstance<PdxType>(serviceProvider, className, _fields);
     }
-    private readonly StringDataConverter _stringConverter = new(serviceProvider.GetRequiredService<CacheScopeContext>());
+    private readonly StringDataConverter _stringConverter = new(serviceProvider.GetRequiredService<GeodeCache>());
 
     public IPdxWriter WriteBoolean(string fieldName, bool value)
     {
@@ -229,4 +228,3 @@ internal class PdxLocalWriter(IServiceProvider serviceProvider)
             VarLenFieldIdx: _varLenOffsets.Count - 1));
 }
 
-*/

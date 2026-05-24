@@ -1,4 +1,3 @@
-/*
 using System;
 using Geode.Client.Internal;
 using Geode.Client.Services;
@@ -14,21 +13,19 @@ internal sealed class SerializationRegistry
     private readonly ObjectFactory<PdxRemoteWriter> _pdxRemoteWriterByClassNameFactory;
     private readonly ObjectFactory<PdxRemoteWriter> _pdxRemoteWriterByPdxTypeFactory;
     private readonly PdxTypeRegistry _pdxTypeRegistry;
-    private readonly CacheScopeContext _scopeContext;
-    private readonly IServiceProvider _serviceProvider;
+     private readonly IServiceProvider _serviceProvider;
+    private readonly GeodeCache _cache;
     private readonly TypeRegistry _typeRegistry;
 
     public SerializationRegistry(
         IServiceProvider serviceProvider,
-        CacheScopeContext scopeContext,
-        TypeRegistry typeRegistry,
-        PdxTypeRegistry pdxTypeRegistry)
+        GeodeCache cache)
     {
         _serviceProvider = serviceProvider;
-        _typeRegistry = typeRegistry;
-        _pdxTypeRegistry = pdxTypeRegistry;
-        _scopeContext = scopeContext;
-        _pdxWriterWithTypeCollectorFactory = ActivatorUtilities.CreateFactory<PdxWriterWithTypeCollector>([typeof(string)]);
+        _cache = cache;
+        _typeRegistry = cache.TypeRegistry;
+        _pdxTypeRegistry = cache.PdxTypeRegistry;
+        _pdxWriterWithTypeCollectorFactory =  ActivatorUtilities.CreateFactory<PdxWriterWithTypeCollector>([typeof(string)]);
         _pdxRemoteWriterByClassNameFactory = ActivatorUtilities.CreateFactory<PdxRemoteWriter>([typeof(string)]);
         _pdxRemoteWriterByPdxTypeFactory = ActivatorUtilities.CreateFactory<PdxRemoteWriter>([typeof(PdxType), typeof(PdxRemotePreservedData)]);
 
@@ -48,9 +45,9 @@ internal sealed class SerializationRegistry
     {
         // Order: scalar (sorted by DSCode), then bytes, then string,
         // then arrays (sorted by DSCode).
-        // Scalars: no length-prefix on wire ??no allocation DoS
-        // surface ??no CacheScopeContext injection needed. Plain
-        // `new ??)` keeps these construction sites cheap.
+        // Scalars: no length-prefix on wire — no allocation DoS surface
+        // — no GeodeCache injection needed. Plain `new ...()` keeps
+        // these construction sites cheap.
         Register(new BooleanDataConverter());      // 53  CacheableBoolean   ??bool
         Register(new CharacterDataConverter());    // 54  CacheableCharacter ??char
         Register(new ByteDataConverter());         // 55  CacheableByte      ??byte (unsigned, .NET convention)
@@ -61,21 +58,20 @@ internal sealed class SerializationRegistry
         Register(new DoubleDataConverter());       // 60  CacheableDouble    ??double
         Register(new DateTimeDataConverter());     // 61  CacheableDate      ??DateTime
 
-        // Length-prefixed converters: read CacheScopeContext via DI to
-        // snapshot Serialization.MaxArrayLength / MaxStringLength at
-        // construction. ActivatorUtilities resolves the scoped
-        // CacheScopeContext from _serviceProvider ??same instance the
-        // registry itself sees.
-        Register(ActivatorUtilities.CreateInstance<BytesDataConverter>(_serviceProvider));        // 46  CacheableBytes     ??byte[]
-        Register(ActivatorUtilities.CreateInstance<StringDataConverter>(_serviceProvider));                                                                // 42/87/88/89 (+69 read-only) ??string
+        // Length-prefixed converters: snapshot
+        // GeodeCache.CacheProperties.MaxArrayLength / MaxStringLength at
+        // construction. Pass `_cache` explicitly to ActivatorUtilities —
+        // GeodeCache isn't DI-registered, only the IServiceProvider is.
+        Register(ActivatorUtilities.CreateInstance<BytesDataConverter>(_serviceProvider, _cache));   // 46  CacheableBytes      → byte[]
+        Register(ActivatorUtilities.CreateInstance<StringDataConverter>(_serviceProvider, _cache));  // 42/87/88/89 (+69 read-only) → string
 
-        Register(ActivatorUtilities.CreateInstance<BooleanArrayDataConverter>(_serviceProvider)); // 26  BooleanArray       ??bool[]
-        Register(ActivatorUtilities.CreateInstance<CharArrayDataConverter>(_serviceProvider));    // 27  CharArray          ??char[]
-        Register(ActivatorUtilities.CreateInstance<Int16ArrayDataConverter>(_serviceProvider));   // 47  CacheableInt16Array ??short[]
-        Register(ActivatorUtilities.CreateInstance<Int32ArrayDataConverter>(_serviceProvider));   // 48  CacheableInt32Array ??int[]
-        Register(ActivatorUtilities.CreateInstance<Int64ArrayDataConverter>(_serviceProvider));   // 49  CacheableInt64Array ??long[]
-        Register(ActivatorUtilities.CreateInstance<SingleArrayDataConverter>(_serviceProvider));  // 50  CacheableFloatArray ??float[]
-        Register(ActivatorUtilities.CreateInstance<DoubleArrayDataConverter>(_serviceProvider));  // 51  CacheableDoubleArray ??double[]
+        Register(ActivatorUtilities.CreateInstance<BooleanArrayDataConverter>(_serviceProvider, _cache)); // 26  BooleanArray         → bool[]
+        Register(ActivatorUtilities.CreateInstance<CharArrayDataConverter>(_serviceProvider, _cache));    // 27  CharArray            → char[]
+        Register(ActivatorUtilities.CreateInstance<Int16ArrayDataConverter>(_serviceProvider, _cache));   // 47  CacheableInt16Array  → short[]
+        Register(ActivatorUtilities.CreateInstance<Int32ArrayDataConverter>(_serviceProvider, _cache));   // 48  CacheableInt32Array  → int[]
+        Register(ActivatorUtilities.CreateInstance<Int64ArrayDataConverter>(_serviceProvider, _cache));   // 49  CacheableInt64Array  → long[]
+        Register(ActivatorUtilities.CreateInstance<SingleArrayDataConverter>(_serviceProvider, _cache));  // 50  CacheableFloatArray  → float[]
+        Register(ActivatorUtilities.CreateInstance<DoubleArrayDataConverter>(_serviceProvider, _cache));  // 51  CacheableDoubleArray → double[]
         // string[] and object[] both take a registry reference so
         // each element can re-enter WriteObject / ReadObject with
         // its own DSCode. Safe `this` pass ??converter stores the
@@ -100,11 +96,11 @@ internal sealed class SerializationRegistry
     }
 
 
-    internal int MaxArrayLength => _scopeContext.Options.Serialization.MaxArrayLength;
+    internal int MaxArrayLength => _cache.CacheProperties.MaxArrayLength;
 
-    internal int MaxDepth => _scopeContext.Options.Serialization.MaxDepth;
+    internal int MaxDepth => _cache.CacheProperties.MaxDepth;
 
-    internal int MaxStringLength => _scopeContext.Options.Serialization.MaxStringLength;
+    internal int MaxStringLength => _cache.CacheProperties.MaxStringLength;
 
     public bool IsRegistered(Type type)
     {
@@ -119,7 +115,7 @@ internal sealed class SerializationRegistry
     /// converter 自己決定要不要真的 await(用 default interface method 的話
     /// 就是包 sync,override 的話可以真 async)。
     /// </summary>
-    public async ValueTask<object?> ReadObjectAsync(BigEndianBinaryReader reader, int depth = 0, CancellationToken ct = default)
+    public async ValueTask<object?> ReadObjectAsync(DataInput reader, int depth = 0, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(reader);
 
@@ -213,7 +209,9 @@ internal sealed class SerializationRegistry
             // A.4 Round-trip to the server to get a cluster-wide typeId.
             //     pool comes from the DataOutput (mirror cppcache
             //     DataOutputInternal::getPool).
-            nType.TypeId = await _pdxTypeRegistry.GetPdxIdForTypeAsync(entry.ClassName, writer.Pool, nType, true, ct);
+
+            // TODO
+            //nType.TypeId = await _pdxTypeRegistry.GetPdxIdForTypeAsync(entry.ClassName, writer.Pool, nType, true, ct);
 
             // A.6 Emit the PDX wire frame: DSCode + length + typeId + payload.
             //     Length covers typeId + payload (cppcache PdxLocalWriter::
@@ -278,7 +276,7 @@ internal sealed class SerializationRegistry
         return true;
     }
 
-    public object? ReadObject(BigEndianBinaryReader reader, int depth = 0)
+    public object? ReadObject(DataInput reader, int depth = 0)
     {
         ArgumentNullException.ThrowIfNull(reader);
 
@@ -310,5 +308,3 @@ internal sealed class SerializationRegistry
     }
 
 }
-
-*/

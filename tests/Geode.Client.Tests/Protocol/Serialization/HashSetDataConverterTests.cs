@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Protocol;
 using Xunit;
 
@@ -106,5 +105,3 @@ public class HashSetDataConverterTests
         Assert.Contains(true, decoded);
     }
 }
-
-*/

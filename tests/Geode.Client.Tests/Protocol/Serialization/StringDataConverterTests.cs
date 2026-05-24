@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Protocol;
 using Xunit;
 
@@ -195,5 +194,3 @@ public class StringDataConverterTests
         Assert.Equal(2, value.Length);  // sanity: two UTF-16 code units
     }
 }
-
-*/

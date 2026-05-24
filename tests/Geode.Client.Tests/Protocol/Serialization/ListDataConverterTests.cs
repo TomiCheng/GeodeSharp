@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Protocol;
 using Xunit;
 
@@ -127,5 +126,3 @@ public class ListDataConverterTests
         Assert.Null(decoded[3]);
     }
 }
-
-*/

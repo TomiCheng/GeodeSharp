@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Protocol;
 using Xunit;
 
@@ -39,5 +38,3 @@ public class Int32DataConverterTests
     public void RoundTrip(int value) =>
         Assert.Equal(value, SerializationTestHelpers.RoundTrip(value));
 }
-
-*/

@@ -1,4 +1,3 @@
-/*
 using System.Buffers;
 using Geode.Client.Protocol;
 using Geode.Client.Protocol.Serialization;
@@ -31,7 +30,7 @@ public class SerializationRegistryDepthTests
         // strictly less than 3.
         var registry = SerializationTestHelpers.CreateRegistry(maxDepth: 3);
         var value = new List<List<int>> { new() { 1, 2 } };
-        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
+        using var writer = new DataOutput();
 
         await registry.WriteObjectAsync(writer, value, ct: TestContext.Current.CancellationToken);
 
@@ -43,7 +42,7 @@ public class SerializationRegistryDepthTests
     {
         var registry = SerializationTestHelpers.CreateRegistry(maxDepth: 2);
         var value = new List<List<int>> { new() { 1 } };
-        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
+        using var writer = new DataOutput();
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await registry.WriteObjectAsync(writer, value, ct: TestContext.Current.CancellationToken));
@@ -55,7 +54,7 @@ public class SerializationRegistryDepthTests
     public async Task Write_top_level_scalar_at_max_depth_one_succeeds()
     {
         var registry = SerializationTestHelpers.CreateRegistry(maxDepth: 1);
-        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
+        using var writer = new DataOutput();
 
         await registry.WriteObjectAsync(writer, 42, ct: TestContext.Current.CancellationToken);
 
@@ -66,7 +65,7 @@ public class SerializationRegistryDepthTests
     public async Task Write_any_container_at_max_depth_one_throws()
     {
         var registry = SerializationTestHelpers.CreateRegistry(maxDepth: 1);
-        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
+        using var writer = new DataOutput();
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await registry.WriteObjectAsync(writer, new List<int> { 1 }, ct: TestContext.Current.CancellationToken));
@@ -86,7 +85,7 @@ public class SerializationRegistryDepthTests
             DSCode.CacheableInt32, 0x00, 0x00, 0x00, 0x07,
         };
         var registry = SerializationTestHelpers.CreateRegistry(maxDepth: 3);
-        var reader = new BigEndianBinaryReader(wire);
+        var reader = new DataInput(wire);
 
         var result = registry.ReadObject(reader);
 
@@ -110,7 +109,7 @@ public class SerializationRegistryDepthTests
             DSCode.CacheableInt32, 0x00, 0x00, 0x00, 0x07,
         };
         var registry = SerializationTestHelpers.CreateRegistry(maxDepth: 2);
-        var reader = new BigEndianBinaryReader(wire);
+        var reader = new DataInput(wire);
 
         var ex = Assert.Throws<GeodeException>(
             () => registry.ReadObject(reader));
@@ -123,7 +122,7 @@ public class SerializationRegistryDepthTests
     {
         var wire = new byte[] { DSCode.CacheableInt32, 0x00, 0x00, 0x00, 0x2A };
         var registry = SerializationTestHelpers.CreateRegistry(maxDepth: 1);
-        var reader = new BigEndianBinaryReader(wire);
+        var reader = new DataInput(wire);
 
         Assert.Equal(42, registry.ReadObject(reader));
     }
@@ -139,7 +138,7 @@ public class SerializationRegistryDepthTests
             DSCode.CacheableInt32, 0x00, 0x00, 0x00, 0x07,
         };
         var registry = SerializationTestHelpers.CreateRegistry(maxDepth: 1);
-        var reader = new BigEndianBinaryReader(wire);
+        var reader = new DataInput(wire);
 
         Assert.Throws<GeodeException>(() => registry.ReadObject(reader));
     }
@@ -151,10 +150,10 @@ public class SerializationRegistryDepthTests
     {
         var registry = SerializationTestHelpers.CreateRegistry(maxDepth: 3);
 
-        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
+        using var writer = new DataOutput();
         await registry.WriteObjectAsync(writer, new List<List<int>> { new() { 7 } }, ct: TestContext.Current.CancellationToken);
 
-        var reader = new BigEndianBinaryReader(writer.WrittenSpan.ToArray());
+        var reader = new DataInput(writer.WrittenSpan.ToArray());
         var result = registry.ReadObject(reader);
 
         var outer = Assert.IsType<List<object?>>(result);
@@ -162,5 +161,3 @@ public class SerializationRegistryDepthTests
         Assert.Equal(7, inner[0]);
     }
 }
-
-*/

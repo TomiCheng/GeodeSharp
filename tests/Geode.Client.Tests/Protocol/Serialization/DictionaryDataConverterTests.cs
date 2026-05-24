@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Protocol;
 using Xunit;
 
@@ -130,5 +129,3 @@ public class DictionaryDataConverterTests
         Assert.Equal(false, decoded[true]);
     }
 }
-
-*/

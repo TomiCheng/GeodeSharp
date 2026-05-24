@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Services;
 
 namespace Geode.Client.Protocol.Serialization;
@@ -43,15 +42,15 @@ namespace Geode.Client.Protocol.Serialization;
 ///   </item>
 /// </list>
 /// </remarks>
-internal sealed class BytesDataConverter(CacheScopeContext cacheScopeContext)
+internal sealed class BytesDataConverter(GeodeCache cache)
     : DataConverter<byte[]>
 {
-    private static readonly byte[] s_dsCodes = { DSCode.CacheableBytes };
+    private static readonly byte[] _dsCodes = { DSCode.CacheableBytes };
 
     private readonly int _maxBytesLength
-        = cacheScopeContext.Options.Serialization.MaxBytesLength;
+        = cache.CacheProperties.MaxBytesLength;
 
-    public override byte[] DsCodes => s_dsCodes;
+    public override byte[] DsCodes => _dsCodes;
 
     public override ValueTask WriteAsync(DataOutput writer, byte[] value, byte dsCode, int depth, CancellationToken ct)
     {
@@ -65,7 +64,7 @@ internal sealed class BytesDataConverter(CacheScopeContext cacheScopeContext)
         return ValueTask.CompletedTask;
     }
 
-    public override byte[]? Read(BigEndianBinaryReader reader, byte dsCode, int depth)
+    public override byte[]? Read(DataInput reader, byte dsCode, int depth)
     {
         // Inline the length read so we can bounds-check before
         // allocating. reader.ReadBytes() does the same two steps
@@ -81,5 +80,3 @@ internal sealed class BytesDataConverter(CacheScopeContext cacheScopeContext)
         return reader.ReadBytesOnly(length).ToArray();
     }
 }
-
-*/

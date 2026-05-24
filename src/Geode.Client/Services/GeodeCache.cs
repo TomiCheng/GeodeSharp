@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Geode.Client.Internal;
+using Geode.Client.Pdx;
 using Geode.Client.Protocol.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -16,17 +17,26 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
     private readonly ConcurrentDictionary<string, IRegion> _regions = new(StringComparer.Ordinal);
     private readonly SystemProperties _systemProperties = new();
     private readonly Lazy<TcrConnectionManager> _tcrConnectionManager;
-    private readonly TypedResultAdapter _typedResultAdapter = new();
-
+    private readonly TypedResultAdapter _typedResultAdapter;
+    private readonly TypeRegistry _typeRegistry;
+    private readonly PdxTypeRegistry _pdxTypeRegistry;
+    private readonly Lazy<SerializationRegistry> _serializationRegistry;
     public GeodeCache(IServiceProvider serviceProvider, string name)
     {
         _name = name;
         _serviceProvider = serviceProvider;
+        _typedResultAdapter = ActivatorUtilities.CreateInstance<TypedResultAdapter>(serviceProvider);
+        _typeRegistry = ActivatorUtilities.CreateInstance<TypeRegistry>(serviceProvider);
+        _pdxTypeRegistry = ActivatorUtilities.CreateInstance<PdxTypeRegistry>(serviceProvider);
         _poolManager = new Lazy<PoolManager>(
                     () => ActivatorUtilities.CreateInstance<PoolManager>(serviceProvider, this),
                     LazyThreadSafetyMode.ExecutionAndPublication);
         _tcrConnectionManager = new Lazy<TcrConnectionManager>(
                    () => ActivatorUtilities.CreateInstance<TcrConnectionManager>(serviceProvider, this),
+                   LazyThreadSafetyMode.ExecutionAndPublication);
+
+        _serializationRegistry = new Lazy<SerializationRegistry>(
+            () => ActivatorUtilities.CreateInstance<SerializationRegistry>(serviceProvider, this),
                    LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
@@ -94,6 +104,9 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
 
     internal SystemProperties CacheProperties => _systemProperties;
 
+    internal TypeRegistry TypeRegistry => _typeRegistry;
+    internal PdxTypeRegistry PdxTypeRegistry => _pdxTypeRegistry;
+    internal SerializationRegistry SerializationRegistry => _serializationRegistry.Value;
     internal TcrConnectionManager ConnectionManager => _tcrConnectionManager.Value;
 
     //    /// <summary>

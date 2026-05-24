@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -9,9 +8,9 @@ namespace Geode.Client.Protocol.Serialization;
 /// </summary>
 internal sealed class BooleanDataConverter : DataConverter<bool>
 {
-    private static readonly byte[] s_dsCodes = { DSCode.CacheableBoolean };
+    private static readonly byte[] _dsCodes = { DSCode.CacheableBoolean };
 
-    public override byte[] DsCodes => s_dsCodes;
+    public override byte[] DsCodes => _dsCodes;
 
     public override ValueTask WriteAsync(DataOutput writer, bool value, byte dsCode, int depth, CancellationToken ct)
     {
@@ -19,8 +18,6 @@ internal sealed class BooleanDataConverter : DataConverter<bool>
         return ValueTask.CompletedTask;
     }
 
-    public override bool Read(BigEndianBinaryReader reader, byte dsCode, int depth) =>
+    public override bool Read(DataInput reader, byte dsCode, int depth) =>
         reader.ReadByte() != 0;
 }
-
-*/

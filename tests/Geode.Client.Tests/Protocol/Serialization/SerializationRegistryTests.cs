@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Protocol;
 using Xunit;
 
@@ -71,5 +70,3 @@ public class SerializationRegistryTests
             SerializationTestHelpers.Encode(new[] { 7 }));
     }
 }
-
-*/

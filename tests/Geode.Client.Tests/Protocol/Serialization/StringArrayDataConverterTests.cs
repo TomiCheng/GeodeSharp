@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Protocol;
 using Xunit;
 
@@ -93,5 +92,3 @@ public class StringArrayDataConverterTests
         Assert.Null(result[3]);
     }
 }
-
-*/

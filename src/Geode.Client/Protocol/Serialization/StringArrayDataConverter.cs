@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -58,9 +57,9 @@ namespace Geode.Client.Protocol.Serialization;
 internal sealed class StringArrayDataConverter(SerializationRegistry registry)
     : DataConverter<string[]>
 {
-    private static readonly byte[] s_dsCodes = { DSCode.CacheableStringArray };
+    private static readonly byte[] _dsCodes = { DSCode.CacheableStringArray };
 
-    public override byte[] DsCodes => s_dsCodes;
+    public override byte[] DsCodes => _dsCodes;
 
     public override async ValueTask WriteAsync(DataOutput writer, string[] value, byte dsCode, int depth, CancellationToken ct)
     {
@@ -77,7 +76,7 @@ internal sealed class StringArrayDataConverter(SerializationRegistry registry)
         }
     }
 
-    public override string[] Read(BigEndianBinaryReader reader, byte dsCode, int depth)
+    public override string[] Read(DataInput reader, byte dsCode, int depth)
     {
         var length = reader.ReadArrayLen();
         if (length <= 0)
@@ -109,5 +108,3 @@ internal sealed class StringArrayDataConverter(SerializationRegistry registry)
         return array;
     }
 }
-
-*/

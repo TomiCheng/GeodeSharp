@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Services;
 
 namespace Geode.Client.Protocol.Serialization;
@@ -37,22 +36,20 @@ namespace Geode.Client.Protocol.Serialization;
 /// as <see cref="Array.Empty{T}"/>.
 /// </para>
 /// </remarks>
-internal sealed class BooleanArrayDataConverter(CacheScopeContext cacheScopeContext)
+internal sealed class BooleanArrayDataConverter(GeodeCache cache)
     : DataConverter<bool[]>
 {
-    private static readonly byte[] s_dsCodes = { DSCode.BooleanArray };
+    private static readonly byte[] _dsCodes = { DSCode.BooleanArray };
 
     /// <summary>
-    /// Snapshot of <see cref="Options.SerializationOptions.MaxArrayLength"/>
-    /// at construction. The per-cache options bag is one-shot
-    /// (<see cref="CacheScopeContext.Initialize"/> runs before any
-    /// consumer resolves) so caching the value avoids a property-chain
-    /// walk on every wire op.
+    /// Snapshot of <c>SystemProperties.MaxArrayLength</c> at construction.
+    /// The cache's properties bag is fixed for its lifetime, so caching
+    /// the value avoids a property-chain walk on every wire op.
     /// </summary>
     private readonly int _maxArrayLength
-        = cacheScopeContext.Options.Serialization.MaxArrayLength;
+        = cache.CacheProperties.MaxArrayLength;
 
-    public override byte[] DsCodes => s_dsCodes;
+    public override byte[] DsCodes => _dsCodes;
 
     public override ValueTask WriteAsync(DataOutput writer, bool[] value, byte dsCode, int depth, CancellationToken ct)
     {
@@ -70,7 +67,7 @@ internal sealed class BooleanArrayDataConverter(CacheScopeContext cacheScopeCont
         return ValueTask.CompletedTask;
     }
 
-    public override bool[] Read(BigEndianBinaryReader reader, byte dsCode, int depth)
+    public override bool[] Read(DataInput reader, byte dsCode, int depth)
     {
         var length = reader.ReadArrayLen();
         if (length <= 0)
@@ -93,5 +90,3 @@ internal sealed class BooleanArrayDataConverter(CacheScopeContext cacheScopeCont
         return array;
     }
 }
-
-*/

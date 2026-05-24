@@ -1,4 +1,3 @@
-/*
 using System.Buffers;
 using Geode.Client.Protocol;
 using Geode.Client.Protocol.Serialization;
@@ -35,7 +34,7 @@ public class SerializationRegistryLengthTests
     public async Task Int32Array_write_at_limit_succeeds()
     {
         var registry = SerializationTestHelpers.CreateRegistry(maxArrayLength: 3);
-        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
+        using var writer = new DataOutput();
 
         await registry.WriteObjectAsync(writer, new[] { 1, 2, 3 }, ct: TestContext.Current.CancellationToken);
 
@@ -46,7 +45,7 @@ public class SerializationRegistryLengthTests
     public async Task Int32Array_write_over_limit_throws_InvalidOperationException()
     {
         var registry = SerializationTestHelpers.CreateRegistry(maxArrayLength: 3);
-        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
+        using var writer = new DataOutput();
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await registry.WriteObjectAsync(writer, new[] { 1, 2, 3, 4 }, ct: TestContext.Current.CancellationToken));
@@ -67,7 +66,7 @@ public class SerializationRegistryLengthTests
             // No payload — converter throws before reading any element.
         };
         var registry = SerializationTestHelpers.CreateRegistry(maxArrayLength: 3);
-        var reader = new BigEndianBinaryReader(wire);
+        var reader = new DataInput(wire);
 
         var ex = Assert.Throws<GeodeException>(() => registry.ReadObject(reader));
         Assert.Contains("MaxArrayLength", ex.Message);
@@ -80,7 +79,7 @@ public class SerializationRegistryLengthTests
     public async Task List_write_over_limit_throws_InvalidOperationException()
     {
         var registry = SerializationTestHelpers.CreateRegistry(maxArrayLength: 3);
-        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
+        using var writer = new DataOutput();
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await registry.WriteObjectAsync(writer, new List<int> { 1, 2, 3, 4 }, ct: TestContext.Current.CancellationToken));
@@ -95,7 +94,7 @@ public class SerializationRegistryLengthTests
             DSCode.CacheableArrayList, 0x04,
         };
         var registry = SerializationTestHelpers.CreateRegistry(maxArrayLength: 3);
-        var reader = new BigEndianBinaryReader(wire);
+        var reader = new DataInput(wire);
 
         var ex = Assert.Throws<GeodeException>(() => registry.ReadObject(reader));
         Assert.Contains("MaxArrayLength", ex.Message);
@@ -109,7 +108,7 @@ public class SerializationRegistryLengthTests
         var registry = SerializationTestHelpers.CreateRegistry(
             maxArrayLength: 3,
             maxBytesLength: 10);
-        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
+        using var writer = new DataOutput();
 
         await registry.WriteObjectAsync(writer, new byte[] { 1, 2, 3, 4, 5 }, ct: TestContext.Current.CancellationToken);
 
@@ -120,7 +119,7 @@ public class SerializationRegistryLengthTests
     public async Task Bytes_write_over_limit_throws_InvalidOperationException()
     {
         var registry = SerializationTestHelpers.CreateRegistry(maxBytesLength: 4);
-        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
+        using var writer = new DataOutput();
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await registry.WriteObjectAsync(writer, new byte[] { 1, 2, 3, 4, 5 }, ct: TestContext.Current.CancellationToken));
@@ -136,7 +135,7 @@ public class SerializationRegistryLengthTests
             // payload omitted — check fires before consuming bytes
         };
         var registry = SerializationTestHelpers.CreateRegistry(maxBytesLength: 4);
-        var reader = new BigEndianBinaryReader(wire);
+        var reader = new DataInput(wire);
 
         var ex = Assert.Throws<GeodeException>(() => registry.ReadObject(reader));
         Assert.Contains("MaxBytesLength", ex.Message);
@@ -148,7 +147,7 @@ public class SerializationRegistryLengthTests
     public async Task String_write_over_limit_throws_InvalidOperationException()
     {
         var registry = SerializationTestHelpers.CreateRegistry(maxStringLength: 3);
-        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
+        using var writer = new DataOutput();
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await registry.WriteObjectAsync(writer, "abcd", ct: TestContext.Current.CancellationToken));
@@ -159,7 +158,7 @@ public class SerializationRegistryLengthTests
     public async Task String_at_limit_succeeds()
     {
         var registry = SerializationTestHelpers.CreateRegistry(maxStringLength: 3);
-        using var writer = new DataOutput(SerializationTestHelpers.CreateRegistry());
+        using var writer = new DataOutput();
 
         await registry.WriteObjectAsync(writer, "abc", ct: TestContext.Current.CancellationToken);
 
@@ -177,7 +176,7 @@ public class SerializationRegistryLengthTests
             // payload omitted — check fires before reading chars
         };
         var registry = SerializationTestHelpers.CreateRegistry(maxStringLength: 3);
-        var reader = new BigEndianBinaryReader(wire);
+        var reader = new DataInput(wire);
 
         var ex = Assert.Throws<GeodeException>(() => registry.ReadObject(reader));
         Assert.Contains("MaxStringLength", ex.Message);
@@ -193,7 +192,7 @@ public class SerializationRegistryLengthTests
             DSCode.CacheableASCIIStringHuge, 0x00, 0x01, 0x00, 0x00,    // length 65536
         };
         var registry = SerializationTestHelpers.CreateRegistry(maxStringLength: 100);
-        var reader = new BigEndianBinaryReader(wire);
+        var reader = new DataInput(wire);
 
         var ex = Assert.Throws<GeodeException>(() => registry.ReadObject(reader));
         Assert.Contains("MaxStringLength", ex.Message);
@@ -209,7 +208,7 @@ public class SerializationRegistryLengthTests
             DSCode.CacheableStringHuge, 0x00, 0x01, 0x00, 0x00,    // length 65536
         };
         var registry = SerializationTestHelpers.CreateRegistry(maxStringLength: 100);
-        var reader = new BigEndianBinaryReader(wire);
+        var reader = new DataInput(wire);
 
         var ex = Assert.Throws<GeodeException>(() => registry.ReadObject(reader));
         Assert.Contains("MaxStringLength", ex.Message);
@@ -229,5 +228,3 @@ public class SerializationRegistryLengthTests
         // assertion here. Validator-default test covers the 10M value.
     }
 }
-
-*/

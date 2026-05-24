@@ -1,4 +1,3 @@
-/*
 using Geode.Client.Services;
 
 namespace Geode.Client.Protocol.Serialization;
@@ -15,15 +14,15 @@ namespace Geode.Client.Protocol.Serialization;
 /// pattern. Same key / null / empty rules as
 /// <see cref="BooleanArrayDataConverter"/>.
 /// </remarks>
-internal sealed class SingleArrayDataConverter(CacheScopeContext cacheScopeContext)
+internal sealed class SingleArrayDataConverter(GeodeCache cache)
     : DataConverter<float[]>
 {
-    private static readonly byte[] s_dsCodes = { DSCode.CacheableFloatArray };
+    private static readonly byte[] _dsCodes = { DSCode.CacheableFloatArray };
 
     private readonly int _maxArrayLength
-        = cacheScopeContext.Options.Serialization.MaxArrayLength;
+        = cache.CacheProperties.MaxArrayLength;
 
-    public override byte[] DsCodes => s_dsCodes;
+    public override byte[] DsCodes => _dsCodes;
 
     public override ValueTask WriteAsync(DataOutput writer, float[] value, byte dsCode, int depth, CancellationToken ct)
     {
@@ -41,7 +40,7 @@ internal sealed class SingleArrayDataConverter(CacheScopeContext cacheScopeConte
         return ValueTask.CompletedTask;
     }
 
-    public override float[] Read(BigEndianBinaryReader reader, byte dsCode, int depth)
+    public override float[] Read(DataInput reader, byte dsCode, int depth)
     {
         var length = reader.ReadArrayLen();
         if (length <= 0)
@@ -62,5 +61,3 @@ internal sealed class SingleArrayDataConverter(CacheScopeContext cacheScopeConte
         return array;
     }
 }
-
-*/

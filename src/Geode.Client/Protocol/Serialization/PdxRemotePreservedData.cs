@@ -1,4 +1,3 @@
-/*
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -16,5 +15,3 @@ internal sealed class PdxRemotePreservedData
 {
     public int MergedTypeId { get; init; } = -1;
 }
-
-*/

@@ -198,13 +198,12 @@ internal sealed class PdxTypeRegistry(
     /// (<c>PdxTypeRegistry.cpp:202</c>).
     /// </summary>
     /// <remarks>
-    /// NIE until the read side calls <c>SetPreserveData</c>; once that path
-    /// exists, this lookup just queries the preserved-data map.
+    /// Currently always returns <see langword="null"/> — until <c>SetPreserveData</c>
+    /// lands on the read path, no object can have preserved data registered,
+    /// so the answer for every object is the same as the cppcache common case.
+    /// TODO Phase 2.x: once the read path stores preserved bytes, swap this
+    /// for a real conditional-weak-table lookup.
     /// </remarks>
-    public PdxRemotePreservedData? GetPreserveData(object value) =>
-        throw new NotImplementedException(
-            $"{nameof(PdxTypeRegistry)}.{nameof(GetPreserveData)}: " +
-            $"preserve-data tracking not yet wired (Phase 2.1 Step B.1 prereq;" +
-            $" needs SetPreserveData on the read side first).");
+    public PdxRemotePreservedData? GetPreserveData(object value) => null;
 
 }

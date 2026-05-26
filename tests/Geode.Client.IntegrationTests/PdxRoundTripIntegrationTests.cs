@@ -68,10 +68,9 @@ public class PdxRoundTripIntegrationTests(GeodeFixture fx)
             .CreateAsync<int, AllPrimitivesPdx>(RegionName, ct);
     }
 
-    [Fact(Skip = "Phase 2.1 walking-skeleton: write path now reaches the " +
-        "server end-to-end, but read path still NIE — SerializationRegistry " +
-        "has no DSCode.PDX (93) decoder. Un-skip once PDX read lands. See " +
-        "PROGRESS2.md Phase 2.1.")]
+    [Fact(Skip = "Phase 2.1 walking-skeleton: write path lands end-to-end, " +
+        "but read path still NIE — SerializationRegistry has no DSCode.PDX " +
+        "(93) decoder. Un-skip once PDX read lands. See PROGRESS2.md Phase 2.1.")]
     public async Task PutThenGet_AllPrimitives_RoundTrips()
     {
         var ct = TestContext.Current.CancellationToken;
@@ -93,6 +92,41 @@ public class PdxRoundTripIntegrationTests(GeodeFixture fx)
         {
             await fx.GfshAsync(
                 $"remove --region=/{RegionName} --key={key} --key-class=java.lang.Integer",
+                ct);
+        }
+    }
+
+    /// <summary>
+    /// Active smoke for the write-only path: two consecutive PUTs of the same
+    /// PDX type exercise <b>Step A</b> (first time — registers schema via
+    /// <c>GET_PDX_ID_FOR_TYPE</c> wire op + <c>PdxWriterWithTypeCollector</c>)
+    /// and then <b>Step B</b> (cached schema — uses <c>PdxRemoteWriter</c>,
+    /// no wire op for typeId). No GET / Assert until the read path lands.
+    /// </summary>
+    [Fact]
+    public async Task PutTwice_AllPrimitives_StepBUsesCachedSchema()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        const int key1 = 7011;
+        const int key2 = 7012;
+
+        var original = AllPrimitivesPdx.Sample();
+
+        await using var sp = BuildSp();
+        var region = await BuildRegionAsync(sp, ct);
+
+        try
+        {
+            await region.PutAsync(key1, original, ct);  // Step A — registers schema
+            await region.PutAsync(key2, original, ct);  // Step B — cached schema (PdxRemoteWriter)
+        }
+        finally
+        {
+            await fx.GfshAsync(
+                $"remove --region=/{RegionName} --key={key1} --key-class=java.lang.Integer",
+                ct);
+            await fx.GfshAsync(
+                $"remove --region=/{RegionName} --key={key2} --key-class=java.lang.Integer",
                 ct);
         }
     }

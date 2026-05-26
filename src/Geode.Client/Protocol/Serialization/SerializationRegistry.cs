@@ -8,9 +8,7 @@ internal sealed class SerializationRegistry
 {
     private readonly Dictionary<byte, IDataConverter> _byDsCode = [];
     private readonly Dictionary<Type, IDataConverter> _byType = [];
-    private readonly ObjectFactory<PdxWriterWithTypeCollector> _pdxWriterWithTypeCollectorFactory;
-    private readonly ObjectFactory<PdxRemoteWriter> _pdxRemoteWriterByClassNameFactory;
-    private readonly ObjectFactory<PdxRemoteWriter> _pdxRemoteWriterByPdxTypeFactory;
+
     private readonly PdxTypeRegistry _pdxTypeRegistry;
      private readonly IServiceProvider _serviceProvider;
     private readonly GeodeCache _cache;
@@ -24,9 +22,6 @@ internal sealed class SerializationRegistry
         _cache = cache;
         _typeRegistry = cache.TypeRegistry;
         _pdxTypeRegistry = cache.PdxTypeRegistry;
-        _pdxWriterWithTypeCollectorFactory =  ActivatorUtilities.CreateFactory<PdxWriterWithTypeCollector>([typeof(string)]);
-        _pdxRemoteWriterByClassNameFactory = ActivatorUtilities.CreateFactory<PdxRemoteWriter>([typeof(string)]);
-        _pdxRemoteWriterByPdxTypeFactory = ActivatorUtilities.CreateFactory<PdxRemoteWriter>([typeof(PdxType), typeof(PdxRemotePreservedData)]);
 
         RegisterBuiltInConverters();
     }
@@ -201,29 +196,18 @@ internal sealed class SerializationRegistry
         var localPdxType = _pdxTypeRegistry.GetLocalPdxType(entry.ClassName);
         if (localPdxType is null)
         {
-            using var ptc = _pdxWriterWithTypeCollectorFactory(_serviceProvider, [entry.ClassName]);
+            using var ptc = PdxWriterWithTypeCollector.Create(_serviceProvider, _cache, entry.ClassName);
             entry.Write(value, ptc);
             var nType = ptc.GetPdxLocalType();
             nType.Initialize();
-
-            // A.4 Round-trip to the server to get a cluster-wide typeId.
-            //     pool comes from the DataOutput (mirror cppcache
-            //     DataOutputInternal::getPool).
-
-            // TODO
             nType.TypeId = await _pdxTypeRegistry.GetPdxIdForTypeAsync(entry.ClassName, dm, nType, true, ct);
 
-            // A.6 Emit the PDX wire frame: DSCode + length + typeId + payload.
-            //     Length covers typeId + payload (cppcache PdxLocalWriter::
-            //     writePdxHeader convention).
             var payload = ptc.BuildPayload();
             writer.WriteByte(DSCode.PDX);
             writer.WriteInt32(payload.Length + sizeof(int));
             writer.WriteInt32(nType.TypeId);
             writer.WriteBytesOnly(payload);
 
-            // A.7 Cache the schema in both maps so the next call hits
-            //     Step B (no wire op).
             _pdxTypeRegistry.AddLocalPdxType(entry.ClassName, nType);
             _pdxTypeRegistry.AddPdxType(nType.TypeId, nType);
         }
@@ -245,11 +229,11 @@ internal sealed class SerializationRegistry
                     ?? throw new GeodeException(
                         $"PdxTypeRegistry: merged typeId {preservedData.MergedTypeId} " +
                         $"referenced by preserved data is not in the by-typeId cache.");
-                prw = _pdxRemoteWriterByPdxTypeFactory(_serviceProvider, [mergedPdxType, preservedData]);
+                prw = PdxRemoteWriter.Create(_serviceProvider, _cache, mergedPdxType, preservedData);
             }
             else
             {
-                prw = _pdxRemoteWriterByClassNameFactory(_serviceProvider, [entry.ClassName]);
+                prw = PdxRemoteWriter.Create(_serviceProvider, _cache, entry.ClassName);
             }
 
             using (prw)

@@ -157,10 +157,11 @@ internal sealed class PdxTypeRegistry(
             .BuildAsync(ct);
 
     /// <summary>
-    /// Parse a one-part reply whose payload is a <c>CacheableInt32</c>
-    /// (DSCode <c>57</c> + 4 BE bytes). Wire shape is small enough that
-    /// inlining the decode here is cheaper than introducing a DI cycle
-    /// to reach <c>SerializationRegistry.ReadObjectAsync</c>.
+    /// Parse a one-part reply whose payload is a raw 4-byte BE <c>int</c>.
+    /// Mirror of cppcache <c>TcrMessage::readIntPart</c>
+    /// (<c>cppcache/src/TcrMessage.cpp:419</c>): the wire carries no DSCode
+    /// — <c>m_value = CacheableInt32::create(typeId)</c> downstream is an
+    /// in-memory wrap, not part of the wire format.
     /// </summary>
     private static ValueTask<int> ParseInt32ReplyAsync(TcrMessage reply, CancellationToken ct)
     {
@@ -171,14 +172,17 @@ internal sealed class PdxTypeRegistry(
             throw new GeodeException($"GET_PDX_ID_FOR_TYPE reply: expected 1 part, got {reply.Parts.Count}.");
         }
 
-        var reader = new DataInput(reply.Parts[0].Payload);
-        var dsCode = reader.ReadByte();
-        if (dsCode != DSCode.CacheableInt32)
+        var part = reply.Parts[0];
+        if (part.IsObject != 0)
         {
-            throw new GeodeException($"GET_PDX_ID_FOR_TYPE reply: expected DSCode CacheableInt32 " +
-                $"({DSCode.CacheableInt32}), got {dsCode}.");
+            throw new GeodeException($"GET_PDX_ID_FOR_TYPE reply: expected non-object int part, got IsObject={part.IsObject}.");
+        }
+        if (part.Payload.Length != 4)
+        {
+            throw new GeodeException($"GET_PDX_ID_FOR_TYPE reply: expected 4-byte int payload, got {part.Payload.Length} bytes.");
         }
 
+        var reader = new DataInput(part.Payload);
         return ValueTask.FromResult(reader.ReadInt32());
     }
 

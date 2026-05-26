@@ -511,7 +511,7 @@ internal sealed partial class ThinClientRegion(
          .AddInt32Part(0)
          .AddKeyPart(dm.Cache, key)
          .AddCacheableBooleanPart(false)  // isDelta
-         .AddValuePart(dm.Cache, value)
+         .AddValuePart(this, value)
          .AddEventIdPart(threadId, sequenceId)
          .BuildAsync(ct);
 

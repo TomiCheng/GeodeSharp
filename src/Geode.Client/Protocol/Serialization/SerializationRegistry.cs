@@ -133,10 +133,6 @@ internal sealed class SerializationRegistry
         throw new GeodeException($"SerializationRegistry: unknown DSCode {dsCode} on the wire.");
     }
 
-    /// <summary>
-    /// Async 版本的 <see cref="WriteObject"/>。PDX 路徑(<see cref="TryWritePdxAsync"/>)
-    /// 之後會在這條鏈裡 await wire op(A.4 GetPdxIdForType)。
-    /// </summary>
     public async ValueTask WriteObjectAsync(DataOutput writer, object? value, int depth = 0, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(writer);
@@ -155,7 +151,30 @@ internal sealed class SerializationRegistry
 
         var type = value.GetType();
         if (await TryWriteBuiltInAsync(writer, value, type, depth, ct)) return;
-        if (await TryWritePdxAsync(writer, value, type, ct)) return;
+        //if (await TryWritePdxAsync(writer, value, type, ct)) return;
+
+        throw new NotSupportedException($"No SerializationRegistry converter registered for runtime type {type}.");
+    }
+
+    public async ValueTask WriteObjectAsync(DataOutput writer, object? value, ThinClientBaseDM dm,
+        int depth = 0, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+
+        if (depth >= MaxDepth)
+        {
+            throw new InvalidOperationException($"SerializationRegistry: write exceeded MaxDepth ({MaxDepth}).");
+        }
+
+        if (value is null)
+        {
+            writer.WriteByte(DSCode.NullObj);
+            return;
+        }
+
+        var type = value.GetType();
+        if (await TryWriteBuiltInAsync(writer, value, type, depth, ct)) return;
+        if (await TryWritePdxAsync(writer, value, dm, type, depth, ct)) return;
 
         throw new NotSupportedException($"No SerializationRegistry converter registered for runtime type {type}.");
     }
@@ -174,26 +193,8 @@ internal sealed class SerializationRegistry
         return true;
     }
 
-    /// <summary>
-    /// Encode <paramref name="value"/> as a PDX wire frame. Returns
-    /// <see langword="false"/> when <paramref name="type"/> isn't registered
-    /// as PDX (caller falls through to the unsupported-type throw).
-    /// Mirror of cppcache <c>PdxHelper::serializePdx</c>
-    /// (<c>PdxHelper.cpp:87</c>).
-    /// </summary>
-    /// <remarks>
-    /// Two branches keyed on whether the className has been collected
-    /// locally before:
-    /// <list type="bullet">
-    ///   <item><b>Step A</b> (first time): collect schema via
-    ///         <see cref="PdxWriterWithTypeCollector"/>, round-trip to
-    ///         server for typeId, cache both, emit frame.</item>
-    ///   <item><b>Step B</b> (subsequent): reuse the cached schema/typeId
-    ///         via <see cref="PdxRemoteWriter"/>; ctor form depends on
-    ///         whether the value carries preserved unread fields.</item>
-    /// </list>
-    /// </remarks>
-    private async ValueTask<bool> TryWritePdxAsync(DataOutput writer, object value, Type type, CancellationToken ct)
+    private async ValueTask<bool> TryWritePdxAsync(DataOutput writer, object value, ThinClientBaseDM dm,
+        Type type, int _, CancellationToken ct)
     {
         if (!_typeRegistry.TryGetEntry(type, out var entry)) return false;
 
@@ -210,7 +211,7 @@ internal sealed class SerializationRegistry
             //     DataOutputInternal::getPool).
 
             // TODO
-            //nType.TypeId = await _pdxTypeRegistry.GetPdxIdForTypeAsync(entry.ClassName, writer.Pool, nType, true, ct);
+            nType.TypeId = await _pdxTypeRegistry.GetPdxIdForTypeAsync(entry.ClassName, dm, nType, true, ct);
 
             // A.6 Emit the PDX wire frame: DSCode + length + typeId + payload.
             //     Length covers typeId + payload (cppcache PdxLocalWriter::

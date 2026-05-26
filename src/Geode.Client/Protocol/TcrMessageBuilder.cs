@@ -40,6 +40,8 @@ internal sealed partial class TcrMessageBuilder
     byte _earlyAck = 0;
     readonly List<TcrPartBuilder> _tcrPartBuilders = [];
 
+    internal IServiceProvider ServiceProvider => _serviceProvider;
+
     private TcrMessageBuilder(IServiceProvider serviceProvider, MessageType messageType)
     {
         _serviceProvider = serviceProvider;

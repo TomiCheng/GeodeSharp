@@ -72,7 +72,7 @@ internal sealed class PdxTypeRegistry(
     /// <c>ThinClientPoolDM::GetPDXIdForType</c>
     /// (<c>ThinClientPoolDM.cpp:900</c>).
     /// </summary>
-    public async ValueTask<int> GetPdxIdForTypeAsync(string className, IPool? pool, PdxType nType, bool checkIfThere,
+    public async ValueTask<int> GetPdxIdForTypeAsync(string className, ThinClientBaseDM dm, PdxType nType, bool checkIfThere,
         CancellationToken ct)
     {
         if (checkIfThere && GetLocalPdxType(className) is { TypeId: > 0 } lpdx)
@@ -80,7 +80,7 @@ internal sealed class PdxTypeRegistry(
             return lpdx.TypeId;
         }
 
-        var typeId = await SendGetPdxIdForTypeAsync(pool, nType, ct);
+        var typeId = await SendGetPdxIdForTypeAsync(dm, nType, ct);
         AddPdxType(typeId, nType);
         return typeId;
     }
@@ -101,13 +101,9 @@ internal sealed class PdxTypeRegistry(
     ///         + await reply, throwing on <c>MessageType.Exception</c>.</item>
     /// </list>
     /// </remarks>
-    private async ValueTask<int> SendGetPdxIdForTypeAsync(IPool? pool, PdxType nType, CancellationToken ct)
+    private async ValueTask<int> SendGetPdxIdForTypeAsync(ThinClientBaseDM dm, PdxType nType, CancellationToken ct)
     {
-        // Mirror cppcache ThinClientPoolDM::GetPDXIdForType entry log
-        // (ThinClientPoolDM.cpp:902).
-        logger.LogDebug(
-            "GetPdxIdForType: className={ClassName} fields={FieldCount}",
-            nType.ClassName, nType.Fields.Count);
+        logger.LogDebug("GetPdxIdForType: className={ClassName} fields={FieldCount}", nType.ClassName, nType.Fields.Count);
 
         // S.1 Build the GET_PDX_ID_FOR_TYPE request frame
         //     (cppcache TcrMessageGetPdxIdForType ctor).
@@ -115,14 +111,14 @@ internal sealed class PdxTypeRegistry(
 
         // S.2 Send sync via the pool and await the reply. cppcache uses
         //     sendSyncRequest; ours awaits the DM API region ops use.
-        var reply = await SendSyncRequestAsync(pool, request, ct);
+        var reply = await dm.SendSyncRequestAsync(request, ct: ct);
 
         // S.3 Server-side failure to register the schema → no recovery,
         //     surface as GeodeException. Mirror cppcache LOGDEBUG
         //     (ThinClientPoolDM.cpp:914) for trace parity.
         if (reply.MessageType == MessageType.Exception)
         {
-            var preview = DecodeExceptionPreview(reply);
+            var preview = TcrMessageHelper.DecodeExceptionPreview(reply);
             logger.LogDebug("GetPdxIdForType: server exception for className={ClassName}: {Exception}",
                 nType.ClassName, preview);
             throw new GeodeException("GET_PDX_ID_FOR_TYPE failed: " + preview);
@@ -138,67 +134,27 @@ internal sealed class PdxTypeRegistry(
     /// <summary>
     /// Build the <c>GET_PDX_ID_FOR_TYPE</c> (opcode 93) request frame:
     /// header(1 part) + ObjectPart carrying <c>PdxType.ToData</c>'s bytes.
-    /// Resolves <see cref="TcrMessageBuilder"/> via the service provider
-    /// (rather than holding a direct field) to break the
-    /// PdxTypeRegistry ↔ SerializationRegistry ↔ TcrMessageBuilder DI cycle.
+    /// Mirror of cppcache <c>TcrMessageGetPdxIdForType</c> ctor
+    /// (<c>cppcache/src/TcrMessage.cpp:2874</c>).
     /// </summary>
     /// <remarks>
-    /// Still propagates NIE from <c>TcrMessageBuilder.GetPdxIdForTypeAsync</c>
-    /// — its body needs <c>PdxType.ToData(DataOutput)</c> to be implemented
-    /// before it can serialise the schema.
+    /// Single ObjectPart, <c>IsObject=1</c>; body comes from
+    /// <see cref="PdxType.ToData"/>, which writes its own leading
+    /// <c>DSCode.DataSerializable</c> + <c>DSCode.Class</c> +
+    /// <c>"org.apache.geode.pdx.internal.PdxType"</c>. Mirror of cppcache
+    /// <c>writeObjectPart(pdxType, isDelta=false, callToData=true)</c>
+    /// (<c>TcrMessage.cpp:2883</c>).
     /// </remarks>
-    private ValueTask<TcrMessage> BuildGetPdxIdForTypeRequestAsync(PdxType nType, CancellationToken ct)
-    {
-        _ = serviceProvider; // captured for Phase 2 — see commented call below.
-        throw new NotImplementedException();
-        //serviceProvider.GetRequiredService<TcrMessageBuilder>()
-        //    .GetPdxIdForTypeAsync(nType, ct);
-    }
-
-    /// <summary>
-    /// Send <paramref name="request"/> through <paramref name="pool"/>'s
-    /// DM and await the reply. Mirror of cppcache
-    /// <c>SerializationRegistry::GetPDXIdForType</c>'s
-    /// <c>dynamic_cast&lt;ThinClientPoolDM*&gt;(pool)</c> step
-    /// (<c>cppcache/src/SerializationRegistry.cpp:545</c>): the send
-    /// API lives on the DM half of the pool, not the public
-    /// <see cref="IPool"/> surface, so we cast through.
-    /// </summary>
-    /// <remarks>
-    /// Defaults <c>attemptFailover=true, isBackgroundThread=false</c>
-    /// match the cppcache call site (no overrides in
-    /// <c>ThinClientPoolDM::GetPDXIdForType</c>).
-    /// </remarks>
-    private static async ValueTask<TcrMessage> SendSyncRequestAsync(
-        IPool? pool,
-        TcrMessage request,
-        CancellationToken ct)
-    {
-        if (pool is null)
-        {
-            throw new GeodeException(
-                "GET_PDX_ID_FOR_TYPE: no pool on the DataOutput context — " +
-                "PDX serialise needs a pool. Mirror of cppcache " +
-                "SerializationRegistry.cpp:551 IllegalStateException.");
-        }
-
-        // Cast to the DM half. IPool's only production impl is
-        // ThinClientPoolDM, which multi-inherits ThinClientBaseDM where
-        // SendSyncRequestAsync is declared. Same dispatch shape cppcache
-        // uses (dynamic_cast). If a test double / future alt-pool
-        // doesn't derive ThinClientBaseDM, fail loud rather than silently
-        // dropping the wire op.
-        if (pool is not ThinClientBaseDM dm)
-        {
-            throw new GeodeException(
-                $"GET_PDX_ID_FOR_TYPE: pool {pool.GetType().Name} is not " +
-                "ThinClientBaseDM-derived; cannot route the wire op. " +
-                "Mirror of cppcache SerializationRegistry.cpp:547.");
-        }
-
-        throw new NotImplementedException();
-        //return await dm.SendSyncRequestAsync(request, ct: ct);
-    }
+    private ValueTask<TcrMessage> BuildGetPdxIdForTypeRequestAsync(PdxType nType, CancellationToken ct) =>
+        TcrMessageBuilder
+            .Create(serviceProvider, MessageType.GetPdxIdForType)
+            .AddPart(_ =>
+            {
+                using var output = ActivatorUtilities.CreateInstance<DataOutput>(serviceProvider);
+                nType.ToData(output);
+                return new ValueTask<TcrPart>(new TcrPart(IsObject: 1, output.WrittenSpan.ToArray()));
+            })
+            .BuildAsync(ct);
 
     /// <summary>
     /// Parse a one-part reply whose payload is a <c>CacheableInt32</c>
@@ -224,13 +180,6 @@ internal sealed class PdxTypeRegistry(
         }
 
         return ValueTask.FromResult(reader.ReadInt32());
-    }
-
-    /// <summary>Short string from a <c>MessageType.Exception</c> reply for diagnostics.</summary>
-    private static string DecodeExceptionPreview(TcrMessage reply)
-    {
-        throw new NotImplementedException();
-        // TcrMessageHelper.DecodeExceptionPreview(reply);
     }
 
     /// <summary>Look up cached schema by typeId; <see langword="null"/> on miss.</summary>

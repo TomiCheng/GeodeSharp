@@ -22,6 +22,19 @@ csharp_style_var_when_type_is_apparent = true:suggestion
 csharp_style_expression_bodied_methods = when_on_single_line:silent
 csharp_new_line_before_open_brace = all
 
+# Naming: private const fields PascalCase (matched first — Roslyn picks the
+# first rule whose symbol filter applies, so this must precede the general
+# private-fields rule below). See CLAUDE.md §9 — our own constants use
+# PascalCase; cppcache-mirror constants keep their SCREAMING_SNAKE_CASE via
+# `dotnet_diagnostic.IDE1006.severity = none` at the call site if needed.
+dotnet_naming_rule.private_const_pascal.symbols = private_const_fields
+dotnet_naming_rule.private_const_pascal.style = pascal
+dotnet_naming_rule.private_const_pascal.severity = warning
+dotnet_naming_symbols.private_const_fields.applicable_kinds = field
+dotnet_naming_symbols.private_const_fields.applicable_accessibilities = private
+dotnet_naming_symbols.private_const_fields.required_modifiers = const
+dotnet_naming_style.pascal.capitalization = pascal_case
+
 # Naming: private fields _camelCase
 dotnet_naming_rule.private_fields_with_underscore.symbols = private_fields
 dotnet_naming_rule.private_fields_with_underscore.style = underscore_camel

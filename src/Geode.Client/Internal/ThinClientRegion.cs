@@ -32,6 +32,7 @@ namespace Geode.Client.Internal;
 internal sealed partial class ThinClientRegion(
     IServiceProvider serviceProvider,
     ILogger<ThinClientRegion> logger,
+    DmContextAccessor dmCtxAccessor,
     //TcrMessageBuilder tcrMessageBuilder,
     //SerializationRegistry serializationRegistry,
     //EventIdGenerator eventIdGenerator,
@@ -100,7 +101,7 @@ internal sealed partial class ThinClientRegion(
             // the DSCode byte and dispatches to the converter (NullObj
             // returns null).
             var reader = new DataInput(part.Payload);
-            return await dm.Cache.SerializationRegistry.ReadObjectAsync(reader, dm, ct: ct);
+            return await dm.Cache.SerializationRegistry.ReadObjectAsync(reader, ct: ct);
         }
 
         // IsObject=0 + non-empty payload = CacheableBytes shortcut
@@ -213,6 +214,7 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task ClearAsync(CancellationToken ct = default)
     {
+        using var _ = dmCtxAccessor.BeginScope(dm);
         // Mirrors cppcache ThinClientRegion::clear (ThinClientRegion.cpp:767-808)
         // + TcrMessageClearRegion ctor (TcrMessage.cpp:1644-1682). Wire layout
         // is 2 parts (Region + EventId); callback arg + response-timeout
@@ -251,6 +253,7 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task<bool> ContainsKeyAsync(object key, CancellationToken ct = default)
     {
+        using var _ = dmCtxAccessor.BeginScope(dm);
         logger.LogTrace("ContainsKeyAsync: region={RegionPath}, key={Key}", FullPath, key);
 
         var request = await TcrMessageBuilder
@@ -290,6 +293,7 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task<bool> ExistsValueAsync(string predicate, CancellationToken ct = default)
     {
+        using var _ = dmCtxAccessor.BeginScope(dm);
         // Mirrors cppcache ThinClientRegion::existsValue
         // (cppcache/src/ThinClientRegion.cpp:555-566).
         var results = await QueryAsync(predicate, ct).ConfigureAwait(false);
@@ -299,6 +303,7 @@ internal sealed partial class ThinClientRegion(
     public override async Task<IReadOnlyDictionary<object, object?>> GetAllAsync(
         IReadOnlyCollection<object> keys, CancellationToken ct = default)
     {
+        using var _ = dmCtxAccessor.BeginScope(dm);
         // Mirrors cppcache ThinClientRegion::getAllNoThrow_remote
         // (ThinClientRegion.cpp:1089-1172) + TcrMessageGetAll ctor
         // (TcrMessage.cpp:2470-2502). Wire: 3 parts (Region + keys-as-
@@ -355,6 +360,7 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task<object?> GetAsync(object key, CancellationToken ct = default)
     {
+        using var _ = dmCtxAccessor.BeginScope(dm);
         logger.LogTrace("GetAsync: region={RegionPath}, key={Key}", FullPath, key);
         var request = await TcrMessageBuilder
           .Create(serviceProvider, MessageType.Request)
@@ -386,6 +392,7 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task InvalidateAsync(object key, CancellationToken ct = default)
     {
+        using var _ = dmCtxAccessor.BeginScope(dm);
         // Mirrors cppcache ThinClientRegion::invalidateNoThrow_remote
         // (ThinClientRegion.cpp:852-886) + TcrMessageInvalidate ctor
         // (TcrMessage.cpp:1896-1932). Wire: 3 parts (Region + Key + EventId);
@@ -427,6 +434,7 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task PutAllAsync(IReadOnlyDictionary<object, object> map, CancellationToken ct = default)
     {
+        using var _ = dmCtxAccessor.BeginScope(dm);
         // Mirrors cppcache ThinClientRegion::multiHopPutAllNoThrow_remote
         // (ThinClientRegion.cpp:1476-1540) + TcrMessagePutAll ctor
         // (TcrMessage.cpp:2354-2422). Wire: 5 + 2N parts (Region +
@@ -503,6 +511,7 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task PutAsync(object key, object value, CancellationToken ct = default)
     {
+        using var _ = dmCtxAccessor.BeginScope(dm);
         logger.LogTrace("PutAsync: region={RegionPath}, key={Key}", FullPath, key);
         var (threadId, sequenceId) = dm.Cache.EventIdGenerator.Next();
         var request = await TcrMessageBuilder
@@ -512,7 +521,7 @@ internal sealed partial class ThinClientRegion(
          .AddInt32Part(0)
          .AddKeyPart(dm.Cache, key)
          .AddCacheableBooleanPart(false)  // isDelta
-         .AddValuePart(this, value)
+         .AddValuePart(dm.Cache, value)
          .AddEventIdPart(threadId, sequenceId)
          .BuildAsync(ct);
 
@@ -538,6 +547,7 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task RemoveAllAsync(IReadOnlyCollection<object> keys, CancellationToken ct = default)
     {
+        using var _ = dmCtxAccessor.BeginScope(dm);
         // Mirrors cppcache ThinClientRegion::multiHopRemoveAllNoThrow_remote
         // (ThinClientRegion.cpp:1810-1863) + TcrMessageRemoveAll ctor
         // (TcrMessage.cpp:2424-2468). Wire: 5 + N parts (Region +
@@ -599,6 +609,7 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task<bool> RemoveAsync(object key, CancellationToken ct = default)
     {
+        using var _ = dmCtxAccessor.BeginScope(dm);
         // Mirrors cppcache ThinClientRegion::destroyNoThrow_remote
         // (ThinClientRegion.cpp:959-999) + TcrMessageDestroy ctor null-value
         // branch (TcrMessage.cpp:1974-1985). Wire: 5 parts
@@ -642,6 +653,7 @@ internal sealed partial class ThinClientRegion(
 
     public override async Task<object?> SelectValueAsync(string predicate, CancellationToken ct = default)
     {
+        using var _ = dmCtxAccessor.BeginScope(dm);
         // Mirrors cppcache ThinClientRegion::selectValue
         // (cppcache/src/ThinClientRegion.cpp:618-631).
         var results = await QueryAsync(predicate, ct).ConfigureAwait(false);

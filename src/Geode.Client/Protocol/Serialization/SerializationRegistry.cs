@@ -108,55 +108,31 @@ internal sealed class SerializationRegistry
         return false;
     }
 
-    /// <summary>
-    /// Async 版本的 <see cref="ReadObject"/>。Default 行為跟 sync 相同;
-    /// converter 自己決定要不要真的 await(用 default interface method 的話
-    /// 就是包 sync,override 的話可以真 async)。
-    /// </summary>
-    public async ValueTask<object?> ReadObjectAsync(DataInput reader, int depth = 0, CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(reader);
+    //public async ValueTask WriteObjectAsync(DataOutput writer, object? value, int depth = 0,
+    //    CancellationToken ct = default)
+    //{
+    //    ArgumentNullException.ThrowIfNull(writer);
 
-        if (depth >= MaxDepth)
-        {
-            throw new GeodeException(
-                $"SerializationRegistry: read exceeded MaxDepth ({MaxDepth}).");
-        }
+    //    if (depth >= MaxDepth)
+    //    {
+    //        throw new InvalidOperationException(
+    //            $"SerializationRegistry: write exceeded MaxDepth ({MaxDepth}).");
+    //    }
 
-        var dsCode = reader.ReadByte();
-        if (dsCode == DSCode.NullObj) return null;
-        if (_byDsCode.TryGetValue(dsCode, out var converter))
-        {
-            return await converter.ReadAsync(reader, dsCode, depth, ct);
-        }
-        throw new GeodeException($"SerializationRegistry: unknown DSCode {dsCode} on the wire.");
-    }
+    //    if (value is null)
+    //    {
+    //        writer.WriteByte(DSCode.NullObj);
+    //        return;
+    //    }
+
+    //    var type = value.GetType();
+    //    if (await TryWriteBuiltInAsync(writer, value, type, depth, ct)) return;
+    //    //if (await TryWritePdxAsync(writer, value, type, ct)) return;
+
+    //    throw new NotSupportedException($"No SerializationRegistry converter registered for runtime type {type}.");
+    //}
 
     public async ValueTask WriteObjectAsync(DataOutput writer, object? value, int depth = 0, CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(writer);
-
-        if (depth >= MaxDepth)
-        {
-            throw new InvalidOperationException(
-                $"SerializationRegistry: write exceeded MaxDepth ({MaxDepth}).");
-        }
-
-        if (value is null)
-        {
-            writer.WriteByte(DSCode.NullObj);
-            return;
-        }
-
-        var type = value.GetType();
-        if (await TryWriteBuiltInAsync(writer, value, type, depth, ct)) return;
-        //if (await TryWritePdxAsync(writer, value, type, ct)) return;
-
-        throw new NotSupportedException($"No SerializationRegistry converter registered for runtime type {type}.");
-    }
-
-    public async ValueTask WriteObjectAsync(DataOutput writer, object? value, ThinClientBaseDM dm,
-        int depth = 0, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(writer);
 
@@ -173,7 +149,7 @@ internal sealed class SerializationRegistry
 
         var type = value.GetType();
         if (await TryWriteBuiltInAsync(writer, value, type, depth, ct)) return;
-        if (await TryWritePdxAsync(writer, value, dm, type, depth, ct)) return;
+        if (await TryWritePdxAsync(writer, value, type, depth, ct)) return;
 
         throw new NotSupportedException($"No SerializationRegistry converter registered for runtime type {type}.");
     }
@@ -192,8 +168,7 @@ internal sealed class SerializationRegistry
         return true;
     }
 
-    private async ValueTask<bool> TryWritePdxAsync(DataOutput writer, object value, ThinClientBaseDM dm,
-        Type type, int _, CancellationToken ct)
+    private async ValueTask<bool> TryWritePdxAsync(DataOutput writer, object value, Type type, int _, CancellationToken ct)
     {
         if (!_typeRegistry.TryGetEntry(type, out var entry)) return false;
 
@@ -204,7 +179,7 @@ internal sealed class SerializationRegistry
             entry.Write(value, ptc);
             var nType = ptc.GetPdxLocalType();
             nType.Initialize();
-            nType.TypeId = await _pdxTypeRegistry.GetPdxIdForTypeAsync(entry.ClassName, dm, nType, true, ct);
+            nType.TypeId = await _pdxTypeRegistry.GetPdxIdForTypeAsync(entry.ClassName, nType, true, ct);
 
             var payload = ptc.BuildPayload();
             writer.WriteByte(DSCode.PDX);
@@ -294,8 +269,7 @@ internal sealed class SerializationRegistry
 
         throw new GeodeException($"SerializationRegistry: unknown DSCode {dsCode} on the wire.");
     }
-    public ValueTask<object?> ReadObjectAsync(DataInput reader, ThinClientBaseDM dm,
-        int depth = 0, CancellationToken ct = default)
+    public ValueTask<object?> ReadObjectAsync(DataInput reader, int depth = 0, CancellationToken ct = default)
     {
         if (depth >= MaxDepth)
         {
@@ -316,7 +290,7 @@ internal sealed class SerializationRegistry
 
         if (dsCode == DSCode.PDX)
         {
-            return ReadPdxAsync(reader, dm, depth, ct);
+            return ReadPdxAsync(reader, depth, ct);
         }
         if (_byDsCode.TryGetValue(dsCode, out var converter))
         {
@@ -334,8 +308,7 @@ internal sealed class SerializationRegistry
     /// the inner <c>deserializePdx(input, typeId, length)</c>
     /// (<c>PdxHelper.cpp:153</c>) for the actual field decode.
     /// </summary>
-    private async ValueTask<object?> ReadPdxAsync(DataInput reader, ThinClientBaseDM dm,
-        int depth, CancellationToken ct)
+    private async ValueTask<object?> ReadPdxAsync(DataInput reader, int depth, CancellationToken ct)
     {
         // Entry breadcrumb — cppcache PdxHelper.cpp doesn't log on entry of
         // the outer deserializePdx, but a wire-bug repro often needs the
@@ -356,7 +329,7 @@ internal sealed class SerializationRegistry
         var pdxType = _pdxTypeRegistry.GetPdxType(typeId);
         if (pdxType is null)
         {
-            pdxType = await _pdxTypeRegistry.GetPdxTypeByIdAsync(dm, typeId, ct);
+            pdxType = await _pdxTypeRegistry.GetPdxTypeByIdAsync(typeId, ct);
             _pdxTypeRegistry.AddPdxType(typeId, pdxType);
             _pdxTypeRegistry.AddLocalPdxType(pdxType.ClassName, pdxType);
         }

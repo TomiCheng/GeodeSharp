@@ -21,6 +21,7 @@ internal sealed class RemoteQuery<T>(
     string oql,
     RemoteQueryService queryService,
     ThinClientBaseDM dm,
+    DmContextAccessor dmCtxAccessor,
     IServiceProvider serviceProvider,
     ILogger<RemoteQuery<T>> logger) : IQuery<T>
 {
@@ -39,8 +40,11 @@ internal sealed class RemoteQuery<T>(
     public IList<object?> Parameters { get; } = [];
 
     /// <inheritdoc />
-    public Task<IReadOnlyList<T>> ExecuteAsync(CancellationToken ct = default)
-        => ExecuteCoreAsync(ct);
+    public async Task<IReadOnlyList<T>> ExecuteAsync(CancellationToken ct = default)
+    {
+        using var _ = dmCtxAccessor.BeginScope(dm);
+        return await ExecuteCoreAsync(ct).ConfigureAwait(false);
+    }
 
     // ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
     //  Shared execution path. Mirrors cppcache RemoteQuery::execute

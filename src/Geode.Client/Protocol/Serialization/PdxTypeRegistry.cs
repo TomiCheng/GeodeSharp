@@ -30,13 +30,9 @@ namespace Geode.Client.Protocol.Serialization;
 /// </list>
 /// </para>
 /// </remarks>
-internal sealed class PdxTypeRegistry(
+internal sealed class PdxTypeRegistry(IServiceProvider serviceProvider,
     ILogger<PdxTypeRegistry> logger,
-    // IServiceProvider used as a service locator to break the
-    // PdxTypeRegistry ↔ SerializationRegistry ↔ TcrMessageBuilder DI cycle.
-    // Only the GET_PDX_ID_FOR_TYPE wire-op path resolves anything; the
-    // hot caches (Get/AddLocalPdxType / Get/AddPdxType) don't touch it.
-    IServiceProvider serviceProvider)
+    DmContextAccessor dmContextAccessor)
 {
 
     // ConcurrentDictionary: reads (GetLocalPdxType / GetPdxType) are hot —
@@ -72,7 +68,7 @@ internal sealed class PdxTypeRegistry(
     /// <c>ThinClientPoolDM::GetPDXIdForType</c>
     /// (<c>ThinClientPoolDM.cpp:900</c>).
     /// </summary>
-    public async ValueTask<int> GetPdxIdForTypeAsync(string className, ThinClientBaseDM dm, PdxType nType, bool checkIfThere,
+    public async ValueTask<int> GetPdxIdForTypeAsync(string className, PdxType nType, bool checkIfThere,
         CancellationToken ct)
     {
         if (checkIfThere && GetLocalPdxType(className) is { TypeId: > 0 } lpdx)
@@ -80,7 +76,7 @@ internal sealed class PdxTypeRegistry(
             return lpdx.TypeId;
         }
 
-        var typeId = await SendGetPdxIdForTypeAsync(dm, nType, ct);
+        var typeId = await SendGetPdxIdForTypeAsync(nType, ct);
         AddPdxType(typeId, nType);
         return typeId;
     }
@@ -101,9 +97,12 @@ internal sealed class PdxTypeRegistry(
     ///         + await reply, throwing on <c>MessageType.Exception</c>.</item>
     /// </list>
     /// </remarks>
-    private async ValueTask<int> SendGetPdxIdForTypeAsync(ThinClientBaseDM dm, PdxType nType, CancellationToken ct)
+    private async ValueTask<int> SendGetPdxIdForTypeAsync(PdxType nType, CancellationToken ct)
     {
         logger.LogDebug("GetPdxIdForType: className={ClassName} fields={FieldCount}", nType.ClassName, nType.Fields.Count);
+
+        var dm = dmContextAccessor.Current
+            ?? throw new InvalidOperationException("DmContextAccessor.Current is null.");
 
         // S.1 Build the GET_PDX_ID_FOR_TYPE request frame
         //     (cppcache TcrMessageGetPdxIdForType ctor).
@@ -211,12 +210,17 @@ internal sealed class PdxTypeRegistry(
     /// <see cref="AddLocalPdxType"/> — cppcache call sites handle that
     /// themselves (see <c>PdxHelper.cpp:57-59</c> vs <c>:203-207</c>).
     /// </summary>
-    public ValueTask<PdxType> GetPdxTypeByIdAsync(
-        ThinClientBaseDM dm, int typeId, CancellationToken ct) =>
+    public ValueTask<PdxType> GetPdxTypeByIdAsync(int typeId, CancellationToken ct)
+    {
+        var dm = dmContextAccessor.Current
+            ?? throw new InvalidOperationException("DmContextAccessor.Current is null.");
+
+
         throw new NotImplementedException(
             $"{nameof(PdxTypeRegistry)}.{nameof(GetPdxTypeByIdAsync)}: " +
             $"GET_PDX_TYPE_BY_ID wire op (opcode 92) not yet wired " +
             $"(typeId={typeId}).");
+    }
 
     /// <summary>
     /// Look up unread-field bytes preserved from a previous deserialize.

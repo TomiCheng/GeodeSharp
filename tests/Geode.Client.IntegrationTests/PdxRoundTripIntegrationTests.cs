@@ -68,9 +68,7 @@ public class PdxRoundTripIntegrationTests(GeodeFixture fx)
             .CreateAsync<int, AllPrimitivesPdx>(RegionName, ct);
     }
 
-    [Fact(Skip = "Phase 2.1 walking-skeleton: write path lands end-to-end, " +
-        "but read path still NIE — SerializationRegistry has no DSCode.PDX " +
-        "(93) decoder. Un-skip once PDX read lands. See PROGRESS2.md Phase 2.1.")]
+    [Fact]
     public async Task PutThenGet_AllPrimitives_RoundTrips()
     {
         var ct = TestContext.Current.CancellationToken;

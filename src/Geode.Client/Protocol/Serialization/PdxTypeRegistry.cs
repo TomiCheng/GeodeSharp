@@ -145,8 +145,17 @@ internal sealed class PdxTypeRegistry(
     /// <c>writeObjectPart(pdxType, isDelta=false, callToData=true)</c>
     /// (<c>TcrMessage.cpp:2883</c>).
     /// </remarks>
-    private ValueTask<TcrMessage> BuildGetPdxIdForTypeRequestAsync(PdxType nType, CancellationToken ct) =>
-        TcrMessageBuilder
+    private ValueTask<TcrMessage> BuildGetPdxIdForTypeRequestAsync(PdxType nType, CancellationToken ct)
+    {
+        // Mirror cppcache TcrMessageGetPdxIdForType ctor LOGDEBUG
+        // (TcrMessage.cpp:2881). The companion hex-dump LOGDEBUG
+        // (TcrMessage.cpp:2885 — m_request->getBuffer()) can't fire here
+        // because our TcrMessage is parts-not-bytes; it belongs at the
+        // wire-encode site (TcrConnection.SendRequestAsync) once that
+        // logger sees the assembled frame. TODO add it there.
+        logger.LogDebug("Tcrmessage sending GET_PDX_ID_FOR_TYPE message to server");
+
+        return TcrMessageBuilder
             .Create(serviceProvider, MessageType.GetPdxIdForType)
             .AddPart(_ =>
             {
@@ -155,6 +164,7 @@ internal sealed class PdxTypeRegistry(
                 return new ValueTask<TcrPart>(new TcrPart(IsObject: 1, output.WrittenSpan.ToArray()));
             })
             .BuildAsync(ct);
+    }
 
     /// <summary>
     /// Parse a one-part reply whose payload is a raw 4-byte BE <c>int</c>.
@@ -189,6 +199,24 @@ internal sealed class PdxTypeRegistry(
     /// <summary>Look up cached schema by typeId; <see langword="null"/> on miss.</summary>
     public PdxType? GetPdxType(int typeId) =>
         _byTypeId.TryGetValue(typeId, out var t) ? t : null;
+
+    /// <summary>
+    /// Wire-fallback for <see cref="GetPdxType"/> cache miss: fetch the schema
+    /// for <paramref name="typeId"/> from the server via
+    /// <c>GET_PDX_TYPE_BY_ID</c> (opcode 92). Mirror of cppcache
+    /// <c>SerializationRegistry::GetPDXTypeById</c>
+    /// (<c>cppcache/src/SerializationRegistry.cpp:554</c>) routed through
+    /// <c>ThinClientPoolDM::GetPDXTypeById</c>. Caller is responsible for
+    /// inserting the result back via <see cref="AddPdxType"/> /
+    /// <see cref="AddLocalPdxType"/> — cppcache call sites handle that
+    /// themselves (see <c>PdxHelper.cpp:57-59</c> vs <c>:203-207</c>).
+    /// </summary>
+    public ValueTask<PdxType> GetPdxTypeByIdAsync(
+        ThinClientBaseDM dm, int typeId, CancellationToken ct) =>
+        throw new NotImplementedException(
+            $"{nameof(PdxTypeRegistry)}.{nameof(GetPdxTypeByIdAsync)}: " +
+            $"GET_PDX_TYPE_BY_ID wire op (opcode 92) not yet wired " +
+            $"(typeId={typeId}).");
 
     /// <summary>
     /// Look up unread-field bytes preserved from a previous deserialize.

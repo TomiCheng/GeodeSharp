@@ -1,6 +1,7 @@
 using System;
 using Geode.Client.Internal;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Geode.Client.Protocol.Serialization;
 
@@ -10,18 +11,21 @@ internal sealed class SerializationRegistry
     private readonly Dictionary<Type, IDataConverter> _byType = [];
 
     private readonly PdxTypeRegistry _pdxTypeRegistry;
-     private readonly IServiceProvider _serviceProvider;
+    private readonly IServiceProvider _serviceProvider;
     private readonly GeodeCache _cache;
     private readonly TypeRegistry _typeRegistry;
+    private readonly ILogger<SerializationRegistry> _logger;
 
     public SerializationRegistry(
         IServiceProvider serviceProvider,
-        GeodeCache cache)
+        GeodeCache cache,
+        ILogger<SerializationRegistry> logger)
     {
         _serviceProvider = serviceProvider;
         _cache = cache;
         _typeRegistry = cache.TypeRegistry;
         _pdxTypeRegistry = cache.PdxTypeRegistry;
+        _logger = logger;
 
         RegisterBuiltInConverters();
     }
@@ -290,5 +294,114 @@ internal sealed class SerializationRegistry
 
         throw new GeodeException($"SerializationRegistry: unknown DSCode {dsCode} on the wire.");
     }
+    public ValueTask<object?> ReadObjectAsync(DataInput reader, ThinClientBaseDM dm,
+        int depth = 0, CancellationToken ct = default)
+    {
+        if (depth >= MaxDepth)
+        {
+            throw new GeodeException(
+                $"SerializationRegistry: read exceeded MaxDepth ({MaxDepth}). "
+                + "The server payload is more deeply nested than the client "
+                + "permits ??treat as hostile or buggy unless a legitimate "
+                + "workload warrants it, in which case tune "
+                + "GeodeClientOptions.Serialization.MaxDepth.");
+        }
 
+        var dsCode = reader.ReadByte();
+
+        if (dsCode == DSCode.NullObj)
+        {
+            return ValueTask.FromResult<object?>(null);
+        }
+
+        if (dsCode == DSCode.PDX)
+        {
+            return ReadPdxAsync(reader, dm, depth, ct);
+        }
+        if (_byDsCode.TryGetValue(dsCode, out var converter))
+        {
+            return ValueTask.FromResult<object?>(converter.Read(reader, dsCode, depth));
+        }
+
+        throw new GeodeException($"SerializationRegistry: unknown DSCode {dsCode} on the wire.");
+    }
+
+    /// <summary>
+    /// Decode a PDX (DSCode 93) wire frame. Mirror of cppcache
+    /// <c>PdxHelper::deserializePdx(DataInput&amp;)</c>
+    /// (<c>cppcache/src/PdxHelper.cpp:287</c>) — the outer overload that
+    /// reads <c>length</c> + <c>typeId</c> off the wire, then delegates to
+    /// the inner <c>deserializePdx(input, typeId, length)</c>
+    /// (<c>PdxHelper.cpp:153</c>) for the actual field decode.
+    /// </summary>
+    private async ValueTask<object?> ReadPdxAsync(DataInput reader, ThinClientBaseDM dm,
+        int depth, CancellationToken ct)
+    {
+        // Entry breadcrumb — cppcache PdxHelper.cpp doesn't log on entry of
+        // the outer deserializePdx, but a wire-bug repro often needs the
+        // ".NET saw a PDX frame" event paired against cppcache's hex dump.
+        _logger.LogDebug("ReadPdxAsync: entering, depth={Depth}", depth);
+
+        // R.1 Read pdxLength (4 BE) — covers typeId + payload bytes.
+        var pdxLength = reader.ReadInt32();
+
+        // R.2 Read typeId (4 BE).
+        var typeId = reader.ReadInt32();
+
+        // R.3 PdxType lookup. Local cache first (cppcache PdxHelper.cpp:163
+        //     getPdxType); on miss, GET_PDX_TYPE_BY_ID via dm
+        //     (cppcache PdxHelper.cpp:203-207). After fetch, cache both
+        //     ways so subsequent reads don't re-hit the wire (cppcache
+        //     PdxHelper.cpp:57-59 in checkAndFetchPdxType — same pattern).
+        var pdxType = _pdxTypeRegistry.GetPdxType(typeId);
+        if (pdxType is null)
+        {
+            pdxType = await _pdxTypeRegistry.GetPdxTypeByIdAsync(dm, typeId, ct);
+            _pdxTypeRegistry.AddPdxType(typeId, pdxType);
+            _pdxTypeRegistry.AddLocalPdxType(pdxType.ClassName, pdxType);
+        }
+
+        // R.4 Look up the user's IPdxSerializable<T> factory by className.
+        //     cppcache: SerializationRegistry::getPdxSerializableType.
+        //     Missing here means the caller never RegisterPdxType<T>'d this
+        //     className — surface a useful error rather than fall through
+        //     to a NullReference later.
+        if (!_typeRegistry.TryGetEntryByClassName(pdxType.ClassName, out var entry))
+        {
+            throw new GeodeException(
+                $"PDX className '{pdxType.ClassName}' (typeId={typeId}) is not " +
+                $"registered locally — call cache.TypeRegistry.RegisterPdxType<T>() " +
+                $"for the matching .NET type first.");
+        }
+
+        // Mirror cppcache LOGDEBUG (PdxHelper.cpp:171) — paired with the
+        // entry breadcrumb so a wire-bug trace can match cppcache's against
+        // ours line-by-line.
+        _logger.LogDebug("deserializePdx ClassName = {ClassName}, isLocal = {IsLocal}",
+            pdxType.ClassName, pdxType.IsLocal);
+
+        // R.5 Pick reader: PdxLocalReader (schema is local, no unread
+        //     fields) vs PdxRemoteReader (remote has fields we don't know;
+        //     captures unread bytes for later SetPreserveData). cppcache
+        //     PdxType::isLocal() drives the choice (PdxHelper.cpp:175).
+        PdxLocalReader pdxReader = pdxType.IsLocal
+            ? PdxLocalReader.Create(_serviceProvider, _cache, pdxType, reader, pdxLength)
+            : PdxRemoteReader.Create(_serviceProvider, _cache, pdxType, reader, pdxLength);
+
+        // R.6 Run user's FromData(IPdxReader) — constructs the .NET object
+        //     by calling ReadXxx(name) on the reader for each field.
+        //     cppcache PdxHelper.cpp:178 / :182.
+        //     TODO: cppcache calls plr.moveStream() after FromData to
+        //     advance the buffer cursor past the PDX frame. Not needed
+        //     yet — our DecodeValuePart constructs a fresh DataInput per
+        //     part, so the cursor is discarded with the buffer. Add when
+        //     a container converter reads a PDX field mid-stream.
+        var value = entry.Read(pdxReader);
+
+        // R.7 If PdxRemoteReader and it captured preserved bytes:
+        //     _pdxTypeRegistry.SetPreserveData(value, ...) — inverse of
+        //     the current GetPreserveData null stub. Skipped until the
+        //     remote-schema divergence scenario shows up.
+        return value;
+    }
 }

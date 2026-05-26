@@ -75,7 +75,8 @@ internal sealed partial class ThinClientRegion(
     ///   <item><c>lenObj == 0</c>, <c>IsObject=0</c> → key absent → null.</item>
     /// </list>
     /// </remarks>
-    private object? DecodeValuePart(TcrPart part)
+    /// <param name="ct"></param>
+    private async ValueTask<object?> DecodeValuePartAsync(TcrPart part, CancellationToken ct)
     {
         if (part.Payload.Length == 0)
         {
@@ -99,7 +100,7 @@ internal sealed partial class ThinClientRegion(
             // the DSCode byte and dispatches to the converter (NullObj
             // returns null).
             var reader = new DataInput(part.Payload);
-            return dm.Cache.SerializationRegistry.ReadObject(reader);
+            return await dm.Cache.SerializationRegistry.ReadObjectAsync(reader, dm, ct: ct);
         }
 
         // IsObject=0 + non-empty payload = CacheableBytes shortcut
@@ -372,7 +373,7 @@ internal sealed partial class ThinClientRegion(
                 {
                     throw new GeodeException($"Get on '{FullPath}': Response with zero parts.");
                 }
-                return DecodeValuePart(reply.Parts[0]);
+                return await DecodeValuePartAsync(reply.Parts[0], ct);
 
             case MessageType.Exception:
                 throw new GeodeException($"Server exception on Get '{FullPath}': " +

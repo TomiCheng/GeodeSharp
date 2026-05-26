@@ -33,6 +33,16 @@ internal sealed class PdxType(
     private readonly Dictionary<string, PdxField> _fieldByName = [];
 
     /// <summary>
+    /// <c>true</c> when this schema was constructed locally
+    /// (<c>PdxWriterWithTypeCollector</c> on the write side); <c>false</c>
+    /// when fetched from the server via <c>GET_PDX_TYPE_BY_ID</c>. Mirrors
+    /// cppcache <c>PdxType::isLocal()</c>; drives the read-side
+    /// <c>PdxLocalReader</c> vs <c>PdxRemoteReader</c> choice
+    /// (<c>PdxHelper.cpp:175</c>).
+    /// </summary>
+    public bool IsLocal { get; set; } = true;
+
+    /// <summary>
     /// Stamp <see cref="PdxField.VarLenOffsetIndex"/> /
     /// <see cref="PdxField.RelativeOffset"/> on each field and build the
     /// name lookup. Mirror of cppcache <c>generatePositionMap</c>

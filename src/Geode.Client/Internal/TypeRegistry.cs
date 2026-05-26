@@ -11,6 +11,7 @@ namespace Geode.Client.Internal;
 internal sealed class TypeRegistry(ILogger<TypeRegistry> logger) : ITypeRegistry
 {
     private readonly ConcurrentDictionary<Type, PdxEntry> _byType = new();
+    private readonly ConcurrentDictionary<string, PdxEntry> _byClassName = new();
 
     public void RegisterPdxType<T>(string? className = null) where T : IPdxSerializable<T>
     {
@@ -50,9 +51,27 @@ internal sealed class TypeRegistry(ILogger<TypeRegistry> logger) : ITypeRegistry
     internal bool TryGetEntry(Type clrType, out PdxEntry entry) =>
         _byType.TryGetValue(clrType, out entry);
 
+    /// <summary>
+    /// Internal: look up a PDX registration by className. Used by the read
+    /// path — server gives us a PdxType whose ClassName picks the local
+    /// factory. cppcache equivalent: <c>SerializationRegistry::
+    /// getPdxSerializableType(className)</c>.
+    /// </summary>
+    internal bool TryGetEntryByClassName(string className, out PdxEntry entry) =>
+        _byClassName.TryGetValue(className, out entry);
+
     private void AddOrThrow(PdxEntry entry)
     {
-        if (_byType.TryAdd(entry.ClrType, entry)) return;
+        if (_byType.TryAdd(entry.ClrType, entry))
+        {
+            // className uniqueness is implied by ClrType uniqueness when the
+            // default (FullName) is used. Explicit className overrides could
+            // collide, but two CLR types claiming the same className means
+            // the caller broke cross-language identity — overwrite would mask
+            // the real bug, so we don't bother rolling back, just index.
+            _byClassName[entry.ClassName] = entry;
+            return;
+        }
 
         // Mirror cppcache LOGERROR + IllegalStateException
         // (SerializationRegistry.cpp:709-713).

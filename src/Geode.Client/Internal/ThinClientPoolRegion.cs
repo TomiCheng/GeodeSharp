@@ -1,7 +1,3 @@
-using Geode.Client.Protocol;
-using Microsoft.Extensions.Logging;
-using Geode.Client.Services;
-
 namespace Geode.Client.Internal;
 
 /// <summary>
@@ -38,22 +34,10 @@ namespace Geode.Client.Internal;
 /// </remarks>
 internal sealed class ThinClientPoolRegion(
     IServiceProvider serviceProvider,
-    ILogger<ThinClientRegion> logger,
-    DmContextAccessor dmCtxAccessor,
-    SerializationRegistry serializationRegistry,
-    EventIdGenerator eventIdGenerator,
     string name,
-    RegionAttributes attributes,
-    ThinClientBaseDM dm)
-    : ThinClientRegion(
-        serviceProvider,
-        logger,
-        dmCtxAccessor,
-        serializationRegistry,
-        eventIdGenerator,
-        name,
-        attributes,
-        dm)
+    RegionInternal? parent,
+    RegionAttributes attributes)
+    : ThinClientRegion(serviceProvider, name, parent, attributes)
 {
     // No fields beyond the base — cppcache ThinClientPoolRegion has no
     // private state of its own either. Override surface above.

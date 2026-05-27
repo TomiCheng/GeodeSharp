@@ -23,33 +23,33 @@ namespace Geode.Client.Internal;
 /// reads them.
 /// </para>
 /// </remarks>
-internal abstract class LocalRegion : RegionInternal
+internal abstract class LocalRegion(
+    IServiceProvider serviceProvider,
+    string name,
+    RegionInternal? parent,
+    RegionAttributes attributes) : RegionInternal(attributes)
 {
-    protected LocalRegion(
-        string name,
-        RegionInternal? parent,
-        RegionAttributes attributes)
-        : base(attributes)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(name);
-        Name = name;
-        Parent = parent;
-
-        // cppcache LocalRegion.cpp:75-79 — root: "/" + name;
-        //   sub: parent.FullPath + "/" + name.
-        FullPath = parent is null
-            ? "/" + name
-            : parent.FullPath + "/" + name;
-    }
 
     /// <summary>
     /// Parent region in the sub-region tree, or <see langword="null"/> for a
     /// root region. Mirrors cppcache <c>LocalRegion::m_parentRegion</c>.
     /// </summary>
-    protected RegionInternal? Parent { get; }
+    protected RegionInternal? Parent { get; } = parent;
 
-    public override string Name { get; }
-    public override string FullPath { get; }
+    public override string Name { get; } = name;
+    public override string FullPath { get; } = parent is null
+            ? "/" + name
+            : parent.FullPath + "/" + name;
+
+    /// <summary>
+    /// Local entry count. Mirrors cppcache <c>LocalRegion::size()</c>
+    /// (<c>LocalRegion.cpp</c> via <c>m_entries->size()</c>). We're
+    /// proxy-only today (no <c>m_entries</c> field, no client-side
+    /// caching), so the local entry count is always 0 — that's the
+    /// truthful answer for a non-caching region. Override on a future
+    /// caching-enabled subclass when <c>m_entries</c> lands.
+    /// </summary>
+    public override int Size => 0;
 
     // All 11 IRegion ops still abstract — concrete dispatch lives in
     // ThinClientRegion (Phase 1.x). When local caching lands (Phase 2+),

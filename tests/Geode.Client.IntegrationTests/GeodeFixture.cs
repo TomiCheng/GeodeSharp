@@ -130,9 +130,9 @@ public sealed class GeodeFixture : IAsyncLifetime
             // covered by the time the server ports are open.
             .WithWaitStrategy(
                 Wait.ForUnixContainer()
-                    .UntilPortIsAvailable(Server1ContainerPort)
-                    .UntilPortIsAvailable(Server2ContainerPort)
-                    .UntilPortIsAvailable(Server3ContainerPort))
+                    .UntilInternalTcpPortIsAvailable(Server1ContainerPort)
+                    .UntilInternalTcpPortIsAvailable(Server2ContainerPort)
+                    .UntilInternalTcpPortIsAvailable(Server3ContainerPort))
             .Build();
 
         await _container.StartAsync();

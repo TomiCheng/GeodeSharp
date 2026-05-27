@@ -1,7 +1,3 @@
-using Geode.Client.Protocol;
-using Microsoft.Extensions.Logging;
-using Geode.Client.Services;
-
 namespace Geode.Client.Internal;
 
 /// <summary>
@@ -57,22 +53,11 @@ namespace Geode.Client.Internal;
 /// </remarks>
 internal sealed class ThinClientHARegion(
     IServiceProvider serviceProvider,
-    ILogger<ThinClientRegion> logger,
-    DmContextAccessor dmCtxAccessor,
-    SerializationRegistry serializationRegistry,
-    EventIdGenerator eventIdGenerator,
     string name,
+    RegionInternal? parent,
     RegionAttributes attributes,
-    ThinClientBaseDM dm)
-    : ThinClientRegion(
-        serviceProvider,
-        logger,
-        dmCtxAccessor,
-        serializationRegistry,
-        eventIdGenerator,
-        name,
-        attributes,
-        dm)
+    bool enableNotification)
+    : ThinClientRegion(serviceProvider, name, parent, attributes)
 {
     // cppcache fields land here when subscription support is reinstated:
     //   volatile bool m_processedMarker  (ThinClientHARegion.hpp:69)

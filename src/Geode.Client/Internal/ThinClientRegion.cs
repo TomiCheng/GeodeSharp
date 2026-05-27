@@ -28,7 +28,7 @@ namespace Geode.Client.Internal;
 /// is <c>object</c>-typed; strong typing is compile-time only.
 /// </para>
 /// </remarks>
-internal sealed partial class ThinClientRegion(
+internal partial class ThinClientRegion(
     IServiceProvider serviceProvider,
     ILogger<ThinClientRegion> logger,
     DmContextAccessor dmCtxAccessor,
@@ -131,8 +131,8 @@ internal sealed partial class ThinClientRegion(
     /// API boundary; <see cref="TypedResultAdapter"/> short-circuits to
     /// identity.
     /// </remarks>
-    private async Task<IReadOnlyList<object>> QueryAsync(
-        string predicate, CancellationToken ct)
+    public override async Task<IReadOnlyList<object>> QueryAsync(
+        string predicate, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(predicate))
         {
@@ -211,7 +211,17 @@ internal sealed partial class ThinClientRegion(
     /// </summary>
     internal ThinClientBaseDM DistributionManager => dm;
 
-    public override async Task ClearAsync(CancellationToken ct = default)
+    /// <inheritdoc />
+    /// <remarks>
+    /// Phase 1.5 skeleton — cast <c>dm</c> to <see cref="ThinClientPoolDM"/>
+    /// (the sole <see cref="IPool"/> implementor) and return it. Stays
+    /// NIE until <see cref="QueryAsync"/>-style non-pool guarding lands.
+    /// </remarks>
+    public override IPool Pool =>
+        throw new NotImplementedException(
+            $"IRegion.Pool on '{FullPath}' is not yet wired; cast `dm` to ThinClientPoolDM when non-pool guarding lands.");
+
+    public override async Task ClearAsync(object? callback = null, CancellationToken ct = default)
     {
         using var _ = dmCtxAccessor.BeginScope(dm);
         // Mirrors cppcache ThinClientRegion::clear (ThinClientRegion.cpp:767-808)
@@ -300,7 +310,7 @@ internal sealed partial class ThinClientRegion(
     }
 
     public override async Task<IReadOnlyDictionary<object, object?>> GetAllAsync(
-        IReadOnlyCollection<object> keys, CancellationToken ct = default)
+        IReadOnlyCollection<object> keys, object? callback = null, CancellationToken ct = default)
     {
         using var _ = dmCtxAccessor.BeginScope(dm);
         // Mirrors cppcache ThinClientRegion::getAllNoThrow_remote
@@ -357,7 +367,7 @@ internal sealed partial class ThinClientRegion(
     }
 
 
-    public override async Task<object?> GetAsync(object key, CancellationToken ct = default)
+    public override async Task<object?> GetAsync(object key, object? callback = null, CancellationToken ct = default)
     {
         using var _ = dmCtxAccessor.BeginScope(dm);
         logger.LogTrace("GetAsync: region={RegionPath}, key={Key}", FullPath, key);
@@ -389,7 +399,7 @@ internal sealed partial class ThinClientRegion(
         }
     }
 
-    public override async Task InvalidateAsync(object key, CancellationToken ct = default)
+    public override async Task InvalidateAsync(object key, object? callback = null, CancellationToken ct = default)
     {
         using var _ = dmCtxAccessor.BeginScope(dm);
         // Mirrors cppcache ThinClientRegion::invalidateNoThrow_remote
@@ -431,7 +441,7 @@ internal sealed partial class ThinClientRegion(
         }
     }
 
-    public override async Task PutAllAsync(IReadOnlyDictionary<object, object> map, CancellationToken ct = default)
+    public override async Task PutAllAsync(IReadOnlyDictionary<object, object> map, object? callback = null, CancellationToken ct = default)
     {
         using var _ = dmCtxAccessor.BeginScope(dm);
         // Mirrors cppcache ThinClientRegion::multiHopPutAllNoThrow_remote
@@ -508,7 +518,7 @@ internal sealed partial class ThinClientRegion(
         }
     }
 
-    public override async Task PutAsync(object key, object value, CancellationToken ct = default)
+    public override async Task PutAsync(object key, object value, object? callback = null, CancellationToken ct = default)
     {
         using var _ = dmCtxAccessor.BeginScope(dm);
         logger.LogTrace("PutAsync: region={RegionPath}, key={Key}", FullPath, key);
@@ -544,7 +554,7 @@ internal sealed partial class ThinClientRegion(
         }
     }
 
-    public override async Task RemoveAllAsync(IReadOnlyCollection<object> keys, CancellationToken ct = default)
+    public override async Task RemoveAllAsync(IReadOnlyCollection<object> keys, object? callback = null, CancellationToken ct = default)
     {
         using var _ = dmCtxAccessor.BeginScope(dm);
         // Mirrors cppcache ThinClientRegion::multiHopRemoveAllNoThrow_remote
@@ -606,7 +616,19 @@ internal sealed partial class ThinClientRegion(
         }
     }
 
-    public override async Task<bool> RemoveAsync(object key, CancellationToken ct = default)
+    /// <inheritdoc />
+    /// <remarks>
+    /// Strict variant (cppcache <c>Region::remove(k, v, cb)</c>). Wire-level
+    /// `expectedOldValue` part carries <paramref name="value"/>; server
+    /// destroys only when the current value equals it. NIE stub — body lands
+    /// when the value-bearing <c>TcrMessageDestroy</c> branch ships.
+    /// </remarks>
+    public override Task<bool> RemoveAsync(object key, object value, object? callback = null, CancellationToken ct = default) =>
+        throw new NotImplementedException(
+            $"Strict RemoveAsync(key, value) on '{FullPath}' is not yet wired; today only the unconditional " +
+            $"{nameof(RemoveExAsync)} path is implemented.");
+
+    public override async Task<bool> RemoveExAsync(object key, object? callback = null, CancellationToken ct = default)
     {
         using var _ = dmCtxAccessor.BeginScope(dm);
         // Mirrors cppcache ThinClientRegion::destroyNoThrow_remote

@@ -38,14 +38,37 @@ internal sealed class RegionView<TKey, TValue>(IRegion inner, TypedResultAdapter
     public string Name => inner.Name;
     public string PoolName => inner.PoolName;
     public string FullPath => inner.FullPath;
+    public IPool Pool => inner.Pool;
+    public IRegion? ParentRegion => inner.ParentRegion;
+    public IRegion? GetSubregion(string path) => inner.GetSubregion(path);
+    public IReadOnlyList<IRegion> Subregions(bool recursive) => inner.Subregions(recursive);
+    public void LocalDestroyRegion(object? callback = null) => inner.LocalDestroyRegion(callback);
+    public void LocalPut(object key, object value, object? callback = null) => inner.LocalPut(key, value, callback);
+    public void LocalCreate(object key, object value, object? callback = null) => inner.LocalCreate(key, value, callback);
+    public void LocalInvalidate(object key, object? callback = null) => inner.LocalInvalidate(key, callback);
+    public void LocalDestroy(object key, object? callback = null) => inner.LocalDestroy(key, callback);
+    public bool LocalRemove(object key, object value, object? callback = null) => inner.LocalRemove(key, value, callback);
+    public bool LocalRemoveEx(object key, object? callback = null) => inner.LocalRemoveEx(key, callback);
+    public void LocalClear(object? callback = null) => inner.LocalClear(callback);
+    public void LocalInvalidateRegion(object? callback = null) => inner.LocalInvalidateRegion(callback);
+    public IReadOnlyList<object> GetInterestList() => inner.GetInterestList();
+    public IReadOnlyList<string> GetInterestListRegex() => inner.GetInterestListRegex();
+    public Task RegisterKeysAsync(IReadOnlyCollection<object> keys, bool isDurable = false, bool getInitialValues = false, bool receiveValues = true, CancellationToken ct = default) => inner.RegisterKeysAsync(keys, isDurable, getInitialValues, receiveValues, ct);
+    public Task UnregisterKeysAsync(IReadOnlyCollection<object> keys, CancellationToken ct = default) => inner.UnregisterKeysAsync(keys, ct);
+    public Task RegisterAllKeysAsync(bool isDurable = false, bool getInitialValues = false, bool receiveValues = true, CancellationToken ct = default) => inner.RegisterAllKeysAsync(isDurable, getInitialValues, receiveValues, ct);
+    public Task UnregisterAllKeysAsync(CancellationToken ct = default) => inner.UnregisterAllKeysAsync(ct);
+    public Task RegisterRegexAsync(string regex, bool isDurable = false, bool getInitialValues = false, bool receiveValues = true, CancellationToken ct = default) => inner.RegisterRegexAsync(regex, isDurable, getInitialValues, receiveValues, ct);
+    public Task UnregisterRegexAsync(string regex, CancellationToken ct = default) => inner.UnregisterRegexAsync(regex, ct);
+    public Task<IReadOnlyList<object>> QueryAsync(string predicate, CancellationToken ct = default) => inner.QueryAsync(predicate, ct);
+    public IRegion CreateSubregion(string name, RegionAttributes attributes) => inner.CreateSubregion(name, attributes);
 
     // ── Typed ops (the C# call-site shape) ─────────────────────
-    public Task PutAsync(TKey key, TValue value, CancellationToken ct = default)
-        => inner.PutAsync(key, value!, ct);
+    public Task PutAsync(TKey key, TValue value, object? callback = null, CancellationToken ct = default)
+        => inner.PutAsync(key, value!, callback, ct);
 
-    public async Task<TValue?> GetAsync(TKey key, CancellationToken ct = default)
+    public async Task<TValue?> GetAsync(TKey key, object? callback = null, CancellationToken ct = default)
     {
-        var raw = await inner.GetAsync(key, ct).ConfigureAwait(false);
+        var raw = await inner.GetAsync(key, callback, ct).ConfigureAwait(false);
         // Adapter reshapes wire-canonical containers (List<object?> from
         // CacheableArrayList, etc.) into the declared TValue form —
         // List<int>, IList<IList<string>>, int[], …. Scalars and
@@ -58,17 +81,20 @@ internal sealed class RegionView<TKey, TValue>(IRegion inner, TypedResultAdapter
         return adapter.Convert<TValue>(raw);
     }
 
-    public Task<bool> RemoveAsync(TKey key, CancellationToken ct = default)
-        => inner.RemoveAsync(key, ct);
+    public Task<bool> RemoveAsync(TKey key, TValue value, object? callback = null, CancellationToken ct = default)
+        => inner.RemoveAsync(key!, value!, callback, ct);
+
+    public Task<bool> RemoveExAsync(TKey key, object? callback = null, CancellationToken ct = default)
+        => inner.RemoveExAsync(key!, callback, ct);
 
     public Task<bool> ContainsKeyAsync(TKey key, CancellationToken ct = default)
-        => inner.ContainsKeyAsync(key, ct);
+        => inner.ContainsKeyAsync(key!, ct);
 
-    public Task ClearAsync(CancellationToken ct = default)
-        => inner.ClearAsync(ct);
+    public Task ClearAsync(object? callback = null, CancellationToken ct = default)
+        => inner.ClearAsync(callback, ct);
 
-    public Task InvalidateAsync(TKey key, CancellationToken ct = default)
-        => inner.InvalidateAsync(key!, ct);
+    public Task InvalidateAsync(TKey key, object? callback = null, CancellationToken ct = default)
+        => inner.InvalidateAsync(key!, callback, ct);
 
     // No alias needed — bool return doesn't depend on TValue, the base
     // IRegion's ExistsValueAsync member satisfies the inherited contract
@@ -85,7 +111,7 @@ internal sealed class RegionView<TKey, TValue>(IRegion inner, TypedResultAdapter
         return adapter.Convert<TValue>(raw);
     }
 
-    public Task RemoveAllAsync(IReadOnlyCollection<TKey> keys, CancellationToken ct = default)
+    public Task RemoveAllAsync(IReadOnlyCollection<TKey> keys, object? callback = null, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(keys);
         // Box typed keys to object[] and forward; the inner region is
@@ -98,10 +124,10 @@ internal sealed class RegionView<TKey, TValue>(IRegion inner, TypedResultAdapter
         {
             boxed[i++] = k!;
         }
-        return inner.RemoveAllAsync(boxed, ct);
+        return inner.RemoveAllAsync(boxed, callback, ct);
     }
 
-    public Task PutAllAsync(IReadOnlyDictionary<TKey, TValue> map, CancellationToken ct = default)
+    public Task PutAllAsync(IReadOnlyDictionary<TKey, TValue> map, object? callback = null, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(map);
         // Box typed entries into a fresh Dictionary<object, object>;
@@ -114,11 +140,11 @@ internal sealed class RegionView<TKey, TValue>(IRegion inner, TypedResultAdapter
         {
             boxed[kv.Key!] = kv.Value!;
         }
-        return inner.PutAllAsync(boxed, ct);
+        return inner.PutAllAsync(boxed, callback, ct);
     }
 
     public async Task<IReadOnlyDictionary<TKey, TValue?>> GetAllAsync(
-        IReadOnlyCollection<TKey> keys, CancellationToken ct = default)
+        IReadOnlyCollection<TKey> keys, object? callback = null, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(keys);
         // Box typed keys → object[]; the wire path is object-typed.
@@ -128,7 +154,7 @@ internal sealed class RegionView<TKey, TValue>(IRegion inner, TypedResultAdapter
         {
             boxed[i++] = k!;
         }
-        var raw = await inner.GetAllAsync(boxed, ct).ConfigureAwait(false);
+        var raw = await inner.GetAllAsync(boxed, callback, ct).ConfigureAwait(false);
 
         // Reshape Dictionary<object, object?> → Dictionary<TKey, TValue?>
         // via TypedResultAdapter — same recursive-descent path that
@@ -179,30 +205,33 @@ internal sealed class RegionView<TKey, TValue>(IRegion inner, TypedResultAdapter
     }
 
     // ── Object-typed ops (explicit interface — forward to inner) ──
-    Task IRegion.PutAsync(object key, object value, CancellationToken ct)
-        => inner.PutAsync(key, value, ct);
+    Task IRegion.PutAsync(object key, object value, object? callback, CancellationToken ct)
+        => inner.PutAsync(key, value, callback, ct);
 
-    Task<object?> IRegion.GetAsync(object key, CancellationToken ct)
-        => inner.GetAsync(key, ct);
+    Task<object?> IRegion.GetAsync(object key, object? callback, CancellationToken ct)
+        => inner.GetAsync(key, callback, ct);
 
-    Task<bool> IRegion.RemoveAsync(object key, CancellationToken ct)
-        => inner.RemoveAsync(key, ct);
+    Task<bool> IRegion.RemoveAsync(object key, object value, object? callback, CancellationToken ct)
+        => inner.RemoveAsync(key, value, callback, ct);
+
+    Task<bool> IRegion.RemoveExAsync(object key, object? callback, CancellationToken ct)
+        => inner.RemoveExAsync(key, callback, ct);
 
     Task<bool> IRegion.ContainsKeyAsync(object key, CancellationToken ct)
         => inner.ContainsKeyAsync(key, ct);
 
-    Task IRegion.InvalidateAsync(object key, CancellationToken ct)
-        => inner.InvalidateAsync(key, ct);
+    Task IRegion.InvalidateAsync(object key, object? callback, CancellationToken ct)
+        => inner.InvalidateAsync(key, callback, ct);
 
-    Task IRegion.RemoveAllAsync(IReadOnlyCollection<object> keys, CancellationToken ct)
-        => inner.RemoveAllAsync(keys, ct);
+    Task IRegion.RemoveAllAsync(IReadOnlyCollection<object> keys, object? callback, CancellationToken ct)
+        => inner.RemoveAllAsync(keys, callback, ct);
 
-    Task IRegion.PutAllAsync(IReadOnlyDictionary<object, object> map, CancellationToken ct)
-        => inner.PutAllAsync(map, ct);
+    Task IRegion.PutAllAsync(IReadOnlyDictionary<object, object> map, object? callback, CancellationToken ct)
+        => inner.PutAllAsync(map, callback, ct);
 
     Task<IReadOnlyDictionary<object, object?>> IRegion.GetAllAsync(
-        IReadOnlyCollection<object> keys, CancellationToken ct)
-        => inner.GetAllAsync(keys, ct);
+        IReadOnlyCollection<object> keys, object? callback, CancellationToken ct)
+        => inner.GetAllAsync(keys, callback, ct);
 
     // Explicit-interface overload for the object-typed SelectValueAsync;
     // the typed implicit member above shadows the base via `new`, so
@@ -210,4 +239,63 @@ internal sealed class RegionView<TKey, TValue>(IRegion inner, TypedResultAdapter
     // to skip the adapter and return the raw object?.
     Task<object?> IRegion.SelectValueAsync(string predicate, CancellationToken ct)
         => inner.SelectValueAsync(predicate, ct);
+
+    // ── Phase 2+ NIE-stub surface (forward through to inner) ───
+    // Typed pairs follow the Put/Get/Remove pattern: typed overload
+    // boxes into the non-generic inner call.
+
+    public Task CreateAsync(TKey key, TValue value, object? callback = null, CancellationToken ct = default)
+        => inner.CreateAsync(key!, value!, callback, ct);
+
+    public Task DestroyAsync(TKey key, object? callback = null, CancellationToken ct = default)
+        => inner.DestroyAsync(key!, callback, ct);
+
+    public IRegionEntry? GetEntry(TKey key) => inner.GetEntry(key!);
+
+    public bool ContainsKey(TKey key) => inner.ContainsKey(key!);
+    public bool ContainsValueForKey(TKey key) => inner.ContainsValueForKey(key!);
+
+    public IReadOnlyList<TKey> Keys()
+    {
+        // Typed shadow — boxed inner snapshot → typed list via cast.
+        // Wrong-type entries surface as InvalidCastException, matching
+        // the GetAsync adapter's contract for "you asked the wrong typed view".
+        var raw = inner.Keys();
+        var typed = new TKey[raw.Count];
+        for (var i = 0; i < raw.Count; i++) typed[i] = (TKey)raw[i];
+        return typed;
+    }
+
+    public IReadOnlyList<TValue?> Values()
+    {
+        // Same boxed→typed shape as Keys; null values stay null via default.
+        var raw = inner.Values();
+        var typed = new TValue?[raw.Count];
+        for (var i = 0; i < raw.Count; i++)
+            typed[i] = adapter.Convert<TValue>(raw[i]);
+        return typed;
+    }
+
+    // Object-typed explicit forwarders so an IRegion reference sees the
+    // base surface unchanged (the typed Keys/Values above shadow via `new`).
+    Task IRegion.CreateAsync(object key, object value, object? callback, CancellationToken ct)
+        => inner.CreateAsync(key, value, callback, ct);
+    Task IRegion.DestroyAsync(object key, object? callback, CancellationToken ct)
+        => inner.DestroyAsync(key, callback, ct);
+    Task IRegion.DestroyRegionAsync(object? callback, CancellationToken ct)
+        => inner.DestroyRegionAsync(callback, ct);
+    Task IRegion.InvalidateRegionAsync(object? callback, CancellationToken ct)
+        => inner.InvalidateRegionAsync(callback, ct);
+    IRegionEntry? IRegion.GetEntry(object key) => inner.GetEntry(key);
+    IReadOnlyList<object> IRegion.Keys() => inner.Keys();
+    Task<IReadOnlyList<object>> IRegion.ServerKeysAsync(CancellationToken ct) => inner.ServerKeysAsync(ct);
+    IReadOnlyList<object?> IRegion.Values() => inner.Values();
+    IReadOnlyList<IRegionEntry> IRegion.Entries(bool recursive) => inner.Entries(recursive);
+    int IRegion.Size => inner.Size;
+    bool IRegion.IsDestroyed => inner.IsDestroyed;
+    RegionAttributes IRegion.Attributes => inner.Attributes;
+    IAttributesMutator IRegion.GetAttributesMutator() => inner.GetAttributesMutator();
+    bool IRegion.ContainsKey(object key) => inner.ContainsKey(key);
+    bool IRegion.ContainsValueForKey(object key) => inner.ContainsValueForKey(key);
+    IRegionService IRegion.RegionService => inner.RegionService;
 }

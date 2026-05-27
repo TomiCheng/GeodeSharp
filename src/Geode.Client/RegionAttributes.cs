@@ -1,4 +1,4 @@
-namespace Geode.Client.Internal;
+namespace Geode.Client;
 
 /// <summary>
 /// Region configuration bag built by <see cref="RegionAttributesFactory"/>.
@@ -13,7 +13,7 @@ namespace Geode.Client.Internal;
 /// expiration / listener / persistence / partition-resolver fields land
 /// in Phase 2+.
 /// </remarks>
-internal sealed class RegionAttributes
+public sealed class RegionAttributes
 {
     // RegionAttributes.cpp:50 — m_initialCapacity(10000)
     public int InitialCapacity { get; set; } = 10000;

@@ -1,9 +1,8 @@
-using Geode.Client.Internal;
 using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
-namespace Geode.Client;
+namespace Geode.Client.Internal;
 
 /// <summary>
 /// Default <see cref="IPoolFactory"/>. Mirrors cppcache <c>PoolFactory</c>

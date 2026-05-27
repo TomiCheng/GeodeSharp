@@ -8,13 +8,8 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Services;
 
-internal sealed class GeodeCache(IServiceProvider serviceProvider): IGeodeCache, IAsyncDisposable
+internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache, IAsyncDisposable
 {
-    readonly SystemProperties _systemProperties = serviceProvider.GetRequiredService<SystemProperties>();
-    readonly TcrConnectionManager _tcrConnectionManager = serviceProvider.GetRequiredService<TcrConnectionManager>();
-    readonly PoolManager _poolManager = serviceProvider.GetRequiredService<PoolManager>();
-    readonly TypedResultAdapter _typedResultAdapter = serviceProvider.GetRequiredService<TypedResultAdapter>();
-    readonly SerializationRegistry _serializationRegistry = serviceProvider.GetRequiredService<SerializationRegistry>();
 
     // Writer lives in the cppcache destroy path (CacheImpl::close /
     // CacheImpl::~CacheImpl), which we have not ported yet. Field is kept so
@@ -24,33 +19,12 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider): IGeodeCache,
 #pragma warning restore CS0649
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private Task? _initTask;
+    readonly PoolManager _poolManager = serviceProvider.GetRequiredService<PoolManager>();
     private readonly ConcurrentDictionary<string, IRegion> _regions = new(StringComparer.Ordinal);
-
-
-
-    internal async Task InitializeAsync(CancellationToken ct = default)
-    {
-        ObjectDisposedException.ThrowIf(IsClosed, this);
-        var task = Volatile.Read(ref _initTask);
-        if (task is null)
-        {
-            await _initLock.WaitAsync(ct).ConfigureAwait(false);
-            try
-            {
-                task = _initTask;
-                if (task is null)
-                {
-                    task = InitializeCoreAsync(ct);
-                    Volatile.Write(ref _initTask, task);
-                }
-            }
-            finally
-            {
-                _initLock.Release();
-            }
-        }
-        await task.WaitAsync(ct).ConfigureAwait(false);
-    }
+    readonly SerializationRegistry _serializationRegistry = serviceProvider.GetRequiredService<SerializationRegistry>();
+    readonly SystemProperties _systemProperties = serviceProvider.GetRequiredService<SystemProperties>();
+    readonly TcrConnectionManager _tcrConnectionManager = serviceProvider.GetRequiredService<TcrConnectionManager>();
+    readonly TypedResultAdapter _typedResultAdapter = serviceProvider.GetRequiredService<TypedResultAdapter>();
 
     /// <summary>
     /// Build-time snapshot of the public <see cref="GeodeClientOptions"/>
@@ -59,7 +33,7 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider): IGeodeCache,
     /// mutations to the caller's <paramref name="opts"/> do NOT affect
     /// this cache.
     /// </summary>
-    
+
 
     private async Task InitializeCoreAsync(CancellationToken ct = default)
     {
@@ -100,7 +74,49 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider): IGeodeCache,
         //   ignoreUnreadFields / readSerialized to _pdxTypeRegistry.
     }
 
-    
+
+
+    internal async Task InitializeAsync(CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(IsClosed, this);
+        var task = Volatile.Read(ref _initTask);
+        if (task is null)
+        {
+            await _initLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                task = _initTask;
+                if (task is null)
+                {
+                    task = InitializeCoreAsync(ct);
+                    Volatile.Write(ref _initTask, task);
+                }
+            }
+            finally
+            {
+                _initLock.Release();
+            }
+        }
+        await task.WaitAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Register a freshly-built region on the cache. Called by
+    /// <see cref="RegionFactory.CreateAsync{TKey, TValue}(string, CancellationToken)"/>;
+    /// mirrors cppcache <c>CacheImpl::createRegion</c> map insertion
+    /// (<c>cppcache/src/CacheImpl.cpp:395-398, 440</c>).
+    /// </summary>
+    internal void RegisterRegion(string name, IRegion region)
+    {
+        ObjectDisposedException.ThrowIf(IsClosed, this);
+        if (!_regions.TryAdd(name, region))
+        {
+            throw new RegionExistsException(
+                $"CacheImpl::createRegion: \"{name}\" region exists in local cache");
+        }
+    }
+
+
 
     // ── Test / back-compat passthrough getters ───────────────────────
     //
@@ -400,6 +416,19 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider): IGeodeCache,
         IsClosed = true;
     }
 
+    /// <summary>
+    /// Mirrors cppcache <c>Cache::createRegionFactory(RegionShortcut)</c>
+    /// (<c>cppcache/src/Cache.cpp</c> → <c>CacheImpl::createRegionFactory</c>).
+    /// Direct <see langword="new"/> rather than ActivatorUtilities — we
+    /// already hold every ctor arg, and the cache instance is the natural
+    /// back-pointer for the factory's eventual register-on-create step.
+    /// </summary>
+    public RegionFactory CreateRegionFactory(RegionShortcut shortcut)
+    {
+        ObjectDisposedException.ThrowIf(IsClosed, this);
+        return new RegionFactory(serviceProvider, this, shortcut);
+    }
+
     public async ValueTask DisposeAsync()
     {
         // Forward to CloseAsync; idempotent until connection logic lands.
@@ -411,6 +440,42 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider): IGeodeCache,
         // ride the same cascade.
 
         _initLock.Dispose();
+    }
+
+    /// <summary>
+    /// Shared typed-result adapter used to wrap freshly-created regions
+    /// in <see cref="RegionView{TKey, TValue}"/>; same instance the
+    /// cache hands to <see cref="GetRegion{TKey, TValue}(string)"/>.
+    /// </summary>
+    //internal Protocol.Serialization.TypedResultAdapter TypedResultAdapter => _typedResultAdapter;
+
+    /// <summary>
+    /// Delegates to <c>PoolManager.DefaultPool.QueryService</c> (or the
+    /// named pool's). Mirrors cppcache <c>CacheImpl::getQueryService()</c>
+    /// pool-mode branch (<c>CacheImpl.cpp:171-203</c>); the non-pool
+    /// fallback in the same method has no .NET counterpart per memory
+    /// <c>pool-only-no-non-pool.md</c>.
+    /// </summary>
+    public IQueryService GetQueryService(string? poolName = null)
+    {
+        ObjectDisposedException.ThrowIf(IsClosed, this);
+
+        // null / empty → DefaultPool. Aligns with PoolManager.Find's
+        // own empty-string convention, but null gets normalised here
+        // so PoolManager.Find (which throws on null) never sees it.
+        if (string.IsNullOrEmpty(poolName))
+        {
+            var defaultPool = _poolManager.DefaultPool
+                ?? throw new InvalidOperationException(
+                    "Cache has no default pool — call EnsureInitializedAsync " +
+                    "first or ensure at least one pool is registered.");
+            return defaultPool.QueryService;
+        }
+
+        var pool = _poolManager.Find(poolName)
+            ?? throw new ArgumentException(
+                $"Pool '{poolName}' is not registered.", nameof(poolName));
+        return pool.QueryService;
     }
 
     /// <summary>
@@ -492,71 +557,6 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider): IGeodeCache,
         // pure compile-time wrapper — TKey/TValue are not runtime-bound.
         var region = GetRegion(path);
         return region is null ? null : new RegionView<TKey, TValue>(region, _typedResultAdapter);
-    }
-
-    /// <summary>
-    /// Mirrors cppcache <c>Cache::createRegionFactory(RegionShortcut)</c>
-    /// (<c>cppcache/src/Cache.cpp</c> → <c>CacheImpl::createRegionFactory</c>).
-    /// Direct <see langword="new"/> rather than ActivatorUtilities — we
-    /// already hold every ctor arg, and the cache instance is the natural
-    /// back-pointer for the factory's eventual register-on-create step.
-    /// </summary>
-    public RegionFactory CreateRegionFactory(RegionShortcut shortcut)
-    {
-        ObjectDisposedException.ThrowIf(IsClosed, this);
-        return new RegionFactory(serviceProvider, this, shortcut);
-    }
-
-    /// <summary>
-    /// Register a freshly-built region on the cache. Called by
-    /// <see cref="RegionFactory.CreateAsync{TKey, TValue}(string, CancellationToken)"/>;
-    /// mirrors cppcache <c>CacheImpl::createRegion</c> map insertion
-    /// (<c>cppcache/src/CacheImpl.cpp:395-398, 440</c>).
-    /// </summary>
-    internal void RegisterRegion(string name, IRegion region)
-    {
-        ObjectDisposedException.ThrowIf(IsClosed, this);
-        if (!_regions.TryAdd(name, region))
-        {
-            throw new RegionExistsException(
-                $"CacheImpl::createRegion: \"{name}\" region exists in local cache");
-        }
-    }
-
-    /// <summary>
-    /// Shared typed-result adapter used to wrap freshly-created regions
-    /// in <see cref="RegionView{TKey, TValue}"/>; same instance the
-    /// cache hands to <see cref="GetRegion{TKey, TValue}(string)"/>.
-    /// </summary>
-    //internal Protocol.Serialization.TypedResultAdapter TypedResultAdapter => _typedResultAdapter;
-
-    /// <summary>
-    /// Delegates to <c>PoolManager.DefaultPool.QueryService</c> (or the
-    /// named pool's). Mirrors cppcache <c>CacheImpl::getQueryService()</c>
-    /// pool-mode branch (<c>CacheImpl.cpp:171-203</c>); the non-pool
-    /// fallback in the same method has no .NET counterpart per memory
-    /// <c>pool-only-no-non-pool.md</c>.
-    /// </summary>
-    public IQueryService GetQueryService(string? poolName = null)
-    {
-        ObjectDisposedException.ThrowIf(IsClosed, this);
-
-        // null / empty → DefaultPool. Aligns with PoolManager.Find's
-        // own empty-string convention, but null gets normalised here
-        // so PoolManager.Find (which throws on null) never sees it.
-        if (string.IsNullOrEmpty(poolName))
-        {
-            var defaultPool = _poolManager.DefaultPool
-                ?? throw new InvalidOperationException(
-                    "Cache has no default pool — call EnsureInitializedAsync " +
-                    "first or ensure at least one pool is registered.");
-            return defaultPool.QueryService;
-        }
-
-        var pool = _poolManager.Find(poolName)
-            ?? throw new ArgumentException(
-                $"Pool '{poolName}' is not registered.", nameof(poolName));
-        return pool.QueryService;
     }
 
 

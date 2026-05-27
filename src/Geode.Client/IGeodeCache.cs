@@ -10,7 +10,7 @@ public interface IGeodeCache : IRegionService
     /// Open a fluent builder for a client-side region attached to this cache,
     /// pre-loaded with the defaults implied by <paramref name="shortcut"/>.
     /// </summary>
-    RegionFactory CreateRegionFactory(RegionShortcut shortcut);
+    IRegionFactory CreateRegionFactory(RegionShortcut shortcut);
 
     ///// <summary>PDX type registry for this cache.</summary>
     //ITypeRegistry TypeRegistry { get; }

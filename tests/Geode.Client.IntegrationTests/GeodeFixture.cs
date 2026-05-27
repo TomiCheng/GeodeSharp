@@ -94,8 +94,7 @@ public sealed class GeodeFixture : IAsyncLifetime
         // container-internal IP and break subsequent locator calls.
         // Combined with the fixed port mappings below.
         const string locators = "localhost[10334],localhost[10335]";
-        _container = new ContainerBuilder()
-            .WithImage("apachegeode/geode:latest")
+        _container = new ContainerBuilder("apachegeode/geode:latest")
             // Pin the container's timezone so Java Date.toString() (and
             // anything else reading the JVM's default zone) is
             // deterministic across dev boxes / CI. Our DateTime

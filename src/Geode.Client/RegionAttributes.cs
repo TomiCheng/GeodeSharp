@@ -1,3 +1,5 @@
+using Geode.Client.Internal;
+
 namespace Geode.Client;
 
 /// <summary>

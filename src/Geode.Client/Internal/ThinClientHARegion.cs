@@ -59,6 +59,8 @@ internal sealed class ThinClientHARegion(
     bool enableNotification)
     : ThinClientRegion(serviceProvider, name, parent, attributes)
 {
+    bool _ = enableNotification;
+
     // cppcache fields land here when subscription support is reinstated:
     //   volatile bool m_processedMarker  (ThinClientHARegion.hpp:69)
     //   RegionAttributes m_attributes    (:68 — shadow copy; cppcache

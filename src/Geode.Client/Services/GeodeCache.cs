@@ -116,6 +116,258 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache
         }
     }
 
+    /// <summary>
+    /// 4-way region kinds. Mirrors cppcache
+    /// <c>CacheImpl::RegionKind</c> (<c>CacheImpl.hpp:334-339</c>).
+    /// </summary>
+    internal enum RegionKind
+    {
+        /// <summary>Local-only region, no server backing. cppcache <c>CPP_REGION</c>.</summary>
+        Local,
+        /// <summary>Non-pool legacy region (endpoints-based). cppcache <c>THINCLIENT_REGION</c>.</summary>
+        ThinClient,
+        /// <summary>Pool-backed with subscription / redundancy / durable. cppcache <c>THINCLIENT_HA_REGION</c>.</summary>
+        ThinClientHA,
+        /// <summary>Pool-backed (plain). cppcache <c>THINCLIENT_POOL_REGION</c>.</summary>
+        ThinClientPool,
+    }
+
+    /// <summary>
+    /// Pick the region kind from attributes. Mirrors cppcache
+    /// <c>CacheImpl::getRegionKind</c>
+    /// (<c>cppcache/src/CacheImpl.cpp:132-160</c>).
+    /// </summary>
+    internal RegionKind GetRegionKind(RegionAttributes attrs)
+    {
+        // TODO cppcache CacheImpl.cpp:137-146 — endpoints-based regions
+        //   (THINCLIENT_REGION / "none" fallback). We have no endpoints
+        //   field on RegionAttributes and per pool-only-no-non-pool memory
+        //   the legacy path is structurally unreachable; left as a marker
+        //   for the cppcache step.
+
+        if (!string.IsNullOrEmpty(attrs.PoolName))
+        {
+            var pool = _poolManager.Find(attrs.PoolName);
+
+            // TODO Phase 4+: cppcache CacheImpl.cpp:149-151 — HA kind
+            //   when pool.SubscriptionRedundancy > 0 || pool.SubscriptionEnabled
+            //   || TcrConnectionManager.IsDurable. ThinClientPoolDM
+            //   doesn't expose those properties yet; default everyone to
+            //   ThinClientPool until subscription / HA wiring lands.
+            //   When this lands:
+            //     if ((pool != null && (pool.SubscriptionRedundancy > 0
+            //                           || pool.SubscriptionEnabled))
+            //         || _tcrConnectionManager.IsDurable)
+            //         return RegionKind.ThinClientHA;
+            _ = pool;
+            return RegionKind.ThinClientPool;
+        }
+
+        return RegionKind.Local;
+    }
+
+    /// <summary>
+    /// Validate the region attributes against the cache state. Mirrors
+    /// cppcache <c>CacheImpl::validateRegionAttributes</c>
+    /// (declared at <c>CacheImpl.hpp:345-346</c>) plus the inline
+    /// validations in <c>createRegion_internal</c>.
+    /// </summary>
+    private void ValidateRegionAttributes(string name, RegionAttributes attrs)
+    {
+        // TODO cppcache CacheImpl::validateRegionAttributes — port the
+        //   full rule set. Today only the multi-user + caching combo
+        //   below fires (cppcache puts it inside createRegion_internal;
+        //   we lift it here so the rule is centralised).
+
+        if (!string.IsNullOrEmpty(attrs.PoolName))
+        {
+            var pool = _poolManager.Find(attrs.PoolName);
+            if (pool is not null /* TODO && !pool.IsDestroyed */)
+            {
+                // TODO Phase 3 multi-user: cppcache CacheImpl.cpp:532-541 —
+                //   if pool.MultiuserAuthentication && attrs.CachingEnabled
+                //   → throw IllegalStateException("Pool is in multiuser
+                //   authentication so region local caching is not
+                //   supported."). ThinClientPoolDM lacks the
+                //   MultiuserAuthentication property; gate this when
+                //   Phase 3 wires it.
+                _ = pool;
+            }
+        }
+
+        // TODO cppcache CacheImpl.cpp:545-553 — endpoints + poolName
+        //   mutual exclusion. We have no endpoints field on
+        //   RegionAttributes so the check is structurally redundant.
+        _ = name;
+    }
+
+    /// <summary>
+    /// Build the concrete region (4-way kind dispatch) and register it
+    /// on the cache. Mirrors cppcache <c>CacheImpl::createRegion</c> +
+    /// <c>CacheImpl::createRegion_internal</c>
+    /// (<c>cppcache/src/CacheImpl.cpp:365-580</c>) — owns the RegionKind
+    /// switch and orchestrates the full create-region pipeline.
+    /// </summary>
+    internal async Task<IRegion> CreateRegionAsync(string name, RegionAttributes attrs, CancellationToken ct = default)
+    {
+        // ── 1. First-time init block (cppcache CacheImpl.cpp:368-381)
+        // TODO Phase 1.5: lock _initDoneLock, when !_initDone &&
+        //   poolName.empty():
+        //     m_tcrConnectionManager->init();
+        //     m_remoteQueryServicePtr = make_shared<RemoteQueryService>(this);
+        //     if (statisticsEnabled) m_adminRegion = AdminRegion::create(this);
+        //   set _initDone = true. We drive init via InitializeAsync at
+        //   cache build time today; the cppcache "lazy on first region
+        //   create" path stays unported until non-pool regions arrive
+        //   (which per pool-only-no-non-pool, they don't).
+
+        // ── 2. throwIfClosed (cppcache CacheImpl.cpp:383)
+        ObjectDisposedException.ThrowIf(IsClosed, this);
+
+        // ── 3. Name validation (cppcache CacheImpl.cpp:385-388)
+        // Already enforced at RegionFactory.CreateAsync; defensive
+        // re-check so direct CacheImpl callers can't bypass it.
+        if (name.Contains('/'))
+        {
+            throw new ArgumentException(
+                "Malformed name string, contains region path seperator '/'",
+                nameof(name));
+        }
+
+        // ── 4. Validate attrs (cppcache CacheImpl.cpp:390)
+        ValidateRegionAttributes(name, attrs);
+
+        // ── 5. Lock m_regions (cppcache CacheImpl.cpp:392-393)
+        // ConcurrentDictionary handles the find+add race via TryAdd in
+        // RegisterRegion below; the explicit lock is unnecessary in C#.
+
+        // ── 6. Duplicate-name check (cppcache CacheImpl.cpp:395-398)
+        // Done inside RegisterRegion at step 14 — TryAdd's bool return
+        // is the atomic find-or-add we need.
+
+        // ── 7. CacheStatistics (cppcache CacheImpl.cpp:400)
+        // TODO Phase 2+: instantiate per-region CacheStatistics sink
+        //   (lastModifiedTime / lastAccessedTime / hitCount / missCount
+        //   / hitRatio) and thread through createRegion_internal. We
+        //   have RegionStatistics (Meter) but that's the cppcache
+        //   RegionStats analog, not CacheStatistics.
+
+        // ── 8. createRegion_internal kind dispatch (cppcache
+        //    CacheImpl.cpp:401-418, body at :520-581).
+        IRegion region;
+        try
+        {
+            region = await CreateRegionInternalAsync(name, parent: null, attrs, shared: false, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // TODO cppcache CacheImpl.cpp:410-417 — wrap unknown
+            //   exceptions in UnknownException("...Failed to create
+            //   Region ..."). .NET convention: propagate as-is; the
+            //   stack trace + inner exception already preserve the cause.
+            _ = ex;
+            throw;
+        }
+
+        // ── 9. null check → RegionCreationFailedException (cppcache
+        //    CacheImpl.cpp:420-423). C# `new` never returns null so the
+        //    check is structurally impossible — left as a marker.
+
+        // ── 10. addDisconnectedMessageToQueue (cppcache CacheImpl.cpp:426)
+        // TODO Phase 4+: HA region after-creation hook — enqueue a
+        //   synthetic disconnect event so listeners observe the gap
+        //   from the moment the region exists. ThinClientHARegion-only.
+
+        // ── 11. PersistenceManager init (cppcache CacheImpl.cpp:428-437)
+        // CUT per CLAUDE.md «Not implemented» — disk overflow /
+        //   persistence backup has no .NET counterpart we plan to port.
+
+        // ── 12. acquireReadLock (cppcache CacheImpl.cpp:439)
+        // TODO Phase 2+: LocalRegion.Mutex (boost::shared_mutex) reader
+        //   lock; we have the field but no callers acquire it yet.
+
+        // ── 13-14. Register region on cache (cppcache CacheImpl.cpp:440)
+        RegisterRegion(name, region);
+
+        // ── 15. PR single-hop metadata enqueue (cppcache CacheImpl.cpp:447-458)
+        // TODO Phase 4+: when pool.PrSingleHopEnabled, enqueue the
+        //   region's full-path with the pool's ClientMetadataService
+        //   for initial single-hop metadata refresh.
+
+        // ── 16. setRegionExpiryTask (cppcache CacheImpl.cpp:461)
+        // TODO Phase 2+: schedule the root region's expiry task if
+        //   region-level expiration is configured (RegionTimeToLive /
+        //   RegionIdleTime on attrs).
+
+        // ── 17. releaseReadLock (cppcache CacheImpl.cpp:462)
+        // TODO Phase 2+: pair with step 12.
+
+        return region;
+    }
+
+    /// <summary>
+    /// 4-way region kind dispatch + concrete instantiation + InitTcrAsync
+    /// per ThinClient subclass. Mirrors cppcache
+    /// <c>CacheImpl::createRegion_internal</c>
+    /// (<c>cppcache/src/CacheImpl.cpp:520-581</c>).
+    /// </summary>
+    private async Task<IRegion> CreateRegionInternalAsync(
+        string name,
+        RegionInternal? parent,
+        RegionAttributes attrs,
+        bool shared,
+        CancellationToken ct)
+    {
+        // cppcache `bool shared` is the `enableTimeStatistics` flag in
+        // disguise — OTel histograms are always on so the flag is moot;
+        // accepted for ctor parity but ignored.
+        _ = shared;
+
+        var kind = GetRegionKind(attrs);
+
+        switch (kind)
+        {
+            case RegionKind.ThinClient:
+                // cppcache CacheImpl.cpp:555-561 — non-pool legacy.
+                // Per pool-only-no-non-pool memory we don't run this
+                // path; the case exists for cppcache parity so future
+                // search for "THINCLIENT_REGION" lands here.
+                throw new NotImplementedException(
+                    "RegionKind.ThinClient (non-pool legacy) is structurally unreachable; see pool-only-no-non-pool memory.");
+
+            case RegionKind.ThinClientHA:
+                // cppcache CacheImpl.cpp:562-567.
+                // TODO Phase 4+: subscription / HA wiring —
+                //   ThinClientHARegion ctor takes (sp, name, parent,
+                //   attrs, enableNotification). Once subscription /
+                //   interest-list lands, instantiate via
+                //   ActivatorUtilities and call InitTcrAsync (HA DM
+                //   override).
+                throw new NotImplementedException(
+                    "RegionKind.ThinClientHA: subscription / HA wiring lands in Phase 4+.");
+
+            case RegionKind.ThinClientPool:
+            {
+                // cppcache CacheImpl.cpp:568-574.
+                var poolRegion = ActivatorUtilities.CreateInstance<ThinClientPoolRegion>(
+                    serviceProvider, name, parent!, attrs);
+
+                // cppcache `tmp->initTCR()` after construction — pool
+                // variant looks up the pool by name and attaches its
+                // ThinClientPoolDM. See ThinClientPoolRegion.InitTcrAsync
+                // override (currently inherited NIE from base).
+                await poolRegion.InitTcrAsync(ct).ConfigureAwait(false);
+
+                return poolRegion;
+            }
+
+            case RegionKind.Local:
+            default:
+                // cppcache CacheImpl.cpp:575-579 — no initTCR for LOCAL.
+                return LocalRegion.Create(serviceProvider, name, parent, attrs);
+        }
+    }
+
 
 
     // ── Test / back-compat passthrough getters ───────────────────────
@@ -423,10 +675,10 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache
     /// already hold every ctor arg, and the cache instance is the natural
     /// back-pointer for the factory's eventual register-on-create step.
     /// </summary>
-    public RegionFactory CreateRegionFactory(RegionShortcut shortcut)
+    public IRegionFactory CreateRegionFactory(RegionShortcut shortcut)
     {
         ObjectDisposedException.ThrowIf(IsClosed, this);
-        return new RegionFactory(serviceProvider, this, shortcut);
+        return ActivatorUtilities.CreateInstance<RegionFactory>(serviceProvider, shortcut);
     }
 
     public async ValueTask DisposeAsync()

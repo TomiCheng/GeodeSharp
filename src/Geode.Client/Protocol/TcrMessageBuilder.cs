@@ -1,5 +1,5 @@
 using System.Collections.ObjectModel;
-using Geode.Client.Internal;
+using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol;
@@ -32,21 +32,15 @@ namespace Geode.Client.Protocol;
 /// <c>TxState</c> is present.
 /// </para>
 /// </remarks>
-internal sealed partial class TcrMessageBuilder
+internal sealed partial class TcrMessageBuilder(IServiceProvider serviceProvider, MessageType messageType)
 {
-    readonly IServiceProvider _serviceProvider;
-    readonly MessageType _messageType;
     int _transactionId = -1;
     byte _earlyAck = 0;
     readonly List<TcrPartBuilder> _tcrPartBuilders = [];
+    readonly SerializationRegistry _serializationRegistry = serviceProvider.GetRequiredService<SerializationRegistry>();
 
-    internal IServiceProvider ServiceProvider => _serviceProvider;
-
-    private TcrMessageBuilder(IServiceProvider serviceProvider, MessageType messageType)
-    {
-        _serviceProvider = serviceProvider;
-        _messageType = messageType;
-    }
+    internal IServiceProvider ServiceProvider => serviceProvider;
+    internal SerializationRegistry SerializationRegistry => _serializationRegistry;
 
     public static TcrMessageBuilder Create(IServiceProvider serviceProvider, MessageType messageType)
     {
@@ -67,23 +61,23 @@ internal sealed partial class TcrMessageBuilder
 
     public TcrMessageBuilder AddRegionNamePart(string regionName)
     {
-        _tcrPartBuilders.Add(TcrPartBuilder.RegionName(_serviceProvider, regionName));
+        _tcrPartBuilders.Add(TcrPartBuilder.RegionName(serviceProvider, regionName));
         return this;
     }
 
-    public TcrMessageBuilder AddKeyPart(GeodeCache cache, object key)
+    public TcrMessageBuilder AddKeyPart(object key)
     {
         return AddPart(async (ct) =>
         {
-            using var output = ActivatorUtilities.CreateInstance<DataOutput>(_serviceProvider);
-            await cache.SerializationRegistry.WriteObjectAsync(output, key, ct: ct);
+            using var output = ActivatorUtilities.CreateInstance<DataOutput>(serviceProvider);
+            await _serializationRegistry.WriteObjectAsync(output, key, ct: ct);
             return new TcrPart(IsObject: 1, output.WrittenSpan.ToArray());
         });
     }
 
     public TcrMessageBuilder AddInt32Part(int value)
     {
-        _tcrPartBuilders.Add(TcrPartBuilder.Int32(_serviceProvider, value));
+        _tcrPartBuilders.Add(TcrPartBuilder.Int32(serviceProvider, value));
         return this;
     }
 
@@ -111,12 +105,12 @@ internal sealed partial class TcrMessageBuilder
     /// Mirrors cppcache <c>writeObjectPart(value, isDelta)</c> minus
     /// delta support (Phase 4+).
     /// </summary>
-    public TcrMessageBuilder AddValuePart(GeodeCache cache, object value)
+    public TcrMessageBuilder AddValuePart(object value)
     {
         return AddPart(async ct =>
         {
-            using var output = ActivatorUtilities.CreateInstance<DataOutput>(_serviceProvider);
-            await cache.SerializationRegistry.WriteObjectAsync(output, value, ct: ct);
+            using var output = ActivatorUtilities.CreateInstance<DataOutput>(serviceProvider);
+            await _serializationRegistry.WriteObjectAsync(output, value, ct: ct);
             return new TcrPart(IsObject: 1, output.WrittenSpan.ToArray());
         });
     }
@@ -131,7 +125,7 @@ internal sealed partial class TcrMessageBuilder
     /// </summary>
     public TcrMessageBuilder AddEventIdPart(long threadId, long sequenceId)
     {
-        _tcrPartBuilders.Add(TcrPartBuilder.EventId(_serviceProvider, threadId, sequenceId));
+        _tcrPartBuilders.Add(TcrPartBuilder.EventId(serviceProvider, threadId, sequenceId));
         return this;
     }
 
@@ -148,7 +142,7 @@ internal sealed partial class TcrMessageBuilder
         // sp-teardown path, and ActivatorUtilities would re-enter the
         // disposing ServiceProvider to resolve `IServiceProvider`, throwing
         // ObjectDisposedException. We already hold every ctor arg.
-        return new TcrMessage(_serviceProvider, _messageType, _transactionId, _earlyAck, parts);
+        return new TcrMessage(serviceProvider, messageType, _transactionId, _earlyAck, parts);
 
     }
 }

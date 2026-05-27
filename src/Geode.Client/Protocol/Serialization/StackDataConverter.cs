@@ -1,4 +1,5 @@
 using System.Collections;
+using Geode.Client.Services;
 
 namespace Geode.Client.Protocol.Serialization;
 
@@ -37,17 +38,11 @@ namespace Geode.Client.Protocol.Serialization;
 /// semantics).
 /// </para>
 /// </remarks>
-internal sealed class StackDataConverter : IDataConverter
+internal sealed class StackDataConverter(
+    SerializationRegistry serializationRegistry,
+    SystemProperties systemProperties) : IDataConverter
 {
     private static readonly byte[] _dsCodes = { DSCode.CacheableStack };
-
-    private readonly SerializationRegistry _registry;
-
-    public StackDataConverter(SerializationRegistry registry)
-    {
-        ArgumentNullException.ThrowIfNull(registry);
-        _registry = registry;
-    }
 
     public byte[] DsCodes => _dsCodes;
 
@@ -58,11 +53,11 @@ internal sealed class StackDataConverter : IDataConverter
     public async ValueTask WriteAsync(DataOutput writer, object value, byte dsCode, int depth, CancellationToken ct)
     {
         var source = (ICollection)value;
-        if (source.Count > _registry.MaxArrayLength)
+        if (source.Count > systemProperties.MaxArrayLength)
         {
             throw new InvalidOperationException(
                 $"StackDataConverter: cannot serialise a stack of {source.Count} elements "
-                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+                + $"— exceeds Serialization.MaxArrayLength ({systemProperties.MaxArrayLength}).");
         }
         writer.WriteArrayLen(source.Count);
 
@@ -74,7 +69,7 @@ internal sealed class StackDataConverter : IDataConverter
         }
         foreach (var item in buffer)
         {
-            await _registry.WriteObjectAsync(writer, item, depth + 1, ct);
+            await serializationRegistry.WriteObjectAsync(writer, item, depth + 1, ct);
         }
     }
 
@@ -86,11 +81,11 @@ internal sealed class StackDataConverter : IDataConverter
         {
             return stack;
         }
-        if (length > _registry.MaxArrayLength)
+        if (length > systemProperties.MaxArrayLength)
         {
             throw new GeodeException(
                 $"StackDataConverter: wire stack length {length} exceeds "
-                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) ??refusing to allocate.");
+                + $"Serialization.MaxArrayLength ({systemProperties.MaxArrayLength}) ??refusing to allocate.");
         }
 
         // Wire is bottom?�top order; pushing in wire order places
@@ -98,7 +93,7 @@ internal sealed class StackDataConverter : IDataConverter
         // push sequence preserved.
         for (var i = 0; i < length; i++)
         {
-            stack.Push(_registry.ReadObject(reader, depth + 1));
+            stack.Push(serializationRegistry.ReadObject(reader, depth + 1));
         }
         return stack;
     }

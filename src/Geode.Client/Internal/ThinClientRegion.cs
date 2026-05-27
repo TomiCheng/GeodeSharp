@@ -1,10 +1,9 @@
 using System.Text.RegularExpressions;
 using Geode.Client.Options;
 using Geode.Client.Protocol;
-using Geode.Client.Protocol.Serialization;
-using Geode.Client.Internal;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Geode.Client.Services;
 
 namespace Geode.Client.Internal;
 
@@ -34,8 +33,8 @@ internal sealed partial class ThinClientRegion(
     ILogger<ThinClientRegion> logger,
     DmContextAccessor dmCtxAccessor,
     //TcrMessageBuilder tcrMessageBuilder,
-    //SerializationRegistry serializationRegistry,
-    //EventIdGenerator eventIdGenerator,
+    SerializationRegistry serializationRegistry,
+    EventIdGenerator eventIdGenerator,
     string name,
     RegionAttributes attributes,
     ThinClientBaseDM dm)
@@ -55,7 +54,7 @@ internal sealed partial class ThinClientRegion(
     /// <see cref="VersionedCacheableObjectPartList"/> ctors so the
     /// registry doesn't need a DI alias.
     /// </summary>
-    internal SerializationRegistry SerializationRegistry => dm.Cache.SerializationRegistry;
+    internal SerializationRegistry SerializationRegistry => serializationRegistry;
 
 
     /// <summary>
@@ -101,7 +100,7 @@ internal sealed partial class ThinClientRegion(
             // the DSCode byte and dispatches to the converter (NullObj
             // returns null).
             var reader = new DataInput(part.Payload);
-            return await dm.Cache.SerializationRegistry.ReadObjectAsync(reader, ct: ct);
+            return await serializationRegistry.ReadObjectAsync(reader, ct: ct);
         }
 
         // IsObject=0 + non-empty payload = CacheableBytes shortcut
@@ -221,7 +220,7 @@ internal sealed partial class ThinClientRegion(
         // optional slots are skipped.
         logger.LogTrace("ClearAsync: region={RegionPath}", FullPath);
 
-        var (threadId, sequenceId) = dm.Cache.EventIdGenerator.Next();
+        var (threadId, sequenceId) = eventIdGenerator.Next();
         var request = await TcrMessageBuilder
             .Create(serviceProvider, MessageType.ClearRegion)
             .AddRegionNamePart(FullPath)
@@ -259,7 +258,7 @@ internal sealed partial class ThinClientRegion(
         var request = await TcrMessageBuilder
             .Create(serviceProvider, MessageType.ContainsKey)
             .AddRegionNamePart(FullPath)
-            .AddKeyPart(dm.Cache, key)
+            .AddKeyPart(key)
             .AddInt32Part(0) // 0 = containsKey, 1 = containsValueForKey (cppcache TcrMessage.cpp:1837)
             .BuildAsync(ct);
 
@@ -270,7 +269,7 @@ internal sealed partial class ThinClientRegion(
             case MessageType.Response:
                 {
                     var partReader = new DataInput(reply.Parts[0].Payload);
-                    var value = dm.Cache.SerializationRegistry.ReadObject(partReader);
+                    var value = serializationRegistry.ReadObject(partReader);
                     if (value is bool b)
                     {
                         return b;
@@ -323,7 +322,7 @@ internal sealed partial class ThinClientRegion(
         var request = await TcrMessageBuilder
             .Create(serviceProvider, MessageType.GetAll70)
             .AddRegionNamePart(FullPath)
-            .AddValuePart(dm.Cache, keyList.ToArray())   // CacheableObjectArray DSCode + N elements
+            .AddValuePart(keyList.ToArray())   // CacheableObjectArray DSCode + N elements
             .AddInt32Part(0)                              // callback placeholder
             .BuildAsync(ct);
 
@@ -365,7 +364,7 @@ internal sealed partial class ThinClientRegion(
         var request = await TcrMessageBuilder
           .Create(serviceProvider, MessageType.Request)
           .AddRegionNamePart(FullPath)
-          .AddKeyPart(dm.Cache, key)
+          .AddKeyPart(key)
           .BuildAsync(ct);
 
         var reply = await dm
@@ -400,11 +399,11 @@ internal sealed partial class ThinClientRegion(
         ArgumentNullException.ThrowIfNull(key);
         logger.LogTrace("InvalidateAsync: region={RegionPath}, key={Key}", FullPath, key);
 
-        var (threadId, sequenceId) = dm.Cache.EventIdGenerator.Next();
+        var (threadId, sequenceId) = eventIdGenerator.Next();
         var request = await TcrMessageBuilder
             .Create(serviceProvider, MessageType.Invalidate)
             .AddRegionNamePart(FullPath)
-            .AddKeyPart(dm.Cache, key)
+            .AddKeyPart(key)
             .AddEventIdPart(threadId, sequenceId)
             .BuildAsync(ct);
 
@@ -452,7 +451,7 @@ internal sealed partial class ThinClientRegion(
         // (threadId, baseSeq) hits the wire; local sequence counter
         // advances by N so subsequent ops dont reuse the per-entry
         // logical ids the server derives as baseSeq+i.
-        var (threadId, baseSequenceId) = dm.Cache.EventIdGenerator.NextRange(map.Count);
+        var (threadId, baseSequenceId) = eventIdGenerator.NextRange(map.Count);
 
         // cppcache TcrMessage.cpp:2396-2404 flags byte:
         //   1 = EMPTY (no client-side caching), 2 = concurrency checks.
@@ -472,8 +471,8 @@ internal sealed partial class ThinClientRegion(
         foreach (var kvp in map)
         {
             builder = builder
-                .AddKeyPart(dm.Cache, kvp.Key)
-                .AddValuePart(dm.Cache, kvp.Value);
+                .AddKeyPart( kvp.Key)
+                .AddValuePart( kvp.Value);
         }
         var request = await builder.BuildAsync(ct);
 
@@ -513,15 +512,15 @@ internal sealed partial class ThinClientRegion(
     {
         using var _ = dmCtxAccessor.BeginScope(dm);
         logger.LogTrace("PutAsync: region={RegionPath}, key={Key}", FullPath, key);
-        var (threadId, sequenceId) = dm.Cache.EventIdGenerator.Next();
+        var (threadId, sequenceId) = eventIdGenerator.Next();
         var request = await TcrMessageBuilder
          .Create(serviceProvider, MessageType.Put)   // cppcache TcrMessage.cpp:1999 — m_msgType = TcrMessage::PUT
          .AddRegionNamePart(FullPath)
          .AddNullObjectPart()
          .AddInt32Part(0)
-         .AddKeyPart(dm.Cache, key)
+         .AddKeyPart( key)
          .AddCacheableBooleanPart(false)  // isDelta
-         .AddValuePart(dm.Cache, value)
+         .AddValuePart( value)
          .AddEventIdPart(threadId, sequenceId)
          .BuildAsync(ct);
 
@@ -561,7 +560,7 @@ internal sealed partial class ThinClientRegion(
 
         logger.LogTrace("RemoveAllAsync: region={RegionPath}, keyCount={KeyCount}", FullPath, keys.Count);
 
-        var (threadId, baseSequenceId) = dm.Cache.EventIdGenerator.NextRange(keys.Count);
+        var (threadId, baseSequenceId) = eventIdGenerator.NextRange(keys.Count);
 
         const int FlagEmpty = 1;
         const int FlagConcurrencyChecks = 2;
@@ -578,7 +577,7 @@ internal sealed partial class ThinClientRegion(
             .AddInt32Part(keys.Count);
         foreach (var key in keys)
         {
-            builder = builder.AddKeyPart(dm.Cache, key);
+            builder = builder.AddKeyPart(key);
         }
         var request = await builder.BuildAsync(ct);
 
@@ -617,11 +616,11 @@ internal sealed partial class ThinClientRegion(
         ArgumentNullException.ThrowIfNull(key);
         logger.LogTrace("RemoveAsync: region={RegionPath}, key={Key}", FullPath, key);
 
-        var (threadId, sequenceId) = dm.Cache.EventIdGenerator.Next();
+        var (threadId, sequenceId) = eventIdGenerator.Next();
         var request = await TcrMessageBuilder
             .Create(serviceProvider, MessageType.Destroy)
             .AddRegionNamePart(FullPath)
-            .AddKeyPart(dm.Cache, key)
+            .AddKeyPart(key)
             .AddNullObjectPart()    // expectedOldValue = null
             .AddNullObjectPart()    // operation = null (server treats as plain DESTROY)
             .AddEventIdPart(threadId, sequenceId)

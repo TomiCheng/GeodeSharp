@@ -1,4 +1,4 @@
-using Geode.Client.Protocol.Serialization;
+using Geode.Client.Services;
 using Xunit;
 
 namespace Geode.Client.Tests.Protocol.Serialization;

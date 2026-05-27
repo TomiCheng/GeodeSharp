@@ -4,7 +4,6 @@
 //using Geode.Client.Protocol;
 //using Geode.Client.Protocol.Serialization;
 //using Microsoft.Extensions.Configuration;
-using Geode.Client.Internal;
 using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -179,10 +178,15 @@ public static class GeodeClientExtensions
     public static IServiceCollection AddGeodeFactory(this IServiceCollection services)
     {
         services.TryAddSingleton<IGeodeCacheFactory, GeodeCacheFactory>();
-        // Per-op ambient DM access (AsyncLocal-backed). Long-lived services
-        // (SerializationRegistry / PdxTypeRegistry / readers / writers) can
-        // inject this and read .Current without threading dm through every
-        // method. Same shape as ASP.NET Core's IHttpContextAccessor.
+        services.TryAddScoped<SystemProperties>();
+        services.TryAddScoped<GeodeCache>();
+        services.TryAddScoped<EventIdGenerator>();
+        services.TryAddScoped<TcrConnectionManager>();
+        services.TryAddScoped<PoolManager>();
+        services.TryAddScoped<TypedResultAdapter>();
+        services.TryAddScoped<TypeRegistry>();
+        services.TryAddScoped<PdxTypeRegistry>();
+        services.TryAddScoped<SerializationRegistry>();
         services.TryAddSingleton<DmContextAccessor>();
         return services;
     }

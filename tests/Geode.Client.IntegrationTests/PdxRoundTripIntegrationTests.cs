@@ -1,5 +1,5 @@
-using Geode.Client.Internal;
 using Geode.Client.Pdx;
+using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -55,7 +55,7 @@ public class PdxRoundTripIntegrationTests(GeodeFixture fx)
         // public surface lands, remove the cast.
         var cache = (GeodeCache)await sp.GetRequiredService<IGeodeCacheFactory>()
             .CreateAsync("c", ct);
-        cache.TypeRegistry.RegisterPdxType<AllPrimitivesPdx>();
+        sp.GetRequiredService<TypeRegistry>().RegisterPdxType<AllPrimitivesPdx>();
 
         await cache.PoolManager.CreateFactory()
             .AddServer(fx.LocatorHost, fx.ServerPort)

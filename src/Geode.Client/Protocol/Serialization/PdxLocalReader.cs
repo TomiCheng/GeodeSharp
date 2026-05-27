@@ -1,5 +1,5 @@
-using Geode.Client.Internal;
 using Geode.Client.Pdx;
+using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol.Serialization;
@@ -22,24 +22,22 @@ namespace Geode.Client.Protocol.Serialization;
 /// </remarks>
 internal class PdxLocalReader(
     IServiceProvider serviceProvider,
-    GeodeCache cache,
     PdxType pdxType,
     DataInput input,
     int pdxLength) : IPdxReader
 {
     protected readonly IServiceProvider _serviceProvider = serviceProvider;
-    protected readonly GeodeCache _cache = cache;
     protected readonly PdxType _pdxType = pdxType;
     protected readonly DataInput _input = input;
     protected readonly int _pdxLength = pdxLength;
 
     static readonly ObjectFactory<PdxLocalReader> _factory
         = ActivatorUtilities.CreateFactory<PdxLocalReader>(
-            [typeof(GeodeCache), typeof(PdxType), typeof(DataInput), typeof(int)]);
+            [typeof(PdxType), typeof(DataInput), typeof(int)]);
 
     public static PdxLocalReader Create(IServiceProvider serviceProvider,
-        GeodeCache cache, PdxType pdxType, DataInput input, int pdxLength)
-        => _factory(serviceProvider, [cache, pdxType, input, pdxLength]);
+        PdxType pdxType, DataInput input, int pdxLength)
+        => _factory(serviceProvider, [pdxType, input, pdxLength]);
 
     // Sequential reads — mirror cppcache PdxLocalReader.cpp:99-205 where
     // every readXxx(const std::string&) ignores the field name and just

@@ -1,4 +1,6 @@
-namespace Geode.Client.Internal;
+using Geode.Client.Internal;
+
+namespace Geode.Client.Services;
 
 /// <summary>
 /// Ambient access to the <see cref="ThinClientBaseDM"/> for the current

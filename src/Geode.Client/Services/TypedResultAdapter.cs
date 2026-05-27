@@ -1,6 +1,8 @@
 using System.Collections;
+using Geode.Client.Protocol;
+using Geode.Client.Protocol.Serialization;
 
-namespace Geode.Client.Protocol.Serialization;
+namespace Geode.Client.Services;
 
 /// <summary>
 /// Top-edge adapter that reshapes a canonical-form value produced by

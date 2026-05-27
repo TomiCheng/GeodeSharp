@@ -1,7 +1,7 @@
 using System.Buffers.Binary;
 using Geode.Client.Pdx;
-using Geode.Client.Internal;
 using Microsoft.Extensions.DependencyInjection;
+using Geode.Client.Services;
 
 namespace Geode.Client.Protocol.Serialization;
 
@@ -10,7 +10,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// <see cref="IPdxSerializable{TSelf}.ToData"/>. Mirror of cppcache
 /// <c>PdxLocalWriter</c> (<c>cppcache/src/PdxLocalWriter.hpp</c>).
 /// </summary>
-internal class PdxLocalWriter(IServiceProvider serviceProvider, GeodeCache cache)
+internal class PdxLocalWriter(IServiceProvider serviceProvider)
     : IPdxWriter, IDisposable
 {
     // Wire layout (excluding leading DSCode.PDX byte written by
@@ -38,9 +38,9 @@ internal class PdxLocalWriter(IServiceProvider serviceProvider, GeodeCache cache
     /// </summary>
     protected PdxType BuildSchema(string className)
     {
-        return PdxType.Create(serviceProvider, cache, className, _fields);
+        return PdxType.Create(serviceProvider, className, _fields);
     }
-    private readonly StringDataConverter _stringConverter = new(cache);
+    private readonly StringDataConverter _stringConverter = new(serviceProvider.GetRequiredService<SystemProperties>());
 
     public IPdxWriter WriteBoolean(string fieldName, bool value)
     {

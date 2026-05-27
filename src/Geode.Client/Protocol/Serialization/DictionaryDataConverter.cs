@@ -1,4 +1,5 @@
 using System.Collections;
+using Geode.Client.Services;
 
 namespace Geode.Client.Protocol.Serialization;
 
@@ -52,17 +53,13 @@ namespace Geode.Client.Protocol.Serialization;
 /// lists / arbitrary registered types can occupy slots.
 /// </para>
 /// </remarks>
-internal sealed class DictionaryDataConverter : IDataConverter
+internal sealed class DictionaryDataConverter(
+    SerializationRegistry serializationRegistry,
+    SystemProperties systemProperties)
+    : IDataConverter
 {
     private static readonly byte[] _dsCodes = { DSCode.CacheableHashMap };
 
-    private readonly SerializationRegistry _registry;
-
-    public DictionaryDataConverter(SerializationRegistry registry)
-    {
-        ArgumentNullException.ThrowIfNull(registry);
-        _registry = registry;
-    }
 
     public byte[] DsCodes => _dsCodes;
 
@@ -79,17 +76,17 @@ internal sealed class DictionaryDataConverter : IDataConverter
     public async ValueTask WriteAsync(DataOutput writer, object value, byte dsCode, int depth, CancellationToken ct)
     {
         var source = (IDictionary)value;
-        if (source.Count > _registry.MaxArrayLength)
+        if (source.Count > systemProperties.MaxArrayLength)
         {
             throw new InvalidOperationException(
                 $"DictionaryDataConverter: cannot serialise a map of {source.Count} entries "
-                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+                + $"— exceeds Serialization.MaxArrayLength ({systemProperties.MaxArrayLength}).");
         }
         writer.WriteArrayLen(source.Count);
         foreach (DictionaryEntry entry in source)
         {
-            await _registry.WriteObjectAsync(writer, entry.Key, depth + 1, ct);
-            await _registry.WriteObjectAsync(writer, entry.Value, depth + 1, ct);
+            await serializationRegistry.WriteObjectAsync(writer, entry.Key, depth + 1, ct);
+            await serializationRegistry.WriteObjectAsync(writer, entry.Value, depth + 1, ct);
         }
     }
 
@@ -100,18 +97,18 @@ internal sealed class DictionaryDataConverter : IDataConverter
         {
             return new Dictionary<object, object?>();
         }
-        if (length > _registry.MaxArrayLength)
+        if (length > systemProperties.MaxArrayLength)
         {
             throw new GeodeException(
                 $"DictionaryDataConverter: wire map length {length} exceeds "
-                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) ??refusing to allocate.");
+                + $"Serialization.MaxArrayLength ({systemProperties.MaxArrayLength}) ??refusing to allocate.");
         }
 
         var dict = new Dictionary<object, object?>(capacity: length);
         for (var i = 0; i < length; i++)
         {
-            var key = _registry.ReadObject(reader, depth + 1);
-            var value = _registry.ReadObject(reader, depth + 1);
+            var key = serializationRegistry.ReadObject(reader, depth + 1);
+            var value = serializationRegistry.ReadObject(reader, depth + 1);
 
             if (key is null)
             {

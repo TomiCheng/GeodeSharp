@@ -1,9 +1,8 @@
 using Geode.Client.Protocol;
-using Geode.Client.Protocol.Serialization;
-using Geode.Client.Internal;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Geode.Client.Services;
 
 namespace Geode.Client.Tests.Protocol.Serialization;
 
@@ -50,12 +49,16 @@ internal static class SerializationTestHelpers
         int maxBytesLength = 10_000_000,
         int maxStringLength = 1_000_000)
     {
-        var cache = ActivatorUtilities.CreateInstance<GeodeCache>(sp, "test-cache");
-        cache.CacheProperties.MaxDepth = maxDepth;
-        cache.CacheProperties.MaxArrayLength = maxArrayLength;
-        cache.CacheProperties.MaxBytesLength = maxBytesLength;
-        cache.CacheProperties.MaxStringLength = maxStringLength;
-        return cache;
+        // scope-per-cache: GeodeCache and SystemProperties are Scoped,
+        // so we need a fresh scope to resolve them. The scope leaks for
+        // the test's lifetime — acceptable in unit tests.
+        var scope = sp.CreateScope();
+        var sysProps = scope.ServiceProvider.GetRequiredService<SystemProperties>();
+        sysProps.MaxDepth = maxDepth;
+        sysProps.MaxArrayLength = maxArrayLength;
+        sysProps.MaxBytesLength = maxBytesLength;
+        sysProps.MaxStringLength = maxStringLength;
+        return scope.ServiceProvider.GetRequiredService<GeodeCache>();
     }
 
     /// <summary>Shorthand: build SP + cache + return the registry.</summary>
@@ -66,8 +69,20 @@ internal static class SerializationTestHelpers
         int maxStringLength = 1_000_000)
     {
         var sp = BuildSp();
-        var cache = CreateCache(sp, maxDepth, maxArrayLength, maxBytesLength, maxStringLength);
-        return cache.SerializationRegistry;
+        // Build cache through a scope, then pull the registry from the
+        // SAME scope so it sees the same SystemProperties values.
+        var scope = sp.CreateScope();
+        var sysProps = scope.ServiceProvider.GetRequiredService<SystemProperties>();
+        sysProps.MaxDepth = maxDepth;
+        sysProps.MaxArrayLength = maxArrayLength;
+        sysProps.MaxBytesLength = maxBytesLength;
+        sysProps.MaxStringLength = maxStringLength;
+        var registry = scope.ServiceProvider.GetRequiredService<SerializationRegistry>();
+        // RegisterBuiltInConverters moved to InitAsync (breaks the
+        // ListDataConverter→SerializationRegistry circular dep at ctor
+        // time). Tests must invoke it explicitly.
+        registry.InitAsync().GetAwaiter().GetResult();
+        return registry;
     }
 
     /// <summary>

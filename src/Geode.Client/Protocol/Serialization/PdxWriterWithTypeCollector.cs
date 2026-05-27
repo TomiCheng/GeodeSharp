@@ -1,4 +1,4 @@
-using Geode.Client.Internal;
+using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol.Serialization;
@@ -9,18 +9,16 @@ namespace Geode.Client.Protocol.Serialization;
 /// Mirror of cppcache <c>PdxWriterWithTypeCollector</c>
 /// (<c>cppcache/src/PdxWriterWithTypeCollector.hpp</c>).
 /// </summary>
-internal sealed class PdxWriterWithTypeCollector(IServiceProvider serviceProvider,
-    GeodeCache cache, string className)
-    : PdxLocalWriter(serviceProvider, cache)
+internal sealed class PdxWriterWithTypeCollector(IServiceProvider serviceProvider, string className)
+    : PdxLocalWriter(serviceProvider)
 {
 
     static readonly ObjectFactory<PdxWriterWithTypeCollector> _factory
-        = ActivatorUtilities.CreateFactory<PdxWriterWithTypeCollector>([typeof(GeodeCache), typeof(string)]);
+        = ActivatorUtilities.CreateFactory<PdxWriterWithTypeCollector>([typeof(string)]);
 
-    public static PdxWriterWithTypeCollector Create(IServiceProvider serviceProvider,
-        GeodeCache cache, string className)
+    public static PdxWriterWithTypeCollector Create(IServiceProvider serviceProvider, string className)
     {
-        return _factory(serviceProvider, [cache, className]);
+        return _factory(serviceProvider, [className]);
     }
 
     public string ClassName => className;

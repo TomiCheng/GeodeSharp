@@ -1,4 +1,5 @@
 using System.Collections;
+using Geode.Client.Services;
 
 namespace Geode.Client.Protocol.Serialization;
 
@@ -37,17 +38,11 @@ namespace Geode.Client.Protocol.Serialization;
 /// <c>LinkedList&lt;&gt;</c> branch.
 /// </para>
 /// </remarks>
-internal sealed class LinkedListDataConverter : IDataConverter
+internal sealed class LinkedListDataConverter(
+    SerializationRegistry serializationRegistry,
+    SystemProperties systemProperties) : IDataConverter
 {
     private static readonly byte[] _dsCodes = { DSCode.CacheableLinkedList };
-
-    private readonly SerializationRegistry _registry;
-
-    public LinkedListDataConverter(SerializationRegistry registry)
-    {
-        ArgumentNullException.ThrowIfNull(registry);
-        _registry = registry;
-    }
 
     public byte[] DsCodes => _dsCodes;
 
@@ -58,16 +53,16 @@ internal sealed class LinkedListDataConverter : IDataConverter
     public async ValueTask WriteAsync(DataOutput writer, object value, byte dsCode, int depth, CancellationToken ct)
     {
         var source = (ICollection)value;
-        if (source.Count > _registry.MaxArrayLength)
+        if (source.Count > systemProperties.MaxArrayLength)
         {
             throw new InvalidOperationException(
                 $"LinkedListDataConverter: cannot serialise a list of {source.Count} elements "
-                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+                + $"— exceeds Serialization.MaxArrayLength ({systemProperties.MaxArrayLength}).");
         }
         writer.WriteArrayLen(source.Count);
         foreach (var item in source)
         {
-            await _registry.WriteObjectAsync(writer, item, depth + 1, ct);
+            await serializationRegistry.WriteObjectAsync(writer, item, depth + 1, ct);
         }
     }
 
@@ -79,18 +74,18 @@ internal sealed class LinkedListDataConverter : IDataConverter
         {
             return list;
         }
-        if (length > _registry.MaxArrayLength)
+        if (length > systemProperties.MaxArrayLength)
         {
             throw new GeodeException(
                 $"LinkedListDataConverter: wire list length {length} exceeds "
-                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) ??refusing to allocate.");
+                + $"Serialization.MaxArrayLength ({systemProperties.MaxArrayLength}) ??refusing to allocate.");
         }
 
         for (var i = 0; i < length; i++)
         {
             // AddLast preserves wire order ??wire element 0 becomes
             // head, last element becomes tail.
-            list.AddLast(_registry.ReadObject(reader, depth + 1));
+            list.AddLast(serializationRegistry.ReadObject(reader, depth + 1));
         }
         return list;
     }

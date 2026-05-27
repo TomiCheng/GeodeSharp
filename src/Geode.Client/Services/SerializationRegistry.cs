@@ -1,33 +1,25 @@
 using System;
-using Geode.Client.Internal;
+using Geode.Client.Protocol;
+using Geode.Client.Protocol.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-namespace Geode.Client.Protocol.Serialization;
+namespace Geode.Client.Services;
 
-internal sealed class SerializationRegistry
+internal sealed class SerializationRegistry(
+    IServiceProvider serviceProvider,
+    SystemProperties systemProperties,
+    TypeRegistry typeRegistry,
+    PdxTypeRegistry pdxTypeRegistry,
+    ILogger<SerializationRegistry> logger)
 {
     private readonly Dictionary<byte, IDataConverter> _byDsCode = [];
     private readonly Dictionary<Type, IDataConverter> _byType = [];
 
-    private readonly PdxTypeRegistry _pdxTypeRegistry;
-    private readonly IServiceProvider _serviceProvider;
-    private readonly GeodeCache _cache;
-    private readonly TypeRegistry _typeRegistry;
-    private readonly ILogger<SerializationRegistry> _logger;
-
-    public SerializationRegistry(
-        IServiceProvider serviceProvider,
-        GeodeCache cache,
-        ILogger<SerializationRegistry> logger)
+    public Task InitAsync(CancellationToken ct = default)
     {
-        _serviceProvider = serviceProvider;
-        _cache = cache;
-        _typeRegistry = cache.TypeRegistry;
-        _pdxTypeRegistry = cache.PdxTypeRegistry;
-        _logger = logger;
-
         RegisterBuiltInConverters();
+        return Task.CompletedTask;
     }
 
     private void Register(IDataConverter converter)
@@ -60,23 +52,23 @@ internal sealed class SerializationRegistry
         // GeodeCache.CacheProperties.MaxArrayLength / MaxStringLength at
         // construction. Pass `_cache` explicitly to ActivatorUtilities —
         // GeodeCache isn't DI-registered, only the IServiceProvider is.
-        Register(ActivatorUtilities.CreateInstance<BytesDataConverter>(_serviceProvider, _cache));   // 46  CacheableBytes      → byte[]
-        Register(ActivatorUtilities.CreateInstance<StringDataConverter>(_serviceProvider, _cache));  // 42/87/88/89 (+69 read-only) → string
+        Register(ActivatorUtilities.CreateInstance<BytesDataConverter>(serviceProvider));   // 46  CacheableBytes      → byte[]
+        Register(ActivatorUtilities.CreateInstance<StringDataConverter>(serviceProvider));  // 42/87/88/89 (+69 read-only) → string
 
-        Register(ActivatorUtilities.CreateInstance<BooleanArrayDataConverter>(_serviceProvider, _cache)); // 26  BooleanArray         → bool[]
-        Register(ActivatorUtilities.CreateInstance<CharArrayDataConverter>(_serviceProvider, _cache));    // 27  CharArray            → char[]
-        Register(ActivatorUtilities.CreateInstance<Int16ArrayDataConverter>(_serviceProvider, _cache));   // 47  CacheableInt16Array  → short[]
-        Register(ActivatorUtilities.CreateInstance<Int32ArrayDataConverter>(_serviceProvider, _cache));   // 48  CacheableInt32Array  → int[]
-        Register(ActivatorUtilities.CreateInstance<Int64ArrayDataConverter>(_serviceProvider, _cache));   // 49  CacheableInt64Array  → long[]
-        Register(ActivatorUtilities.CreateInstance<SingleArrayDataConverter>(_serviceProvider, _cache));  // 50  CacheableFloatArray  → float[]
-        Register(ActivatorUtilities.CreateInstance<DoubleArrayDataConverter>(_serviceProvider, _cache));  // 51  CacheableDoubleArray → double[]
+        Register(ActivatorUtilities.CreateInstance<BooleanArrayDataConverter>(serviceProvider)); // 26  BooleanArray         → bool[]
+        Register(ActivatorUtilities.CreateInstance<CharArrayDataConverter>(serviceProvider));    // 27  CharArray            → char[]
+        Register(ActivatorUtilities.CreateInstance<Int16ArrayDataConverter>(serviceProvider));   // 47  CacheableInt16Array  → short[]
+        Register(ActivatorUtilities.CreateInstance<Int32ArrayDataConverter>(serviceProvider));   // 48  CacheableInt32Array  → int[]
+        Register(ActivatorUtilities.CreateInstance<Int64ArrayDataConverter>(serviceProvider));   // 49  CacheableInt64Array  → long[]
+        Register(ActivatorUtilities.CreateInstance<SingleArrayDataConverter>(serviceProvider));  // 50  CacheableFloatArray  → float[]
+        Register(ActivatorUtilities.CreateInstance<DoubleArrayDataConverter>(serviceProvider));  // 51  CacheableDoubleArray → double[]
         // string[] and object[] both take a registry reference so
         // each element can re-enter WriteObject / ReadObject with
         // its own DSCode. Safe `this` pass ??converter stores the
         // reference but doesn't invoke anything on us until Write /
         // Read fires post-construction.
-        Register(new StringArrayDataConverter(this)); // 64  CacheableStringArray ??string[]
-        Register(new ObjectArrayDataConverter(this)); // 52  CacheableObjectArray ??object[]
+        Register(ActivatorUtilities.CreateInstance<StringArrayDataConverter>(serviceProvider)); // 64  CacheableStringArray ??string[]
+        Register(ActivatorUtilities.CreateInstance<ObjectArrayDataConverter>(serviceProvider)); // 52  CacheableObjectArray ??object[]
 
         // Tier B-2 collections ??open-generic. Each ManagedType is
         // typeof(List<>) / typeof(HashSet<>) / typeof(Dictionary<,>);
@@ -86,19 +78,19 @@ internal sealed class SerializationRegistry
         // (List<object?> ??IList<int>, HashSet<object?> ??ISet<int>,
         // Dictionary<object,object?> ??Dictionary<K,V>, ?? happens
         // post-decode at TypedResultAdapter, not here.
-        Register(new LinkedListDataConverter(this));  // 10  CacheableLinkedList ??LinkedList<T>
-        Register(new ListDataConverter(this));        // 65  CacheableArrayList  ??List<T>
-        Register(new HashSetDataConverter(this));     // 66  CacheableHashSet    ??HashSet<T>
-        Register(new DictionaryDataConverter(this));  // 67  CacheableHashMap    ??Dictionary<K,V>
-        Register(new StackDataConverter(this));       // 74  CacheableStack      ??Stack<T>
+        Register(ActivatorUtilities.CreateInstance<LinkedListDataConverter>(serviceProvider));  // 10  CacheableLinkedList ??LinkedList<T>
+        Register(ActivatorUtilities.CreateInstance<ListDataConverter>(serviceProvider));        // 65  CacheableArrayList  ??List<T>
+        Register(ActivatorUtilities.CreateInstance<HashSetDataConverter>(serviceProvider));     // 66  CacheableHashSet    ??HashSet<T>
+        Register(ActivatorUtilities.CreateInstance<DictionaryDataConverter>(serviceProvider));  // 67  CacheableHashMap    ??Dictionary<K,V>
+        Register(ActivatorUtilities.CreateInstance<StackDataConverter>(serviceProvider));       // 74  CacheableStack      ??Stack<T>
     }
 
 
-    internal int MaxArrayLength => _cache.CacheProperties.MaxArrayLength;
+    //internal int MaxArrayLength => _cache.CacheProperties.MaxArrayLength;
 
-    internal int MaxDepth => _cache.CacheProperties.MaxDepth;
+    //internal int MaxDepth => _cache.CacheProperties.MaxDepth;
 
-    internal int MaxStringLength => _cache.CacheProperties.MaxStringLength;
+    //internal int MaxStringLength => _cache.CacheProperties.MaxStringLength;
 
     public bool IsRegistered(Type type)
     {
@@ -136,9 +128,9 @@ internal sealed class SerializationRegistry
     {
         ArgumentNullException.ThrowIfNull(writer);
 
-        if (depth >= MaxDepth)
+        if (depth >= systemProperties.MaxDepth)
         {
-            throw new InvalidOperationException($"SerializationRegistry: write exceeded MaxDepth ({MaxDepth}).");
+            throw new InvalidOperationException($"SerializationRegistry: write exceeded MaxDepth ({systemProperties.MaxDepth}).");
         }
 
         if (value is null)
@@ -170,16 +162,16 @@ internal sealed class SerializationRegistry
 
     private async ValueTask<bool> TryWritePdxAsync(DataOutput writer, object value, Type type, int _, CancellationToken ct)
     {
-        if (!_typeRegistry.TryGetEntry(type, out var entry)) return false;
+        if (!typeRegistry.TryGetEntry(type, out var entry)) return false;
 
-        var localPdxType = _pdxTypeRegistry.GetLocalPdxType(entry.ClassName);
+        var localPdxType = pdxTypeRegistry.GetLocalPdxType(entry.ClassName);
         if (localPdxType is null)
         {
-            using var ptc = PdxWriterWithTypeCollector.Create(_serviceProvider, _cache, entry.ClassName);
+            using var ptc = PdxWriterWithTypeCollector.Create(serviceProvider, entry.ClassName);
             entry.Write(value, ptc);
             var nType = ptc.GetPdxLocalType();
             nType.Initialize();
-            nType.TypeId = await _pdxTypeRegistry.GetPdxIdForTypeAsync(entry.ClassName, nType, true, ct);
+            nType.TypeId = await pdxTypeRegistry.GetPdxIdForTypeAsync(entry.ClassName, nType, true, ct);
 
             var payload = ptc.BuildPayload();
             writer.WriteByte(DSCode.PDX);
@@ -187,8 +179,8 @@ internal sealed class SerializationRegistry
             writer.WriteInt32(nType.TypeId);
             writer.WriteBytesOnly(payload);
 
-            _pdxTypeRegistry.AddLocalPdxType(entry.ClassName, nType);
-            _pdxTypeRegistry.AddPdxType(nType.TypeId, nType);
+            pdxTypeRegistry.AddLocalPdxType(entry.ClassName, nType);
+            pdxTypeRegistry.AddPdxType(nType.TypeId, nType);
         }
         else
         {
@@ -198,21 +190,21 @@ internal sealed class SerializationRegistry
 
             // B.1 Look up unread-field bytes preserved from a prior
             //     deserialize. null is the common case.
-            var preservedData = _pdxTypeRegistry.GetPreserveData(value);
+            var preservedData = pdxTypeRegistry.GetPreserveData(value);
 
             // B.2 Two PdxRemoteWriter ctor forms (cppcache PdxHelper.cpp:128).
             PdxRemoteWriter prw;
             if (preservedData is not null)
             {
-                var mergedPdxType = _pdxTypeRegistry.GetPdxType(preservedData.MergedTypeId)
+                var mergedPdxType = pdxTypeRegistry.GetPdxType(preservedData.MergedTypeId)
                     ?? throw new GeodeException(
                         $"PdxTypeRegistry: merged typeId {preservedData.MergedTypeId} " +
                         $"referenced by preserved data is not in the by-typeId cache.");
-                prw = PdxRemoteWriter.Create(_serviceProvider, _cache, mergedPdxType, preservedData);
+                prw = PdxRemoteWriter.Create(serviceProvider, mergedPdxType, preservedData);
             }
             else
             {
-                prw = PdxRemoteWriter.Create(_serviceProvider, _cache, entry.ClassName);
+                prw = PdxRemoteWriter.Create(serviceProvider, entry.ClassName);
             }
 
             using (prw)
@@ -243,10 +235,10 @@ internal sealed class SerializationRegistry
     {
         ArgumentNullException.ThrowIfNull(reader);
 
-        if (depth >= MaxDepth)
+        if (depth >= systemProperties.MaxDepth)
         {
             throw new GeodeException(
-                $"SerializationRegistry: read exceeded MaxDepth ({MaxDepth}). "
+                $"SerializationRegistry: read exceeded MaxDepth ({systemProperties.MaxDepth}). "
                 + "The server payload is more deeply nested than the client "
                 + "permits ??treat as hostile or buggy unless a legitimate "
                 + "workload warrants it, in which case tune "
@@ -271,10 +263,10 @@ internal sealed class SerializationRegistry
     }
     public ValueTask<object?> ReadObjectAsync(DataInput reader, int depth = 0, CancellationToken ct = default)
     {
-        if (depth >= MaxDepth)
+        if (depth >= systemProperties.MaxDepth)
         {
             throw new GeodeException(
-                $"SerializationRegistry: read exceeded MaxDepth ({MaxDepth}). "
+                $"SerializationRegistry: read exceeded MaxDepth ({systemProperties.MaxDepth}). "
                 + "The server payload is more deeply nested than the client "
                 + "permits ??treat as hostile or buggy unless a legitimate "
                 + "workload warrants it, in which case tune "
@@ -313,7 +305,7 @@ internal sealed class SerializationRegistry
         // Entry breadcrumb — cppcache PdxHelper.cpp doesn't log on entry of
         // the outer deserializePdx, but a wire-bug repro often needs the
         // ".NET saw a PDX frame" event paired against cppcache's hex dump.
-        _logger.LogDebug("ReadPdxAsync: entering, depth={Depth}", depth);
+        logger.LogDebug("ReadPdxAsync: entering, depth={Depth}", depth);
 
         // R.1 Read pdxLength (4 BE) — covers typeId + payload bytes.
         var pdxLength = reader.ReadInt32();
@@ -326,12 +318,12 @@ internal sealed class SerializationRegistry
         //     (cppcache PdxHelper.cpp:203-207). After fetch, cache both
         //     ways so subsequent reads don't re-hit the wire (cppcache
         //     PdxHelper.cpp:57-59 in checkAndFetchPdxType — same pattern).
-        var pdxType = _pdxTypeRegistry.GetPdxType(typeId);
+        var pdxType = pdxTypeRegistry.GetPdxType(typeId);
         if (pdxType is null)
         {
-            pdxType = await _pdxTypeRegistry.GetPdxTypeByIdAsync(typeId, ct);
-            _pdxTypeRegistry.AddPdxType(typeId, pdxType);
-            _pdxTypeRegistry.AddLocalPdxType(pdxType.ClassName, pdxType);
+            pdxType = await pdxTypeRegistry.GetPdxTypeByIdAsync(typeId, ct);
+            pdxTypeRegistry.AddPdxType(typeId, pdxType);
+            pdxTypeRegistry.AddLocalPdxType(pdxType.ClassName, pdxType);
         }
 
         // R.4 Look up the user's IPdxSerializable<T> factory by className.
@@ -339,7 +331,7 @@ internal sealed class SerializationRegistry
         //     Missing here means the caller never RegisterPdxType<T>'d this
         //     className — surface a useful error rather than fall through
         //     to a NullReference later.
-        if (!_typeRegistry.TryGetEntryByClassName(pdxType.ClassName, out var entry))
+        if (!typeRegistry.TryGetEntryByClassName(pdxType.ClassName, out var entry))
         {
             throw new GeodeException(
                 $"PDX className '{pdxType.ClassName}' (typeId={typeId}) is not " +
@@ -350,7 +342,7 @@ internal sealed class SerializationRegistry
         // Mirror cppcache LOGDEBUG (PdxHelper.cpp:171) — paired with the
         // entry breadcrumb so a wire-bug trace can match cppcache's against
         // ours line-by-line.
-        _logger.LogDebug("deserializePdx ClassName = {ClassName}, isLocal = {IsLocal}",
+        logger.LogDebug("deserializePdx ClassName = {ClassName}, isLocal = {IsLocal}",
             pdxType.ClassName, pdxType.IsLocal);
 
         // R.5 Pick reader: PdxLocalReader (schema is local, no unread
@@ -358,8 +350,8 @@ internal sealed class SerializationRegistry
         //     captures unread bytes for later SetPreserveData). cppcache
         //     PdxType::isLocal() drives the choice (PdxHelper.cpp:175).
         PdxLocalReader pdxReader = pdxType.IsLocal
-            ? PdxLocalReader.Create(_serviceProvider, _cache, pdxType, reader, pdxLength)
-            : PdxRemoteReader.Create(_serviceProvider, _cache, pdxType, reader, pdxLength);
+            ? PdxLocalReader.Create(serviceProvider, pdxType, reader, pdxLength)
+            : PdxRemoteReader.Create(serviceProvider, pdxType, reader, pdxLength);
 
         // R.6 Run user's FromData(IPdxReader) — constructs the .NET object
         //     by calling ReadXxx(name) on the reader for each field.

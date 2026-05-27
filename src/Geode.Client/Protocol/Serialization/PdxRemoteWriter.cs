@@ -1,4 +1,4 @@
-using Geode.Client.Internal;
+using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol.Serialization;
@@ -15,23 +15,22 @@ internal sealed class PdxRemoteWriter : PdxLocalWriter
 
     static readonly ObjectFactory<PdxRemoteWriter> _factoryByPdxType
         = ActivatorUtilities.CreateFactory<PdxRemoteWriter>(
-            [typeof(GeodeCache), typeof(PdxType), typeof(PdxRemotePreservedData)]);
+            [typeof(PdxType), typeof(PdxRemotePreservedData)]);
+
+    public static PdxRemoteWriter Create(IServiceProvider serviceProvider, string className)
+        => _factoryByClassName(serviceProvider, [className]);
 
     public static PdxRemoteWriter Create(IServiceProvider serviceProvider,
-        GeodeCache cache, string className)
-        => _factoryByClassName(serviceProvider, [cache, className]);
-
-    public static PdxRemoteWriter Create(IServiceProvider serviceProvider,
-        GeodeCache cache, PdxType mergedPdxType, PdxRemotePreservedData preservedData)
-        => _factoryByPdxType(serviceProvider, [cache, mergedPdxType, preservedData]);
+        PdxType mergedPdxType, PdxRemotePreservedData preservedData)
+        => _factoryByPdxType(serviceProvider, [mergedPdxType, preservedData]);
 
     /// <summary>
     /// 沒有 preserved data 時用:caller 只給 className,後面要照本地 schema
     /// 寫 wire bytes。對應 cppcache
     /// <c>PdxRemoteWriter(DataOutput&amp;, std::string pdxClassName, PdxTypeRegistry)</c>。
     /// </summary>
-    public PdxRemoteWriter(IServiceProvider serviceProvider, GeodeCache cache, string className)
-        : base(serviceProvider, cache)
+    public PdxRemoteWriter(IServiceProvider serviceProvider, string className)
+        : base(serviceProvider)
     {
         ClassName = className;
     }
@@ -44,10 +43,9 @@ internal sealed class PdxRemoteWriter : PdxLocalWriter
     /// </summary>
     public PdxRemoteWriter(
         IServiceProvider serviceProvider,
-        GeodeCache cache,
         PdxType mergedPdxType,
         PdxRemotePreservedData preservedData)
-        : base(serviceProvider, cache)
+        : base(serviceProvider)
     {
         MergedPdxType = mergedPdxType;
         PreservedData = preservedData;

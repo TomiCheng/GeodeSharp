@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
-using Geode.Client.Internal;
 using Geode.Client.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -13,7 +12,7 @@ internal sealed class GeodeCacheFactory(
     : IGeodeCacheFactory, IAsyncDisposable
 {
 
-    private readonly ConcurrentDictionary<string, Lazy<GeodeCache>> _caches = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Lazy<AsyncServiceScope>> _caches = new(StringComparer.Ordinal);
 
     private int _disposed;
 
@@ -32,8 +31,15 @@ internal sealed class GeodeCacheFactory(
         var options = new GeodeClientOptions();
         configure?.Invoke(options, rootServiceProvider);
 
-        var lazy = new Lazy<GeodeCache>(
-            () => ActivatorUtilities.CreateInstance<GeodeCache>(rootServiceProvider, cacheName, options),
+        var lazy = new Lazy<AsyncServiceScope>(
+            () =>
+            {
+                var scope = rootServiceProvider.CreateAsyncScope();
+                var sp = scope.ServiceProvider;
+                var sysProps = sp.GetRequiredService<SystemProperties>();
+                SystemProperties.MergeSystemProperties(sysProps, cacheName, options);
+                return scope;
+            },
             LazyThreadSafetyMode.ExecutionAndPublication);
 
         if (!_caches.TryAdd(cacheName, lazy))
@@ -43,16 +49,14 @@ internal sealed class GeodeCacheFactory(
 
         if (Volatile.Read(ref _disposed) != 0)
         {
-            if (_caches.TryRemove(cacheName, out var stored)
-                && stored.IsValueCreated
-                && (object)stored.Value is IAsyncDisposable d)
+            if (_caches.TryRemove(cacheName, out var stored) && stored.IsValueCreated)
             {
-                await d.DisposeAsync().ConfigureAwait(false);
+                await stored.Value.DisposeAsync().ConfigureAwait(false);
             }
             throw new ObjectDisposedException(nameof(GeodeCacheFactory));
         }
 
-        var cache = lazy.Value;
+        var cache = lazy.Value.ServiceProvider.GetRequiredService<GeodeCache>();
         await cache.InitializeAsync(ct).ConfigureAwait(false);
         return cache;
     }
@@ -66,9 +70,9 @@ internal sealed class GeodeCacheFactory(
 
         foreach (var (_, lazy) in snapshot)
         {
-            if (lazy.IsValueCreated && (object)lazy.Value is IAsyncDisposable d)
+            if (lazy.IsValueCreated)
             {
-                await d.DisposeAsync().ConfigureAwait(false);
+                await lazy.Value.DisposeAsync().ConfigureAwait(false);
             }
         }
     }
@@ -79,11 +83,11 @@ internal sealed class GeodeCacheFactory(
 
         if (!_caches.TryRemove(cacheName, out var lazy)) return false;
 
-        if (lazy.IsValueCreated && (object)lazy.Value is IAsyncDisposable d)
+        if (lazy.IsValueCreated)
         {
             try
             {
-                await d.DisposeAsync().ConfigureAwait(false);
+                await lazy.Value.DisposeAsync().ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -102,9 +106,9 @@ internal sealed class GeodeCacheFactory(
 
     public bool TryGet(string cacheName, [NotNullWhen(true)] out IGeodeCache? cache)
     {
-        if (_caches.TryGetValue(cacheName, out var lazy))
+        if (_caches.TryGetValue(cacheName, out var lazy) && lazy.IsValueCreated)
         {
-            cache = lazy.Value;
+            cache = lazy.Value.ServiceProvider.GetRequiredService<GeodeCache>();
             return true;
         }
         cache = null;

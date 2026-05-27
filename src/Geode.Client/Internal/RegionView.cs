@@ -1,4 +1,4 @@
-using Geode.Client.Protocol.Serialization;
+using Geode.Client.Services;
 
 namespace Geode.Client.Internal;
 
@@ -29,32 +29,23 @@ namespace Geode.Client.Internal;
 /// <see cref="Services.Cache"/> keyed by the inner region.
 /// </para>
 /// </remarks>
-internal sealed class RegionView<TKey, TValue> : IRegion<TKey, TValue>
+internal sealed class RegionView<TKey, TValue>(IRegion inner, TypedResultAdapter adapter)
+    : IRegion<TKey, TValue>
     where TKey : IEquatable<TKey>
 {
-    private readonly IRegion _inner;
-    private readonly TypedResultAdapter _adapter;
-
-    public RegionView(IRegion inner, TypedResultAdapter adapter)
-    {
-        ArgumentNullException.ThrowIfNull(inner);
-        ArgumentNullException.ThrowIfNull(adapter);
-        _inner = inner;
-        _adapter = adapter;
-    }
 
     // ── Metadata pass-through ──────────────────────────────────
-    public string Name => _inner.Name;
-    public string PoolName => _inner.PoolName;
-    public string FullPath => _inner.FullPath;
+    public string Name => inner.Name;
+    public string PoolName => inner.PoolName;
+    public string FullPath => inner.FullPath;
 
     // ── Typed ops (the C# call-site shape) ─────────────────────
     public Task PutAsync(TKey key, TValue value, CancellationToken ct = default)
-        => _inner.PutAsync(key, value!, ct);
+        => inner.PutAsync(key, value!, ct);
 
     public async Task<TValue?> GetAsync(TKey key, CancellationToken ct = default)
     {
-        var raw = await _inner.GetAsync(key, ct).ConfigureAwait(false);
+        var raw = await inner.GetAsync(key, ct).ConfigureAwait(false);
         // Adapter reshapes wire-canonical containers (List<object?> from
         // CacheableArrayList, etc.) into the declared TValue form —
         // List<int>, IList<IList<string>>, int[], …. Scalars and
@@ -64,34 +55,34 @@ internal sealed class RegionView<TKey, TValue> : IRegion<TKey, TValue>
         // type = zero). InvalidCastException surfaces here when the
         // stored value's shape genuinely doesn't fit TValue — caller
         // is asking the wrong typed view for this region.
-        return _adapter.Convert<TValue>(raw);
+        return adapter.Convert<TValue>(raw);
     }
 
     public Task<bool> RemoveAsync(TKey key, CancellationToken ct = default)
-        => _inner.RemoveAsync(key, ct);
+        => inner.RemoveAsync(key, ct);
 
     public Task<bool> ContainsKeyAsync(TKey key, CancellationToken ct = default)
-        => _inner.ContainsKeyAsync(key, ct);
+        => inner.ContainsKeyAsync(key, ct);
 
     public Task ClearAsync(CancellationToken ct = default)
-        => _inner.ClearAsync(ct);
+        => inner.ClearAsync(ct);
 
     public Task InvalidateAsync(TKey key, CancellationToken ct = default)
-        => _inner.InvalidateAsync(key!, ct);
+        => inner.InvalidateAsync(key!, ct);
 
     // No alias needed — bool return doesn't depend on TValue, the base
     // IRegion's ExistsValueAsync member satisfies the inherited contract
     // and is picked up by the typed view automatically.
     public Task<bool> ExistsValueAsync(string predicate, CancellationToken ct = default)
-        => _inner.ExistsValueAsync(predicate, ct);
+        => inner.ExistsValueAsync(predicate, ct);
 
     public async Task<TValue?> SelectValueAsync(string predicate, CancellationToken ct = default)
     {
-        var raw = await _inner.SelectValueAsync(predicate, ct).ConfigureAwait(false);
+        var raw = await inner.SelectValueAsync(predicate, ct).ConfigureAwait(false);
         // Same adapter path as GetAsync: scalar/array shortcut via
         // IsInstanceOfType, otherwise reshape wire-canonical containers
         // (List<object?>, etc.) into TValue. Null in → default(TValue?).
-        return _adapter.Convert<TValue>(raw);
+        return adapter.Convert<TValue>(raw);
     }
 
     public Task RemoveAllAsync(IReadOnlyCollection<TKey> keys, CancellationToken ct = default)
@@ -107,7 +98,7 @@ internal sealed class RegionView<TKey, TValue> : IRegion<TKey, TValue>
         {
             boxed[i++] = k!;
         }
-        return _inner.RemoveAllAsync(boxed, ct);
+        return inner.RemoveAllAsync(boxed, ct);
     }
 
     public Task PutAllAsync(IReadOnlyDictionary<TKey, TValue> map, CancellationToken ct = default)
@@ -123,7 +114,7 @@ internal sealed class RegionView<TKey, TValue> : IRegion<TKey, TValue>
         {
             boxed[kv.Key!] = kv.Value!;
         }
-        return _inner.PutAllAsync(boxed, ct);
+        return inner.PutAllAsync(boxed, ct);
     }
 
     public async Task<IReadOnlyDictionary<TKey, TValue?>> GetAllAsync(
@@ -137,7 +128,7 @@ internal sealed class RegionView<TKey, TValue> : IRegion<TKey, TValue>
         {
             boxed[i++] = k!;
         }
-        var raw = await _inner.GetAllAsync(boxed, ct).ConfigureAwait(false);
+        var raw = await inner.GetAllAsync(boxed, ct).ConfigureAwait(false);
 
         // Reshape Dictionary<object, object?> → Dictionary<TKey, TValue?>
         // via TypedResultAdapter — same recursive-descent path that
@@ -182,41 +173,41 @@ internal sealed class RegionView<TKey, TValue> : IRegion<TKey, TValue>
             // CS8600 for the K reference-type case; if it ever fails the
             // InvalidCastException is the right surface (wrong typed view).
             var key = (TKey)kv.Key;
-            typed[key] = _adapter.Convert<TValue>(kv.Value);
+            typed[key] = adapter.Convert<TValue>(kv.Value);
         }
         return typed;
     }
 
     // ── Object-typed ops (explicit interface — forward to inner) ──
     Task IRegion.PutAsync(object key, object value, CancellationToken ct)
-        => _inner.PutAsync(key, value, ct);
+        => inner.PutAsync(key, value, ct);
 
     Task<object?> IRegion.GetAsync(object key, CancellationToken ct)
-        => _inner.GetAsync(key, ct);
+        => inner.GetAsync(key, ct);
 
     Task<bool> IRegion.RemoveAsync(object key, CancellationToken ct)
-        => _inner.RemoveAsync(key, ct);
+        => inner.RemoveAsync(key, ct);
 
     Task<bool> IRegion.ContainsKeyAsync(object key, CancellationToken ct)
-        => _inner.ContainsKeyAsync(key, ct);
+        => inner.ContainsKeyAsync(key, ct);
 
     Task IRegion.InvalidateAsync(object key, CancellationToken ct)
-        => _inner.InvalidateAsync(key, ct);
+        => inner.InvalidateAsync(key, ct);
 
     Task IRegion.RemoveAllAsync(IReadOnlyCollection<object> keys, CancellationToken ct)
-        => _inner.RemoveAllAsync(keys, ct);
+        => inner.RemoveAllAsync(keys, ct);
 
     Task IRegion.PutAllAsync(IReadOnlyDictionary<object, object> map, CancellationToken ct)
-        => _inner.PutAllAsync(map, ct);
+        => inner.PutAllAsync(map, ct);
 
     Task<IReadOnlyDictionary<object, object?>> IRegion.GetAllAsync(
         IReadOnlyCollection<object> keys, CancellationToken ct)
-        => _inner.GetAllAsync(keys, ct);
+        => inner.GetAllAsync(keys, ct);
 
     // Explicit-interface overload for the object-typed SelectValueAsync;
     // the typed implicit member above shadows the base via `new`, so
     // calls through an IRegion reference need this explicit forwarder
     // to skip the adapter and return the raw object?.
     Task<object?> IRegion.SelectValueAsync(string predicate, CancellationToken ct)
-        => _inner.SelectValueAsync(predicate, ct);
+        => inner.SelectValueAsync(predicate, ct);
 }

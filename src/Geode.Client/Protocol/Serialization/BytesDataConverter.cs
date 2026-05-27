@@ -1,4 +1,4 @@
-using Geode.Client.Internal;
+using Geode.Client.Services;
 
 namespace Geode.Client.Protocol.Serialization;
 
@@ -42,13 +42,13 @@ namespace Geode.Client.Protocol.Serialization;
 ///   </item>
 /// </list>
 /// </remarks>
-internal sealed class BytesDataConverter(GeodeCache cache)
+internal sealed class BytesDataConverter(SystemProperties systemProperties)
     : DataConverter<byte[]>
 {
     private static readonly byte[] _dsCodes = { DSCode.CacheableBytes };
 
     private readonly int _maxBytesLength
-        = cache.CacheProperties.MaxBytesLength;
+        = systemProperties.MaxBytesLength;
 
     public override byte[] DsCodes => _dsCodes;
 

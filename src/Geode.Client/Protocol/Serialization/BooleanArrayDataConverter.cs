@@ -1,4 +1,4 @@
-using Geode.Client.Internal;
+using Geode.Client.Services;
 
 namespace Geode.Client.Protocol.Serialization;
 
@@ -36,7 +36,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// as <see cref="Array.Empty{T}"/>.
 /// </para>
 /// </remarks>
-internal sealed class BooleanArrayDataConverter(GeodeCache cache)
+internal sealed class BooleanArrayDataConverter(SystemProperties systemProperties)
     : DataConverter<bool[]>
 {
     private static readonly byte[] _dsCodes = { DSCode.BooleanArray };
@@ -47,7 +47,7 @@ internal sealed class BooleanArrayDataConverter(GeodeCache cache)
     /// the value avoids a property-chain walk on every wire op.
     /// </summary>
     private readonly int _maxArrayLength
-        = cache.CacheProperties.MaxArrayLength;
+        = systemProperties.MaxArrayLength;
 
     public override byte[] DsCodes => _dsCodes;
 

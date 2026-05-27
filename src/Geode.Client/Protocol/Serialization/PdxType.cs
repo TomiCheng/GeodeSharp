@@ -1,4 +1,4 @@
-using Geode.Client.Internal;
+using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol.Serialization;
@@ -24,11 +24,10 @@ internal sealed class PdxType(
 {
     static readonly ObjectFactory<PdxType> _factory
         = ActivatorUtilities.CreateFactory<PdxType>(
-            [typeof(PdxTypeRegistry), typeof(string), typeof(IReadOnlyList<PdxField>)]);
+            [typeof(string), typeof(IReadOnlyList<PdxField>)]);
 
-    public static PdxType Create(IServiceProvider serviceProvider, GeodeCache cache,
-        string className, IReadOnlyList<PdxField> fields)
-        => _factory(serviceProvider, [cache.PdxTypeRegistry, className, fields]);
+    public static PdxType Create(IServiceProvider serviceProvider, string className, IReadOnlyList<PdxField> fields)
+        => _factory(serviceProvider, [className, fields]);
 
     private readonly Dictionary<string, PdxField> _fieldByName = [];
 

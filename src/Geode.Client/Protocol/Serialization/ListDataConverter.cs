@@ -1,4 +1,5 @@
 using System.Collections;
+using Geode.Client.Services;
 
 namespace Geode.Client.Protocol.Serialization;
 
@@ -47,17 +48,11 @@ namespace Geode.Client.Protocol.Serialization;
 /// fully populated.
 /// </para>
 /// </remarks>
-internal sealed class ListDataConverter : IDataConverter
+internal sealed class ListDataConverter(
+    SerializationRegistry serializationRegistry,
+    SystemProperties systemProperties) : IDataConverter
 {
     private static readonly byte[] _dsCodes = { DSCode.CacheableArrayList };
-
-    private readonly SerializationRegistry _registry;
-
-    public ListDataConverter(SerializationRegistry registry)
-    {
-        ArgumentNullException.ThrowIfNull(registry);
-        _registry = registry;
-    }
 
     public byte[] DsCodes => _dsCodes;
 
@@ -74,16 +69,16 @@ internal sealed class ListDataConverter : IDataConverter
     public async ValueTask WriteAsync(DataOutput writer, object value, byte dsCode, int depth, CancellationToken ct)
     {
         var source = (IList)value;
-        if (source.Count > _registry.MaxArrayLength)
+        if (source.Count > systemProperties.MaxArrayLength)
         {
             throw new InvalidOperationException(
                 $"ListDataConverter: cannot serialise a list of {source.Count} elements "
-                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+                + $"— exceeds Serialization.MaxArrayLength ({systemProperties.MaxArrayLength}).");
         }
         writer.WriteArrayLen(source.Count);
         foreach (var item in source)
         {
-            await _registry.WriteObjectAsync(writer, item, depth + 1, ct);
+            await serializationRegistry.WriteObjectAsync(writer, item, depth + 1, ct);
         }
     }
 
@@ -94,11 +89,11 @@ internal sealed class ListDataConverter : IDataConverter
         {
             return new List<object?>(0);
         }
-        if (length > _registry.MaxArrayLength)
+        if (length > systemProperties.MaxArrayLength)
         {
             throw new GeodeException(
                 $"ListDataConverter: wire list length {length} exceeds "
-                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) ??refusing to allocate.");
+                + $"Serialization.MaxArrayLength ({systemProperties.MaxArrayLength}) ??refusing to allocate.");
         }
 
         var list = new List<object?>(length);
@@ -107,7 +102,7 @@ internal sealed class ListDataConverter : IDataConverter
             // Each slot's DSCode is read by ReadObject. Null elements
             // come back as null via DSCode.NullObj. Any registered
             // type (including a nested ArrayList) is a valid slot.
-            list.Add(_registry.ReadObject(reader, depth + 1));
+            list.Add(serializationRegistry.ReadObject(reader, depth + 1));
         }
         return list;
     }

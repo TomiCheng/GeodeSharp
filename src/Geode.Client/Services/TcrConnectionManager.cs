@@ -1,13 +1,14 @@
 using System.Collections.Concurrent;
 using System.Net;
 using Geode.Client.Internal;
+using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 internal sealed class TcrConnectionManager(
     IServiceProvider serviceProvider,
     ILogger<TcrConnectionManager> logger,
-    GeodeCache cache)
+    SystemProperties systemProperties)
 {
     /// <summary>
     /// 0 = <see cref="InitAsync"/> not run, 1 = ran.
@@ -38,7 +39,7 @@ internal sealed class TcrConnectionManager(
         // PeriodicTimer (Phase 2+).
         Volatile.Write(
             ref _isDurable,
-            !string.IsNullOrEmpty(cache.CacheProperties.DurableClientId));
+            !string.IsNullOrEmpty(systemProperties.DurableClientId));
 
         if (!isPool)
         {

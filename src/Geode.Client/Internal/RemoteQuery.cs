@@ -1,5 +1,5 @@
 using Geode.Client.Protocol;
-using Geode.Client.Internal;
+using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -23,7 +23,9 @@ internal sealed class RemoteQuery<T>(
     ThinClientBaseDM dm,
     DmContextAccessor dmCtxAccessor,
     IServiceProvider serviceProvider,
-    ILogger<RemoteQuery<T>> logger) : IQuery<T>
+    ILogger<RemoteQuery<T>> logger,
+    EventIdGenerator eventIdGenerator,
+    SerializationRegistry serializationRegistry) : IQuery<T>
 {
     // One TcrMessageHelper per query instance — passed positionally to
     // the ChunkedQueryResponse collector below so TcrMessageHelper /
@@ -46,7 +48,6 @@ internal sealed class RemoteQuery<T>(
         return await ExecuteCoreAsync(ct).ConfigureAwait(false);
     }
 
-    // ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
     //  Shared execution path. Mirrors cppcache RemoteQuery::execute
     //  + executeNoThrow merged (RemoteQuery.cpp:67-182). Both public
     //  ExecuteAsync overloads delegate here.
@@ -92,7 +93,7 @@ internal sealed class RemoteQuery<T>(
             // (TcrMessage.cpp:1684-1709): RegionPart(querystring) +
             // EventId + i32 timeout-millis. cppcache writeMillisecondsPart
             // is writeIntPart(int32) under the hood — same as AddInt32Part.
-            var (threadId, sequenceId) = dm.Cache.EventIdGenerator.Next();
+            var (threadId, sequenceId) = eventIdGenerator.Next();
             request = await TcrMessageBuilder
                 .Create(serviceProvider, MessageType.Query)
                 .AddRegionNamePart(QueryString)
@@ -117,7 +118,7 @@ internal sealed class RemoteQuery<T>(
                 .AddInt32Part(timeoutMs);
             foreach (var param in Parameters)
             {
-                builder = builder.AddValuePart(dm.Cache, param!);
+                builder = builder.AddValuePart(param!);
             }
             request = await builder.BuildAsync(ct);
         }
@@ -129,7 +130,7 @@ internal sealed class RemoteQuery<T>(
         // here, just construct. ActivatorUtilities mirrors what
         // ThinClientRegion does for its Chunked*Response collectors.
         var collector = ActivatorUtilities.CreateInstance<ChunkedQueryResponse<T>>(
-            serviceProvider, _tcrMessageHelper, dm.Cache.SerializationRegistry);
+            serviceProvider, _tcrMessageHelper, serializationRegistry);
 
         // B5 ??Log "sending request". cppcache RemoteQuery.cpp:143
         // (Query branch) / :166 (QueryWithParameters branch) ??same

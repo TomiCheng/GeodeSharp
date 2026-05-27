@@ -1,6 +1,6 @@
 using System.Threading.Channels;
 using Geode.Client.Protocol;
-using Geode.Client.Internal;
+using Geode.Client.Services;
 
 namespace Geode.Client.Internal;
 
@@ -25,8 +25,7 @@ namespace Geode.Client.Internal;
 /// 1:1 with cppcache during implementation.
 /// </para>
 /// </remarks>
-internal abstract class ThinClientBaseDM(
-    GeodeCache cache) : IAsyncDisposable
+internal abstract class ThinClientBaseDM : IAsyncDisposable
 {
 
     //protected readonly TcrConnectionManager ConnManager;     // m_connManager
@@ -277,11 +276,4 @@ internal abstract class ThinClientBaseDM(
         TcrChunkedResult chunkedResult,
         TcrEndpoint endpoint,
         CancellationToken ct = default);
-
-    /// <summary>
-    /// Shortcut to <see cref="Services.PoolManager.Cache"/>; saves the
-    /// double-hop <c>poolDM.PoolManager.Cache</c> at call sites.
-    /// </summary>
-    public GeodeCache Cache => cache;
-
 }

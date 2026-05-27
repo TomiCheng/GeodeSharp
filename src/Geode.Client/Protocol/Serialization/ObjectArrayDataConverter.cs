@@ -1,3 +1,5 @@
+using Geode.Client.Services;
+
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -50,40 +52,23 @@ namespace Geode.Client.Protocol.Serialization;
 /// explicitly allocate <c>new object[] { ... }</c>.
 /// </para>
 /// </remarks>
-internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
+internal sealed class ObjectArrayDataConverter(
+    SerializationRegistry serializationRegistry,
+    SystemProperties systemProperties) : DataConverter<object[]>
 {
     private static readonly byte[] _dsCodes = { DSCode.CacheableObjectArray };
 
     private const string JavaObjectClassName = "java.lang.Object";
 
-    private readonly SerializationRegistry _registry;
-
-    /// <summary>
-    /// Takes the owning <see cref="SerializationRegistry"/> so each
-    /// element can re-enter <see cref="SerializationRegistry.WriteObject"/>
-    /// /<see cref="SerializationRegistry.ReadObject"/>. The
-    /// <c>this</c>-reference at registry-construction time is safe
-    /// for the same reason as
-    /// <see cref="StringArrayDataConverter"/> ??we only store the
-    /// reference and call it later from <see cref="Write"/> /
-    /// <see cref="Read"/>, by which point the registry is fully
-    /// populated.
-    /// </summary>
-    public ObjectArrayDataConverter(SerializationRegistry registry)
-    {
-        ArgumentNullException.ThrowIfNull(registry);
-        _registry = registry;
-    }
-
     public override byte[] DsCodes => _dsCodes;
 
     public override async ValueTask WriteAsync(DataOutput writer, object[] value, byte dsCode, int depth, CancellationToken ct)
     {
-        if (value.Length > _registry.MaxArrayLength)
+        if (value.Length > systemProperties.MaxArrayLength)
         {
             throw new InvalidOperationException(
                 $"ObjectArrayDataConverter: cannot serialise an array of {value.Length} elements "
-                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+                + $"— exceeds Serialization.MaxArrayLength ({systemProperties.MaxArrayLength}).");
         }
         writer.WriteArrayLen(value.Length);
         writer.WriteByte(DSCode.Class);
@@ -91,7 +76,7 @@ internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
 
         foreach (var element in value)
         {
-            await _registry.WriteObjectAsync(writer, element, depth + 1, ct);
+            await serializationRegistry.WriteObjectAsync(writer, element, depth + 1, ct);
         }
     }
 
@@ -102,11 +87,11 @@ internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
         {
             return Array.Empty<object>();
         }
-        if (length > _registry.MaxArrayLength)
+        if (length > systemProperties.MaxArrayLength)
         {
             throw new GeodeException(
                 $"ObjectArrayDataConverter: wire array length {length} exceeds "
-                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) ??refusing to allocate.");
+                + $"Serialization.MaxArrayLength ({systemProperties.MaxArrayLength}) ??refusing to allocate.");
         }
 
         // Discard the class header ??its information is redundant
@@ -116,7 +101,7 @@ internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
         //   _registry.ReadObject()      ??the "java.lang.Object" string,
         //                                 routed via StringDataConverter
         reader.ReadByte();
-        _registry.ReadObject(reader, depth + 1);
+        serializationRegistry.ReadObject(reader, depth + 1);
 
         var array = new object[length];
         for (var i = 0; i < length; i++)
@@ -127,7 +112,7 @@ internal sealed class ObjectArrayDataConverter : DataConverter<object[]>
             // object, but at runtime CLR arrays of reference types
             // accept null in any slot. Tested in
             // ObjectArrayDataConverterTests.RoundTrip_with_null_elements.
-            array[i] = _registry.ReadObject(reader, depth + 1)!;
+            array[i] = serializationRegistry.ReadObject(reader, depth + 1)!;
         }
         return array;
     }

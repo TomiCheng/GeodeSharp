@@ -1,6 +1,6 @@
 using Geode.Client.Options;
-using Geode.Client.Internal;
 using Microsoft.Extensions.Logging;
+using Geode.Client.Services;
 
 namespace Geode.Client.Internal;
 
@@ -21,11 +21,9 @@ namespace Geode.Client.Internal;
 /// </remarks>
 internal sealed class ThinClientPoolHADM(
     IServiceProvider serviceProvider,
-    ILogger<ThinClientPoolDM> logger,
-    PoolManager poolManager,
     string name,
     PoolAttributes attributes)
-    : ThinClientPoolDM(serviceProvider, logger, poolManager, name, attributes)
+    : ThinClientPoolDM(serviceProvider, name, attributes)
 {
     /// <summary>
     /// Drop this HA pool's subscription-channel reference to

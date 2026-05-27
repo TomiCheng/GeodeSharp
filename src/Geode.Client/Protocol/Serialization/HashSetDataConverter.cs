@@ -1,4 +1,5 @@
 using System.Collections;
+using Geode.Client.Services;
 
 namespace Geode.Client.Protocol.Serialization;
 
@@ -47,17 +48,12 @@ namespace Geode.Client.Protocol.Serialization;
 /// output as set-equal, not sequence-equal.
 /// </para>
 /// </remarks>
-internal sealed class HashSetDataConverter : IDataConverter
+internal sealed class HashSetDataConverter(
+    SerializationRegistry serializationRegistry,
+    SystemProperties systemProperties)
+    : IDataConverter
 {
     private static readonly byte[] _dsCodes = { DSCode.CacheableHashSet };
-
-    private readonly SerializationRegistry _registry;
-
-    public HashSetDataConverter(SerializationRegistry registry)
-    {
-        ArgumentNullException.ThrowIfNull(registry);
-        _registry = registry;
-    }
 
     public byte[] DsCodes => _dsCodes;
 
@@ -77,16 +73,16 @@ internal sealed class HashSetDataConverter : IDataConverter
         var items = new List<object?>();
         foreach (var item in source) items.Add(item);
 
-        if (items.Count > _registry.MaxArrayLength)
+        if (items.Count > systemProperties.MaxArrayLength)
         {
             throw new InvalidOperationException(
                 $"HashSetDataConverter: cannot serialise a set of {items.Count} elements "
-                + $"— exceeds Serialization.MaxArrayLength ({_registry.MaxArrayLength}).");
+                + $"— exceeds Serialization.MaxArrayLength ({systemProperties.MaxArrayLength}).");
         }
         writer.WriteArrayLen(items.Count);
         foreach (var item in items)
         {
-            await _registry.WriteObjectAsync(writer, item, depth + 1, ct);
+            await serializationRegistry.WriteObjectAsync(writer, item, depth + 1, ct);
         }
     }
 
@@ -97,11 +93,11 @@ internal sealed class HashSetDataConverter : IDataConverter
         {
             return new HashSet<object?>();
         }
-        if (length > _registry.MaxArrayLength)
+        if (length > systemProperties.MaxArrayLength)
         {
             throw new GeodeException(
                 $"HashSetDataConverter: wire set length {length} exceeds "
-                + $"Serialization.MaxArrayLength ({_registry.MaxArrayLength}) ??refusing to allocate.");
+                + $"Serialization.MaxArrayLength ({systemProperties.MaxArrayLength}) ??refusing to allocate.");
         }
 
         var set = new HashSet<object?>(capacity: length);
@@ -111,7 +107,7 @@ internal sealed class HashSetDataConverter : IDataConverter
             // mirrors that. Duplicate elements (whatever the wire
             // sends) are silently de-duplicated ??same semantics as
             // std::unordered_set::insert ignoring existing keys.
-            set.Add(_registry.ReadObject(reader, depth + 1));
+            set.Add(serializationRegistry.ReadObject(reader, depth + 1));
         }
         return set;
     }

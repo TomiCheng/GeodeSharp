@@ -1,4 +1,4 @@
-using Geode.Client.Internal;
+using Geode.Client.Services;
 
 namespace Geode.Client.Protocol.Serialization;
 
@@ -65,7 +65,7 @@ namespace Geode.Client.Protocol.Serialization;
 /// <see cref="DataInput.ReadJavaModifiedUtf8"/>.
 /// </para>
 /// </remarks>
-internal sealed class StringDataConverter(GeodeCache cache)
+internal sealed class StringDataConverter(SystemProperties systemProperties)
     : DataConverter<string>
 {
     // 87/88/42/89 cover the four encode forms; 69 is read-only
@@ -87,7 +87,7 @@ internal sealed class StringDataConverter(GeodeCache cache)
     /// the same reason as the array converters' <c>_maxArrayLength</c>.
     /// </summary>
     private readonly int _maxStringLength
-        = cache.CacheProperties.MaxStringLength;
+        = systemProperties.MaxStringLength;
 
     public override byte[] DsCodes => _dsCodes;
 

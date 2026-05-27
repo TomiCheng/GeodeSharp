@@ -1,3 +1,5 @@
+using Geode.Client.Services;
+
 namespace Geode.Client.Protocol.Serialization;
 
 /// <summary>
@@ -54,7 +56,9 @@ namespace Geode.Client.Protocol.Serialization;
 /// <see cref="Read"/>, by which point the registry is fully
 /// populated.
 /// </remarks>
-internal sealed class StringArrayDataConverter(SerializationRegistry registry)
+internal sealed class StringArrayDataConverter(
+    SerializationRegistry serializationRegistry,
+    SystemProperties systemProperties)
     : DataConverter<string[]>
 {
     private static readonly byte[] _dsCodes = { DSCode.CacheableStringArray };
@@ -63,16 +67,16 @@ internal sealed class StringArrayDataConverter(SerializationRegistry registry)
 
     public override async ValueTask WriteAsync(DataOutput writer, string[] value, byte dsCode, int depth, CancellationToken ct)
     {
-        if (value.Length > registry.MaxArrayLength)
+        if (value.Length > systemProperties.MaxArrayLength)
         {
             throw new InvalidOperationException(
                 $"StringArrayDataConverter: cannot serialise an array of {value.Length} elements "
-                + $"— exceeds Serialization.MaxArrayLength ({registry.MaxArrayLength}).");
+                + $"— exceeds Serialization.MaxArrayLength ({systemProperties.MaxArrayLength}).");
         }
         writer.WriteArrayLen(value.Length);
         foreach (var element in value)
         {
-            await registry.WriteObjectAsync(writer, element, depth + 1, ct);
+            await serializationRegistry.WriteObjectAsync(writer, element, depth + 1, ct);
         }
     }
 
@@ -83,11 +87,11 @@ internal sealed class StringArrayDataConverter(SerializationRegistry registry)
         {
             return Array.Empty<string>();
         }
-        if (length > registry.MaxArrayLength)
+        if (length > systemProperties.MaxArrayLength)
         {
             throw new GeodeException(
                 $"StringArrayDataConverter: wire array length {length} exceeds "
-                + $"Serialization.MaxArrayLength ({registry.MaxArrayLength}) ??refusing to allocate.");
+                + $"Serialization.MaxArrayLength ({systemProperties.MaxArrayLength}) ??refusing to allocate.");
         }
         // Element type is string?[] in spirit (nulls survive), but the
         // CLR Type is the same string[] either way ??nullable
@@ -103,7 +107,7 @@ internal sealed class StringArrayDataConverter(SerializationRegistry registry)
             // else means corrupt wire ??let InvalidCastException
             // surface that as a hard fault rather than silently
             // produce wrong data.
-            array[i] = (string)registry.ReadObject(reader, depth + 1)!;
+            array[i] = (string)serializationRegistry.ReadObject(reader, depth + 1)!;
         }
         return array;
     }

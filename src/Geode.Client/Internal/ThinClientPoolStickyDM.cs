@@ -22,11 +22,9 @@ namespace Geode.Client.Internal;
 /// </remarks>
 internal sealed class ThinClientPoolStickyDM(
     IServiceProvider serviceProvider,
-    ILogger<ThinClientPoolDM> logger,
-    PoolManager poolManager,
     string name,
     PoolAttributes attributes)
-    : ThinClientPoolDM(serviceProvider, logger, poolManager, name, attributes)
+    : ThinClientPoolDM(serviceProvider, name, attributes)
 {
     /// <summary>
     /// Dispatch the per-tick sticky-conn aging sweep into

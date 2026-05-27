@@ -1,4 +1,5 @@
 using Geode.Client.Internal;
+using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client;
@@ -214,7 +215,6 @@ public class RegionFactory
         //   metadata refresh.
 
         // ── Step 8. Wrap in typed view for the IRegion<TKey, TValue> contract.
-        return Task.FromResult<IRegion<TKey, TValue>>(
-            new RegionView<TKey, TValue>(region, _cache.TypedResultAdapter));
+        return Task.FromResult<IRegion<TKey, TValue>>(ActivatorUtilities.CreateInstance<RegionView<TKey, TValue>>(_serviceProvider, region));
     }
 }

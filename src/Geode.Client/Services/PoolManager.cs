@@ -1,7 +1,8 @@
 using System.Collections.Concurrent;
 using Geode.Client.Internal;
+using Microsoft.Extensions.DependencyInjection;
 
-namespace Geode.Client.Internal;
+namespace Geode.Client.Services;
 
 /// <summary>
 /// Registry and lifecycle owner for named connection pools. Mirrors
@@ -29,7 +30,7 @@ namespace Geode.Client.Internal;
 /// <c>connManager-&gt;getCacheImpl()</c>'s role.
 /// </para>
 /// </remarks>
-internal sealed class PoolManager(IServiceProvider serviceProvider, GeodeCache cache)
+internal sealed class PoolManager(IServiceProvider serviceProvider)
 
     : IPoolManager, IAsyncDisposable
 {
@@ -68,13 +69,6 @@ internal sealed class PoolManager(IServiceProvider serviceProvider, GeodeCache c
     }
 
     /// <summary>
-    /// Back-pointer to the owning cache; lets pool-side code reach per-cache
-    /// state (options, system properties). Mirrors cppcache
-    /// <c>connManager-&gt;getCacheImpl()</c>.
-    /// </summary>
-    internal GeodeCache Cache => cache;
-
-    /// <summary>
     /// Close every registered pool. Mirrors cppcache
     /// <c>PoolManagerImpl::close(keepAlive)</c>; routes
     /// <paramref name="keepAlive"/> into each pool's
@@ -106,7 +100,7 @@ internal sealed class PoolManager(IServiceProvider serviceProvider, GeodeCache c
     /// </summary>
     public PoolFactory CreateFactory()
     {
-        return new PoolFactory(serviceProvider, this);
+        return ActivatorUtilities.CreateInstance<PoolFactory>(serviceProvider);
     }
 
     /// <summary>Delegates to <see cref="CloseAsync"/> with <c>keepAlive: false</c>.</summary>

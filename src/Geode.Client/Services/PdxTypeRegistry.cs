@@ -1,10 +1,10 @@
 using System.Collections.Concurrent;
-using Geode.Client.Internal;
 using Geode.Client.Protocol;
+using Geode.Client.Protocol.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-namespace Geode.Client.Protocol.Serialization;
+namespace Geode.Client.Services;
 
 /// <summary>
 /// Per-cache cache of PDX schema (<see cref="PdxType"/>) ↔ server-assigned

@@ -3,7 +3,8 @@ using System.Diagnostics;
 using System.Net;
 using System.Xml.Linq;
 using Geode.Client.Protocol;
-using Geode.Client.Internal;
+using Geode.Client.Protocol.Serialization;
+using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -11,13 +12,15 @@ using Microsoft.Extensions.Options;
 namespace Geode.Client.Internal;
 
 internal class ThinClientPoolDM(
-    IServiceProvider serviceProvider,
-    ILogger<ThinClientPoolDM> logger,
-    PoolManager poolManager,
+    IServiceProvider serviceProvider,    
     string name,
     PoolAttributes attributes)
-    : ThinClientBaseDM(poolManager.Cache), IPool
+    : ThinClientBaseDM(), IPool
 {
+    readonly TcrConnectionManager _tcrConnectionManager = serviceProvider.GetRequiredService<TcrConnectionManager>();
+    readonly PoolManager _poolManager = serviceProvider.GetRequiredService<PoolManager>();
+    readonly ILogger<ThinClientPoolDM> _logger = serviceProvider.GetRequiredService<ILogger<ThinClientPoolDM>>();
+    readonly SystemProperties _systemProperties = serviceProvider.GetRequiredService<SystemProperties>();
     /// <summary>
     /// 0 / 1 destroy guard, gated by <see cref="Interlocked.Exchange(ref int, int)"/>.
     /// </summary>
@@ -137,8 +140,7 @@ internal class ThinClientPoolDM(
     public IQueryService QueryService =>
         LazyInitializer.EnsureInitialized(
         ref _queryService,
-        () => ActivatorUtilities.CreateInstance<RemoteQueryService>(
-            serviceProvider, this, Cache.SerializationRegistry));
+        () => ActivatorUtilities.CreateInstance<RemoteQueryService>(serviceProvider, this));
 
     /// <summary>
     /// Whether to clear cached PDX type IDs when the pool fully disconnects.
@@ -169,10 +171,10 @@ internal class ThinClientPoolDM(
         _isMultiUserMode = attributes.MultiuserSecureMode;
         if (_isMultiUserMode)
         {
-            logger.LogInformation("Multiuser authentication is enabled for pool {PoolName}", name);
+            _logger.LogInformation("Multiuser authentication is enabled for pool {PoolName}", name);
         }
-        _isSecurityOn = poolManager.Cache.CacheProperties.SecurityProperties.Count > 0;
-        logger.LogDebug("ThinClientPoolDM.InitAsync: security on/off = {IsSecurityOn}", _isSecurityOn);
+        _isSecurityOn = _systemProperties.SecurityProperties.Count > 0;
+        _logger.LogDebug("ThinClientPoolDM.InitAsync: security on/off = {IsSecurityOn}", _isSecurityOn);
 
         //_stickyManager = ActivatorUtilities.CreateInstance<ThinClientStickyManager>(serviceProvider, this);
         //_clearPdxRegistry = options.Pdx.ClearTypeIdsOnDisconnect;
@@ -363,8 +365,6 @@ internal class ThinClientPoolDM(
         //    leaked conns). One LogWarning when _poolSize > 0.
     }
 
-    public PoolManager PoolManager => poolManager;
-
     /// <summary>Pool name as registered via <see cref="PoolManager.AddPool"/>; mirrors cppcache <c>Pool::getName()</c>.</summary>
     internal string Name => name;
 
@@ -393,7 +393,7 @@ internal class ThinClientPoolDM(
         ct.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _isDestroyed) != 0, this);
 
-        logger.LogDebug("ThinClientPoolDM::sendRequestToEP{Variant} type={MessageType} endpoint={Endpoint}",
+        _logger.LogDebug("ThinClientPoolDM::sendRequestToEP{Variant} type={MessageType} endpoint={Endpoint}",
             chunkedResult is null ? "" : " (chunked)",
             request.MessageType,
             endpoint.Name);
@@ -496,7 +496,7 @@ internal class ThinClientPoolDM(
                 if (ReferenceEquals(node.Value.Endpoint, endpoint))
                 {
                     _opConnections.Remove(node);
-                    logger.LogDebug("ThinClientPoolDM::getFromEP matched conn for {Endpoint}", endpoint.Name);
+                    _logger.LogDebug("ThinClientPoolDM::getFromEP matched conn for {Endpoint}", endpoint.Name);
                     return Task.FromResult<TcrConnection?>(node.Value);
                 }
             }
@@ -565,7 +565,7 @@ internal class ThinClientPoolDM(
             }
             releaseEndpointSlot = true;
 
-            logger.LogDebug("ThinClientPoolDM::createPoolConnectionToAEndPoint: opening new connection to {Endpoint}",
+            _logger.LogDebug("ThinClientPoolDM::createPoolConnectionToAEndPoint: opening new connection to {Endpoint}",
                 endpoint.Name);
 
             TcrConnection conn;
@@ -576,7 +576,7 @@ internal class ThinClientPoolDM(
                         pool: this,
                         isClientNotification: false,
                         isSecondary: false,
-                        connectTimeout: poolManager.Cache.CacheProperties.ConnectTimeout,
+                        connectTimeout: _systemProperties.ConnectTimeout,
                         ct: ct)
                     .ConfigureAwait(false);
             }
@@ -586,7 +586,7 @@ internal class ThinClientPoolDM(
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "ThinClientPoolDM::createPoolConnectionToAEndPoint: failed to connect to {Endpoint}",
+                _logger.LogWarning(ex, "ThinClientPoolDM::createPoolConnectionToAEndPoint: failed to connect to {Endpoint}",
                     endpoint.Name);
                 return null;
             }
@@ -737,11 +737,11 @@ internal class ThinClientPoolDM(
         var updateInterval = attributes.UpdateLocatorListInterval;
         if (updateInterval <= TimeSpan.Zero)
         {
-            logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Not scheduling updateLocatorList as interval {Interval}", updateInterval);
+            _logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Not scheduling updateLocatorList as interval {Interval}", updateInterval);
             return;
         }
 
-        logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Scheduling updateLocatorList task at {Interval}", updateInterval);
+        _logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Scheduling updateLocatorList task at {Interval}", updateInterval);
         _updateLocatorTimer = new PeriodicTimer(updateInterval);
         _updateLocatorLoop = UpdateLocatorLoopAsync(_backgroundCts.Token);
     }
@@ -764,7 +764,7 @@ internal class ThinClientPoolDM(
         // after a full interval.
         var initialDelay = TimeSpan.FromSeconds(1);
 
-        logger.LogDebug("Starting updateLocatorList loop for pool {Pool}", name);
+        _logger.LogDebug("Starting updateLocatorList loop for pool {Pool}", name);
         try
         {
             await Task.Delay(initialDelay, ct).ConfigureAwait(false);
@@ -778,7 +778,7 @@ internal class ThinClientPoolDM(
                 catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
                     // One bad refresh must not kill the loop — next tick retries.
-                    logger.LogWarning(ex, "updateLocatorList tick failed for pool {Pool}", name);
+                    _logger.LogWarning(ex, "updateLocatorList tick failed for pool {Pool}", name);
                 }
             }
             while (await _updateLocatorTimer!.WaitForNextTickAsync(ct).ConfigureAwait(false));
@@ -787,7 +787,7 @@ internal class ThinClientPoolDM(
         {
             // graceful shutdown via _backgroundCts.Cancel().
         }
-        logger.LogDebug("Ending updateLocatorList loop for pool {Pool}", name);
+        _logger.LogDebug("Ending updateLocatorList loop for pool {Pool}", name);
     }
 
     /// <summary>
@@ -831,7 +831,7 @@ internal class ThinClientPoolDM(
     /// </remarks>
     private async Task<DnsEndPoint> SelectEndpointFromLocatorAsync(HashSet<DnsEndPoint> excludeServers, CancellationToken ct)
     {
-        logger.LogDebug("ThinClientPoolDM: Asking locator for server from group [{Group}]", attributes.ServerGroup);
+        _logger.LogDebug("ThinClientPoolDM: Asking locator for server from group [{Group}]", attributes.ServerGroup);
 
         // Convert pool-layer DnsEndPoint set → wire-layer ServerLocation list
         // at the helper boundary. ServerLocation is a value record so the
@@ -856,7 +856,7 @@ internal class ThinClientPoolDM(
 
         var endpoint = new DnsEndPoint(server.Host, server.Port);
 
-        logger.LogDebug("ThinClientPoolDM: Locator returned endpoint [{Host}:{Port}]", endpoint.Host, endpoint.Port);
+        _logger.LogDebug("ThinClientPoolDM: Locator returned endpoint [{Host}:{Port}]", endpoint.Host, endpoint.Port);
         return endpoint;
     }
 
@@ -888,16 +888,16 @@ internal class ThinClientPoolDM(
     /// </remarks>
     private void SchedulePingLoop()
     {
-        var pingInterval = attributes.PingInterval ?? poolManager.Cache.CacheProperties.PingInterval;
+        var pingInterval = attributes.PingInterval ?? _systemProperties.PingInterval;
         if (pingInterval > TimeSpan.Zero)
         {
-            logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Scheduling ping task at {Interval}", pingInterval);
+            _logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Scheduling ping task at {Interval}", pingInterval);
             _pingTimer = new PeriodicTimer(pingInterval);
             _pingLoop = PingLoopAsync(_backgroundCts.Token);
         }
         else
         {
-            logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Not scheduling ping task as ping interval {Interval}", pingInterval);
+            _logger.LogDebug("ThinClientPoolDM::startBackgroundThreads: Not scheduling ping task as ping interval {Interval}", pingInterval);
         }
     }
 
@@ -910,7 +910,7 @@ internal class ThinClientPoolDM(
     private async Task PingLoopAsync(CancellationToken ct)
     {
         var initialDelay = TimeSpan.FromSeconds(1);
-        logger.LogDebug("Starting ping loop for pool {Pool}", name);
+        _logger.LogDebug("Starting ping loop for pool {Pool}", name);
         try
         {
             await Task.Delay(initialDelay, ct).ConfigureAwait(false);
@@ -924,7 +924,7 @@ internal class ThinClientPoolDM(
                 catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
                     // One bad tick must not kill the loop — next tick retries.
-                    logger.LogWarning(ex, "Ping tick failed for pool {Pool}", name);
+                    _logger.LogWarning(ex, "Ping tick failed for pool {Pool}", name);
                 }
             }
             while (await _pingTimer!.WaitForNextTickAsync(ct).ConfigureAwait(false));
@@ -933,7 +933,7 @@ internal class ThinClientPoolDM(
         {
             // graceful shutdown via _backgroundCts.Cancel().
         }
-        logger.LogDebug("Ending ping loop for pool {Pool}", name);
+        _logger.LogDebug("Ending ping loop for pool {Pool}", name);
     }
     /// <summary>
     /// One ping sweep: probe every connected endpoint and prune the
@@ -953,7 +953,7 @@ internal class ThinClientPoolDM(
         var sweepStopwatch = Stopwatch.StartNew();
         try
         {
-            logger.LogTrace("Ping sweep for pool {Pool}: {Count} endpoint(s)", name, _endpoints.Count);
+            _logger.LogTrace("Ping sweep for pool {Pool}: {Count} endpoint(s)", name, _endpoints.Count);
 
             foreach (var (_, endpoint) in _endpoints)
             {
@@ -978,7 +978,7 @@ internal class ThinClientPoolDM(
                     // cppcache (ThinClientPoolDM.cpp:2034-2037): ping flipped
                     // endpoint's connected_ bit to false → drop pool's
                     // references on its conns + HA subscription channel.
-                    logger.LogDebug("Ping flipped endpoint {Endpoint} to disconnected; cleaning up.", endpoint.Name);
+                    _logger.LogDebug("Ping flipped endpoint {Endpoint} to disconnected; cleaning up.", endpoint.Name);
                     await RemoveEPConnectionsAsync(endpoint, ct).ConfigureAwait(false);
                     await RemoveCallbackConnectionAsync(endpoint, ct).ConfigureAwait(false);
                 }
@@ -1019,7 +1019,7 @@ internal class ThinClientPoolDM(
             {
                 int queueSize;
                 lock (_opConnLock) queueSize = _opConnections.Count;
-                logger.LogTrace(
+                _logger.LogTrace(
                     "ConnManage tick for pool {Pool}: queue size = {QueueSize}, _poolSize = {PoolSize}",
                     name, queueSize, Volatile.Read(ref _poolSize));
 
@@ -1032,7 +1032,7 @@ internal class ThinClientPoolDM(
                 catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
                     // cppcache L568-574 catch-all + LOGERROR: survive one bad tick.
-                    logger.LogWarning(ex, "ConnManage tick failed for pool {Pool}", name);
+                    _logger.LogWarning(ex, "ConnManage tick failed for pool {Pool}", name);
                 }
 
                 await Task.Delay(interval, ct).ConfigureAwait(false);
@@ -1190,7 +1190,7 @@ internal class ThinClientPoolDM(
             try { await c.CloseAsync(keepAlive: false, ct).ConfigureAwait(false); }
             catch (Exception ex)
             {
-                logger.LogDebug(ex, "CloseAsync threw during CleanStale ({Context}); continuing.", context);
+                _logger.LogDebug(ex, "CloseAsync threw during CleanStale ({Context}); continuing.", context);
             }
         }
     }
@@ -1256,7 +1256,7 @@ internal class ThinClientPoolDM(
 
         if (removed.Count > 0)
         {
-            logger.LogDebug(
+            _logger.LogDebug(
                 "Removed {Count} conn(s) for endpoint {Endpoint} from pool {Pool}.",
                 removed.Count, endpoint.Name, name);
         }
@@ -1312,7 +1312,7 @@ internal class ThinClientPoolDM(
     private async Task RestoreMinConnectionsAsync(CancellationToken ct)
     {
         var min = attributes.MinConnections;
-        logger.LogDebug("Restoring minimum connection level for pool {Pool} (min={Min})", name, min);
+        _logger.LogDebug("Restoring minimum connection level for pool {Pool} (min={Min})", name, min);
 
         // cppcache `limit = 2 * min` (L531) caps the retry budget per tick:
         // protects against a race where CreatePoolConnection succeeds but
@@ -1345,7 +1345,7 @@ internal class ThinClientPoolDM(
 
         int queueSize;
         lock (_opConnLock) queueSize = _opConnections.Count;
-        logger.LogDebug(
+        _logger.LogDebug(
             "Restored {Restored} connection(s) for pool {Pool}; queue size = {QueueSize}, _poolSize = {PoolSize}",
             restored, name, queueSize, Volatile.Read(ref _poolSize));
     }
@@ -1389,14 +1389,14 @@ internal class ThinClientPoolDM(
                     // (e.g. NotConnectedException when every static server
                     // is excluded) → return null, caller bails. Slot
                     // released by the outer finally.
-                    logger.LogDebug(ex, "Endpoint selection exhausted; bailing");
+                    _logger.LogDebug(ex, "Endpoint selection exhausted; bailing");
                     return null;
                 }
                 // NoAvailableLocators is fatal-client per cppcache
                 // isFatalClientError (L1749-1751); propagates through the
                 // outer finally so the slot release still fires.
 
-                logger.LogDebug("Connecting to {Host}:{Port}", location.Host, location.Port);
+                _logger.LogDebug("Connecting to {Host}:{Port}", location.Host, location.Port);
                 var endpoint = await AddEPAsync(location, ct).ConfigureAwait(false);
 
                 // cppcache L1760-1765 — currentServer recycle: when SelectEndpoint
@@ -1405,7 +1405,7 @@ internal class ThinClientPoolDM(
                 // and return it. Pool size unchanged (slot stays with currentServer).
                 if (currentServer is not null && ReferenceEquals(currentServer.Endpoint, endpoint))
                 {
-                    logger.LogDebug("Recycling existing connection to {Endpoint}", endpoint.Name);
+                    _logger.LogDebug("Recycling existing connection to {Endpoint}", endpoint.Name);
                     currentServer.UpdateCreationTime();
                     return currentServer;
                 }
@@ -1417,7 +1417,7 @@ internal class ThinClientPoolDM(
                 // still have headroom elsewhere.
                 if (!await endpoint.AcquireSlotAsync(attributes.FreeConnectionTimeout, ct).ConfigureAwait(false))
                 {
-                    logger.LogDebug("Endpoint {Endpoint} ConnectionPoolSize cap reached, trying next", endpoint.Name);
+                    _logger.LogDebug("Endpoint {Endpoint} ConnectionPoolSize cap reached, trying next", endpoint.Name);
                     excludeServers.Add(location);
                     continue;
                 }
@@ -1427,7 +1427,7 @@ internal class ThinClientPoolDM(
                     TcrConnection conn;
                     try
                     {
-                        conn = await endpoint.CreateNewConnectionAsync(this, false, false, poolManager.Cache.CacheProperties.ConnectTimeout, ct).ConfigureAwait(false);
+                        conn = await endpoint.CreateNewConnectionAsync(this, false, false, _systemProperties.ConnectTimeout, ct).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (ct.IsCancellationRequested)
                     {
@@ -1452,7 +1452,7 @@ internal class ThinClientPoolDM(
                         // next server might be healthy). Pool-wide slot stays
                         // reserved (carries to next iteration); per-EP slot is
                         // released via the surrounding finally before `continue`.
-                        logger.LogDebug(ex, "Failed to open conn to {Endpoint}, retrying with next", endpoint.Name);
+                        _logger.LogDebug(ex, "Failed to open conn to {Endpoint}, retrying with next", endpoint.Name);
                         excludeServers.Add(location);
                         continue;
                     }
@@ -1513,7 +1513,7 @@ internal class ThinClientPoolDM(
             return cached;
         }
 
-        var endpoint = await poolManager.Cache.ConnectionManager
+        var endpoint = await _tcrConnectionManager
             .AddRefToTcrEndpointAsync(endpointAddress, this, ct)
             .ConfigureAwait(false);
         _endpoints.TryAdd(endpointAddress, endpoint);
@@ -1602,7 +1602,7 @@ internal class ThinClientPoolDM(
                 var endpoint = new DnsEndPoint(server.Host, server.Port);
                 if (excludeServers.Contains(endpoint)) continue;
 
-                logger.LogDebug(
+                _logger.LogDebug(
                     "ThinClientPoolDM: Selecting endpoint [{Host}:{Port}] from position {Position}",
                     endpoint.Host, endpoint.Port, position);
                 return endpoint;
@@ -1677,7 +1677,7 @@ internal class ThinClientPoolDM(
 
         _ = isBackgroundThread;     // Phase 1.5: sticky flag + stats hook.
 
-        logger.LogDebug(
+        _logger.LogDebug(
             "ThinClientPoolDM::sendSyncRequest{Variant} type={MessageType} txId={TxId}",
             chunkedResult is null ? "" : " (chunked)",
             request.MessageType, request.TransactionId);
@@ -1753,7 +1753,7 @@ internal class ThinClientPoolDM(
                     // Step E — transport-error catch (first-cut taxonomy in
                     // IsRetryableTransportError; full GfErrType port deferred).
                     lastError = ex;
-                    logger.LogDebug(
+                    _logger.LogDebug(
                         ex,
                         "ThinClientPoolDM::sendSyncRequest retry-eligible failure (type={MessageType} txId={TxId} endpoint={Endpoint}); attempts left {RetriesLeft}.",
                         request.MessageType, request.TransactionId, attemptedLocation, retriesLeft);
@@ -1860,7 +1860,7 @@ internal class ThinClientPoolDM(
     public override void IncConnectedEndpoints()
     {
         var val = Interlocked.Increment(ref _connectedEndpoints);
-        logger.LogDebug(
+        _logger.LogDebug(
             "Pool {Pool} has incremented to {Count} the number of connected endpoints",
             Name, val);
     }
@@ -1881,7 +1881,7 @@ internal class ThinClientPoolDM(
     public override void DecConnectedEndpoints()
     {
         var val = Interlocked.Decrement(ref _connectedEndpoints);
-        logger.LogDebug(
+        _logger.LogDebug(
             "Pool {Pool} has decremented to {Count} the number of connected endpoints",
             Name, val);
         // TODO Phase 2+: if (val <= 0 && _clearPdxRegistry) ClearPdxTypeRegistry();

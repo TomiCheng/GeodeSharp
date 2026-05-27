@@ -1,5 +1,6 @@
 using Geode.Client.Internal;
 using Geode.Client.Protocol;
+using Geode.Client.Services;
 
 namespace Geode.Client.Tests.Internal;
 
@@ -14,7 +15,7 @@ namespace Geode.Client.Tests.Internal;
 // base ctor no longer accepts it, so it's unused here.
 #pragma warning disable CS9113
 internal sealed class FakeThinClientBaseDM(IServiceProvider sp, GeodeCache cache)
-    : ThinClientBaseDM(cache)
+    : ThinClientBaseDM
 #pragma warning restore CS9113
 {
     public TcrMessage? LastRequest { get; private set; }

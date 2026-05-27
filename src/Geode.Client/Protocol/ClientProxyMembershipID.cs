@@ -1,4 +1,4 @@
-using Geode.Client.Protocol.Serialization;
+using Geode.Client.Services;
 
 namespace Geode.Client.Protocol;
 

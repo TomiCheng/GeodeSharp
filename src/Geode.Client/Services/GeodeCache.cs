@@ -1,13 +1,21 @@
 using System.Collections.Concurrent;
+using System.Xml.Linq;
+using Geode.Client.Internal;
 using Geode.Client.Options;
 using Geode.Client.Pdx;
 using Geode.Client.Protocol.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Geode.Client.Internal;
+namespace Geode.Client.Services;
 
-internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
+internal sealed class GeodeCache(IServiceProvider serviceProvider): IGeodeCache, IAsyncDisposable
 {
+    readonly SystemProperties _systemProperties = serviceProvider.GetRequiredService<SystemProperties>();
+    readonly TcrConnectionManager _tcrConnectionManager = serviceProvider.GetRequiredService<TcrConnectionManager>();
+    readonly PoolManager _poolManager = serviceProvider.GetRequiredService<PoolManager>();
+    readonly TypedResultAdapter _typedResultAdapter = serviceProvider.GetRequiredService<TypedResultAdapter>();
+    readonly SerializationRegistry _serializationRegistry = serviceProvider.GetRequiredService<SerializationRegistry>();
+
     // Writer lives in the cppcache destroy path (CacheImpl::close /
     // CacheImpl::~CacheImpl), which we have not ported yet. Field is kept so
     // GetRegion mirrors cppcache 1:1 and the writer can land in place later.
@@ -16,35 +24,32 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
 #pragma warning restore CS0649
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private Task? _initTask;
-    private readonly string _name;
-    private readonly IServiceProvider _serviceProvider;
-    private readonly Lazy<PoolManager> _poolManager;
     private readonly ConcurrentDictionary<string, IRegion> _regions = new(StringComparer.Ordinal);
-    private readonly SystemProperties _systemProperties;
-    private readonly Lazy<TcrConnectionManager> _tcrConnectionManager;
-    private readonly TypedResultAdapter _typedResultAdapter;
-    private readonly TypeRegistry _typeRegistry;
-    private readonly PdxTypeRegistry _pdxTypeRegistry;
-    private readonly Lazy<SerializationRegistry> _serializationRegistry;
-    private readonly EventIdGenerator _eventIdGenerator = new();
-    public GeodeCache(IServiceProvider serviceProvider, string name, GeodeClientOptions? options = null)
-    {
-        _name = name;
-        _serviceProvider = serviceProvider;
-        _systemProperties = BuildSystemProperties(options);
-        _typedResultAdapter = ActivatorUtilities.CreateInstance<TypedResultAdapter>(serviceProvider);
-        _typeRegistry = ActivatorUtilities.CreateInstance<TypeRegistry>(serviceProvider);
-        _pdxTypeRegistry = ActivatorUtilities.CreateInstance<PdxTypeRegistry>(serviceProvider);
-        _poolManager = new Lazy<PoolManager>(
-                    () => ActivatorUtilities.CreateInstance<PoolManager>(serviceProvider, this),
-                    LazyThreadSafetyMode.ExecutionAndPublication);
-        _tcrConnectionManager = new Lazy<TcrConnectionManager>(
-                   () => ActivatorUtilities.CreateInstance<TcrConnectionManager>(serviceProvider, this),
-                   LazyThreadSafetyMode.ExecutionAndPublication);
 
-        _serializationRegistry = new Lazy<SerializationRegistry>(
-            () => ActivatorUtilities.CreateInstance<SerializationRegistry>(serviceProvider, this),
-                   LazyThreadSafetyMode.ExecutionAndPublication);
+
+
+    internal async Task InitializeAsync(CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(IsClosed, this);
+        var task = Volatile.Read(ref _initTask);
+        if (task is null)
+        {
+            await _initLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                task = _initTask;
+                if (task is null)
+                {
+                    task = InitializeCoreAsync(ct);
+                    Volatile.Write(ref _initTask, task);
+                }
+            }
+            finally
+            {
+                _initLock.Release();
+            }
+        }
+        await task.WaitAsync(ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -54,77 +59,18 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
     /// mutations to the caller's <paramref name="opts"/> do NOT affect
     /// this cache.
     /// </summary>
-    private static SystemProperties BuildSystemProperties(GeodeClientOptions? opts)
-    {
-        if (opts is null) return new SystemProperties();
+    
 
-        // ── init-only properties: object initializer ────────────────
-        var sp = new SystemProperties
-        {
-            Name = opts.Name,
-            ThreadPoolSize = opts.ThreadPoolSize,
-
-            // Subscription
-            DurableClientId = opts.Subscription.DurableClientId,
-            DurableTimeout = opts.Subscription.DurableTimeout,
-            AutoReadyForEvents = opts.Subscription.AutoReadyForEvents,
-            RedundancyMonitorInterval = opts.Subscription.RedundancyMonitorInterval,
-            NotifyAckInterval = opts.Subscription.NotifyAckInterval,
-            NotifyDupCheckLife = opts.Subscription.NotifyDupCheckLife,
-
-            // Security
-            //SecurityClientDhAlgo = opts.Security.ClientDhAlgo,
-            SecurityClientKsPath = opts.Security.ClientKsPath,
-            SecurityProperties = opts.Security.Properties,
-
-            // Heap (LRULimit: ulong public ↔ long internal — wire is i64 BE,
-            // cast is safe within the positive-i64 range we care about).
-            HeapLRULimit = (long)opts.Heap.LRULimit,
-            HeapLRUDelta = opts.Heap.LRUDelta,
-
-            // Tls — only Enabled has a SystemProperties analog today;
-            // KeyStorePath / Password / TrustStorePath wire in when the
-            // SSL handshake path lands (Phase 3+).
-            SslEnabled = opts.Tls.Enabled,
-
-            // Pool (these are pool-level wire knobs surfaced under
-            // SystemProperties for cppcache parity — PoolAttributes
-            // owns the per-pool overrides).
-            ConnectionPoolSize = (uint)opts.Pool.ConnectionPoolSize,
-            ConnectTimeout = opts.Pool.ConnectTimeout,
-            ConnectWaitTimeout = opts.Pool.ConnectWaitTimeout,
-            MaxSocketBufferSize = opts.Pool.MaxSocketBufferSize,
-            PingInterval = opts.Pool.PingInterval,
-            BucketWaitTimeout = opts.Pool.BucketWaitTimeout,
-            DisableShufflingEndpoint = !opts.Pool.ShuffleEndpoints,   // inverted (cppcache parity)
-        };
-
-        // ── { get; set; } properties: assign after init-block ────────
-        sp.MaxDepth = opts.Serialization.MaxDepth;
-        sp.MaxArrayLength = opts.Serialization.MaxArrayLength;
-        sp.MaxBytesLength = opts.Serialization.MaxBytesLength;
-        sp.MaxStringLength = opts.Serialization.MaxStringLength;
-
-        // TODO Phase 2+ — fields without a SystemProperties analog today:
-        //   opts.EnableChunkHandlerThread   (.NET ThreadPool covers it, may stay unmapped)
-        //   opts.Tls.KeyStorePath/Password/TrustStorePath (SSL handshake)
-        //   opts.Subscription.ConflateEvents (subscription queue settings)
-        //   opts.Heap.TombstoneTimeout (concurrency-checks / tombstones)
-        //   opts.Pdx.ClearTypeIdsOnDisconnect (PDX type registry)
-        //   opts.Tx.SuspendedTimeout (transactions, Phase 11+)
-
-        return sp;
-    }
-
-    private async Task InitializeCoreAsync(CancellationToken ct)
+    private async Task InitializeCoreAsync(CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(IsClosed, this);
+        await _serializationRegistry.InitAsync(ct).ConfigureAwait(false);
         // ── 2. TCCM init ────────────────────────────────────────
         // Sets _isDurable from options.Subscription. In pool mode
         // (our MVP) the three background workers stay parked; this
         // is essentially a flag flip. Must complete before any pool
         // queries TCCM.IsDurable / haEnabled.
-        await _tcrConnectionManager.Value.InitAsync(isPool: true, ct).ConfigureAwait(false);
+        await _tcrConnectionManager.InitAsync(isPool: true, ct).ConfigureAwait(false);
 
         // ── 3-5. Build and init pools ───────────────────────────
         // Both paths produce a sequence of CachePoolOptions; the
@@ -154,37 +100,15 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
         //   ignoreUnreadFields / readSerialized to _pdxTypeRegistry.
     }
 
-    internal async Task InitializeAsync(CancellationToken ct = default)
-    {
-        ObjectDisposedException.ThrowIf(IsClosed, this);
-        var task = Volatile.Read(ref _initTask);
-        if (task is null)
-        {
-            await _initLock.WaitAsync(ct).ConfigureAwait(false);
-            try
-            {
-                task = _initTask;
-                if (task is null)
-                {
-                    task = InitializeCoreAsync(ct);
-                    Volatile.Write(ref _initTask, task);
-                }
-            }
-            finally
-            {
-                _initLock.Release();
-            }
-        }
-        await task.WaitAsync(ct).ConfigureAwait(false);
-    }
+    
 
-    internal SystemProperties CacheProperties => _systemProperties;
-
-    internal TypeRegistry TypeRegistry => _typeRegistry;
-    internal PdxTypeRegistry PdxTypeRegistry => _pdxTypeRegistry;
-    internal SerializationRegistry SerializationRegistry => _serializationRegistry.Value;
-    internal TcrConnectionManager ConnectionManager => _tcrConnectionManager.Value;
-    internal EventIdGenerator EventIdGenerator => _eventIdGenerator;
+    // ── Test / back-compat passthrough getters ───────────────────────
+    //
+    // Production code injects these via the DI scope directly (cache
+    // doesn't proxy). These getters exist for tests that used the old
+    // `cache.X` shape — they pull from the same scoped sp, so each
+    // returns the same scoped instance as a fresh DI resolve would.
+    // Safe to delete once tests migrate to scope resolution    
 
     //    /// <summary>
     //    /// Build pools and regions from an already-bound
@@ -472,10 +396,7 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
         // DisposeAsync fires during ServiceProvider teardown: the SP is
         // already disposed and ActivatorUtilities.CreateInstance would
         // throw ObjectDisposedException.)
-        if (_poolManager.IsValueCreated)
-        {
-            await _poolManager.Value.CloseAsync(keepAlive: false, ct).ConfigureAwait(false);
-        }
+        await _poolManager.CloseAsync(keepAlive: false, ct).ConfigureAwait(false);
         IsClosed = true;
     }
 
@@ -583,7 +504,7 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
     public RegionFactory CreateRegionFactory(RegionShortcut shortcut)
     {
         ObjectDisposedException.ThrowIf(IsClosed, this);
-        return new RegionFactory(_serviceProvider, this, shortcut);
+        return new RegionFactory(serviceProvider, this, shortcut);
     }
 
     /// <summary>
@@ -607,7 +528,7 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
     /// in <see cref="RegionView{TKey, TValue}"/>; same instance the
     /// cache hands to <see cref="GetRegion{TKey, TValue}(string)"/>.
     /// </summary>
-    internal Protocol.Serialization.TypedResultAdapter TypedResultAdapter => _typedResultAdapter;
+    //internal Protocol.Serialization.TypedResultAdapter TypedResultAdapter => _typedResultAdapter;
 
     /// <summary>
     /// Delegates to <c>PoolManager.DefaultPool.QueryService</c> (or the
@@ -625,14 +546,14 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
         // so PoolManager.Find (which throws on null) never sees it.
         if (string.IsNullOrEmpty(poolName))
         {
-            var defaultPool = _poolManager.Value.DefaultPool
+            var defaultPool = _poolManager.DefaultPool
                 ?? throw new InvalidOperationException(
                     "Cache has no default pool — call EnsureInitializedAsync " +
                     "first or ensure at least one pool is registered.");
             return defaultPool.QueryService;
         }
 
-        var pool = _poolManager.Value.Find(poolName)
+        var pool = _poolManager.Find(poolName)
             ?? throw new ArgumentException(
                 $"Pool '{poolName}' is not registered.", nameof(poolName));
         return pool.QueryService;
@@ -642,9 +563,9 @@ internal sealed class GeodeCache : IGeodeCache, IAsyncDisposable
 
     public bool IsClosed { get; private set; }
 
-    public string Name => _name;
+    public string Name => _systemProperties.Name;
 
-    public IPoolManager PoolManager => _poolManager.Value;
+    public IPoolManager PoolManager => _poolManager;
 
 
     //    public ITypeRegistry TypeRegistry { get; } = typeRegistry;

@@ -1,4 +1,4 @@
-using Geode.Client.Internal;
+using Geode.Client.Services;
 
 namespace Geode.Client.Protocol.Serialization;
 
@@ -14,13 +14,13 @@ namespace Geode.Client.Protocol.Serialization;
 /// pattern. Same key / null / empty rules as
 /// <see cref="BooleanArrayDataConverter"/>.
 /// </remarks>
-internal sealed class SingleArrayDataConverter(GeodeCache cache)
+internal sealed class SingleArrayDataConverter(SystemProperties systemProperties)
     : DataConverter<float[]>
 {
     private static readonly byte[] _dsCodes = { DSCode.CacheableFloatArray };
 
     private readonly int _maxArrayLength
-        = cache.CacheProperties.MaxArrayLength;
+        = systemProperties.MaxArrayLength;
 
     public override byte[] DsCodes => _dsCodes;
 

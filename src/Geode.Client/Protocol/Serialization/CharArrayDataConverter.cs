@@ -1,4 +1,4 @@
-using Geode.Client.Internal;
+using Geode.Client.Services;
 
 namespace Geode.Client.Protocol.Serialization;
 
@@ -21,13 +21,13 @@ namespace Geode.Client.Protocol.Serialization;
 /// registry; <see cref="Array.Empty{T}"/> writes <c>[27, 0x00]</c>.
 /// </para>
 /// </remarks>
-internal sealed class CharArrayDataConverter(GeodeCache cache)
+internal sealed class CharArrayDataConverter(SystemProperties systemProperties)
     : DataConverter<char[]>
 {
     private static readonly byte[] _dsCodes = { DSCode.CharArray };
 
     private readonly int _maxArrayLength
-        = cache.CacheProperties.MaxArrayLength;
+        = systemProperties.MaxArrayLength;
 
     public override byte[] DsCodes => _dsCodes;
 

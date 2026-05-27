@@ -1,4 +1,4 @@
-using Geode.Client.Internal;
+using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Protocol.Serialization;
@@ -21,17 +21,16 @@ namespace Geode.Client.Protocol.Serialization;
 /// </remarks>
 internal sealed class PdxRemoteReader(
     IServiceProvider serviceProvider,
-    GeodeCache cache,
     PdxType pdxType,
     DataInput input,
     int pdxLength)
-    : PdxLocalReader(serviceProvider, cache, pdxType, input, pdxLength)
+    : PdxLocalReader(serviceProvider, pdxType, input, pdxLength)
 {
     static readonly ObjectFactory<PdxRemoteReader> _factory
         = ActivatorUtilities.CreateFactory<PdxRemoteReader>(
-            [typeof(GeodeCache), typeof(PdxType), typeof(DataInput), typeof(int)]);
+            [typeof(PdxType), typeof(DataInput), typeof(int)]);
 
     public static new PdxRemoteReader Create(IServiceProvider serviceProvider,
-        GeodeCache cache, PdxType pdxType, DataInput input, int pdxLength)
-        => _factory(serviceProvider, [cache, pdxType, input, pdxLength]);
+        PdxType pdxType, DataInput input, int pdxLength)
+        => _factory(serviceProvider, [pdxType, input, pdxLength]);
 }

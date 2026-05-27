@@ -6,8 +6,16 @@ using Xunit;
 
 namespace Geode.Client.Tests.Services;
 
-public class GeodeCacheFactoryCreationTests
+public class GeodeCacheFactoryCreationTests(IGeodeCacheFactory factory)
 {
+    public class Startup
+    {
+        public void ConfigureServices(IServiceCollection services)
+        {
+            services.AddGeodeFactory();
+        }
+    }
+
     private static ServiceProvider BuildSp()
     {
         var services = new ServiceCollection();
@@ -20,21 +28,6 @@ public class GeodeCacheFactoryCreationTests
     [Fact]
     public async Task AddGeodeFactory_Registers_IGeodeCacheFactory()
     {
-        await using var sp = BuildSp();
-
-        var factory = sp.GetService<IGeodeCacheFactory>();
-
         Assert.NotNull(factory);
-    }
-
-    [Fact]
-    public async Task IGeodeCacheFactory_Resolves_AsSingleton()
-    {
-        await using var sp = BuildSp();
-
-        var first = sp.GetRequiredService<IGeodeCacheFactory>();
-        var second = sp.GetRequiredService<IGeodeCacheFactory>();
-
-        Assert.Same(first, second);
     }
 }

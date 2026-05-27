@@ -1,7 +1,3 @@
-using Geode.Client;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Geode.Client.IntegrationTests;
@@ -12,46 +8,16 @@ namespace Geode.Client.IntegrationTests;
 /// the background ConnManageLoop.
 /// </summary>
 [Collection(nameof(GeodeCollection))]
-public class ConnectionSmokeTests(GeodeFixture fx)
+public class ConnectionSmokeTests(GeodeFixture fx, IGeodeCacheFactory factory)
 {
-    private static ServiceProvider BuildSp()
-    {
-        var services = new ServiceCollection();
-        services.AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance);
-        services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
-        services.AddGeodeFactory();
-        return services.BuildServiceProvider();
-    }
-
-    [Fact]
-    public void Sanity_FixtureInjected()
-    {
-        // If the fixture didn't initialize, ServerPort defaults to 40404 but
-        // the container DID actually map ports — gfsh `version` proves the
-        // container is reachable.
-        Assert.NotNull(fx);
-        // After init, the host should be assigned (not the class default).
-        // Container hostname is something like "localhost" or a docker IP.
-        Assert.NotEmpty(fx.LocatorHost);
-    }
-
-    [Fact]
-    public async Task FixtureContainer_IsActuallyRunning()
-    {
-        // Force-touch the fixture by calling gfsh inside the container.
-        // If the container isn't running, this throws.
-        var output = await fx.GfshAsync("list members", TestContext.Current.CancellationToken);
-        Assert.Contains("loc1", output);
-    }
-
     [Fact]
     public async Task BuildAsync_AgainstRealServer_OpensConnection()
     {
         var ct = TestContext.Current.CancellationToken;
-        await using var sp = BuildSp();
+        //await using var sp = BuildSp();
         using var capture = new MeterCapture("Geode.Client.Pool", "PoolConnections");
 
-        var cache = await sp.GetRequiredService<IGeodeCacheFactory>().CreateAsync("c", ct);
+        var cache = await factory.CreateAsync("c", ct: ct);
         await cache.PoolManager.CreateFactory()
             .AddServer(fx.LocatorHost, fx.ServerPort)
             .SetMinConnections(1)

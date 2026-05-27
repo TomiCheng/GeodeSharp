@@ -8,8 +8,8 @@ public interface IPoolManager : IAsyncDisposable
     /// <summary>The first pool registered with this manager, or <see langword="null"/> if none.</summary>
     IPool? DefaultPool { get; }
 
-    /// <summary>New <see cref="PoolFactory"/> bound to this manager.</summary>
-    PoolFactory CreateFactory();
+    /// <summary>New <see cref="IPoolFactory"/> bound to this manager.</summary>
+    IPoolFactory CreateFactory();
 
     /// <summary>Close every registered pool; idempotent.</summary>
     Task CloseAsync(bool keepAlive = false, CancellationToken ct = default);

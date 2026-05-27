@@ -8,22 +8,6 @@ namespace Geode.Client;
 /// </summary>
 public interface IGeodeCacheFactory : IAsyncDisposable
 {
-
-    /// <summary>
-    /// Build, register, and initialise a new cache under <paramref name="cacheName"/>
-    /// with built-in defaults (zero-config shortcut). The returned cache is fully
-    /// initialised (TCCM bootstrapped) and ready to use.
-    /// </summary>
-    /// <param name="cacheName">Cache identifier; must be unique across the factory's lifetime.</param>
-    /// <param name="ct">Cooperative cancellation for the build + initialise pipeline.</param>
-    /// <exception cref="InvalidOperationException">
-    /// <paramref name="cacheName"/> already exists.
-    /// </exception>
-    /// <exception cref="ObjectDisposedException">
-    /// Factory has been disposed.
-    /// </exception>
-    Task<IGeodeCache> CreateAsync(string cacheName, CancellationToken ct = default);
-
     /// <summary>
     /// Build, register, and initialise a new cache under <paramref name="cacheName"/>,
     /// running <paramref name="configure"/> against a fresh

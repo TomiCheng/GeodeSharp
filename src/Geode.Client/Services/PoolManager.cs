@@ -95,10 +95,10 @@ internal sealed class PoolManager(IServiceProvider serviceProvider)
     }
 
     /// <summary>
-    /// New <see cref="PoolFactory"/> bound to this manager. Mirrors cppcache
+    /// New <see cref="IPoolFactory"/> bound to this manager. Mirrors cppcache
     /// <c>PoolManager::createFactory()</c>.
     /// </summary>
-    public PoolFactory CreateFactory()
+    public IPoolFactory CreateFactory()
     {
         return ActivatorUtilities.CreateInstance<PoolFactory>(serviceProvider);
     }

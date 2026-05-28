@@ -71,6 +71,7 @@ internal static class EntriesMapFactory
             }
             if (ttl > TimeSpan.Zero || idle > TimeSpan.Zero)
             {
+                result = ActivatorUtilities.CreateInstance<LRUEntriesMap>(serviceProvider, localRegion);
                 //        result = new LRUEntriesMap(
                 //            &expiryTaskmanager,
                 //            std::make_unique<LRUExpEntryFactory>(concurrencyChecksEnabled),
@@ -79,15 +80,14 @@ internal static class EntriesMapFactory
             }
             else
             {
-                _ = heapLRUEnabled;
+                result = ActivatorUtilities.CreateInstance<LRUEntriesMap>(serviceProvider, localRegion);
                 //        result = new LRUEntriesMap(
                 //            &expiryTaskmanager,
                 //            std::make_unique<LRUEntryFactory>(concurrencyChecksEnabled),
                 //            region, lruEvictionAction, lruLimit,
                 //            concurrencyChecksEnabled, concurrency, heapLRUEnabled);
             }
-
-
+            _ = heapLRUEnabled;   // TODO Phase 2+: pass to LRUEntriesMap ctor (cppcache .cpp:72/79/86)
         }
         else if (ttl > TimeSpan.Zero || idle > TimeSpan.Zero)
         {

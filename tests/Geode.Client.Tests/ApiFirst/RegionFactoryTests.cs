@@ -20,9 +20,9 @@ public class RegionFactoryTests(IGeodeCacheFactory factory)
     // ── RegionShortcut.Local ─────────────────────────────────────
 
     [Fact]
-    public async Task CreateRegion_Local_SizeIsZero()
+    public async Task CreateRegion_Local_LocalCountIsZero()
     {
-        const string cacheName = nameof(CreateRegion_Local_SizeIsZero);
+        const string cacheName = nameof(CreateRegion_Local_LocalCountIsZero);
         try
         {
             var cache = await NewCacheAsync(cacheName);
@@ -30,9 +30,9 @@ public class RegionFactoryTests(IGeodeCacheFactory factory)
                 .CreateRegionFactory(RegionShortcut.Local)
                 .CreateAsync<string, string>("orders", TestContext.Current.CancellationToken);
 
-            // Size mirrors cppcache LocalRegion::size() — m_entries is
-            // null in proxy-only mode, so the local entry count is 0.
-            Assert.Equal(0, region.Size);
+            // LocalCount mirrors cppcache LocalRegion::size() — m_entries
+            // is null in proxy-only mode, so the local entry count is 0.
+            Assert.Equal(0, region.LocalCount);
         }
         finally
         {

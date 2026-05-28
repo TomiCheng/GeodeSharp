@@ -16,7 +16,7 @@ namespace Geode.Client.Internal;
 /// for the non-segment responsibilities (tombstone list, destroy tracker,
 /// region back-ref, expiry manager) which arrive Phase 2+.
 /// </remarks>
-internal sealed class ConcurrentEntriesMap(IServiceProvider serviceProvider, LocalRegion region)
+internal class ConcurrentEntriesMap(IServiceProvider serviceProvider, LocalRegion region)
     : EntriesMap
 {
     IServiceProvider _ = serviceProvider;

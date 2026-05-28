@@ -291,7 +291,7 @@ internal sealed class RegionView<TKey, TValue>(IRegion inner, TypedResultAdapter
     Task<IReadOnlyList<object>> IRegion.ServerKeysAsync(CancellationToken ct) => inner.ServerKeysAsync(ct);
     IReadOnlyList<object?> IRegion.Values() => inner.Values();
     IReadOnlyList<IRegionEntry> IRegion.Entries(bool recursive) => inner.Entries(recursive);
-    int IRegion.Size => inner.Size;
+    int IRegion.LocalCount => inner.LocalCount;
     bool IRegion.IsDestroyed => inner.IsDestroyed;
     RegionAttributes IRegion.Attributes => inner.Attributes;
     IAttributesMutator IRegion.GetAttributesMutator() => inner.GetAttributesMutator();

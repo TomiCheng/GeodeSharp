@@ -147,7 +147,13 @@ internal class RegionFactory(IServiceProvider serviceProvider, RegionShortcut sh
 
         var attrs = _attrsFactory.Create();
 
-        if (shortcut != RegionShortcut.Local && string.IsNullOrEmpty(attrs.PoolName))
+        // cppcache RegionFactory.cpp:46 only checks `!= LOCAL` and so
+        // throws for LOCAL_ENTRY_LRU too — looks like an upstream
+        // oversight (LOCAL_ENTRY_LRU is conceptually local-only, no
+        // wire / pool requirement). Modernised: both local shortcuts
+        // skip the pool guard.
+        if (shortcut is not (RegionShortcut.Local or RegionShortcut.LocalEntryLru)
+            && string.IsNullOrEmpty(attrs.PoolName))
         {
             var defaultPool = cache.PoolManager.DefaultPool
                 ?? throw new InvalidOperationException("No pool for non-local region.");

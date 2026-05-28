@@ -349,8 +349,7 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache
             case RegionKind.ThinClientPool:
             {
                 // cppcache CacheImpl.cpp:568-574.
-                var poolRegion = ActivatorUtilities.CreateInstance<ThinClientPoolRegion>(
-                    serviceProvider, name, parent!, attrs);
+                var poolRegion = ThinClientPoolRegion.Create(serviceProvider, name, parent, attrs);
 
                 // cppcache `tmp->initTCR()` after construction — pool
                 // variant looks up the pool by name and attaches its

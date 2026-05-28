@@ -292,9 +292,12 @@ public interface IRegion
     IRegionService RegionService { get; }
 
     /// <summary>
-    /// Number of entries currently in the local cache.
+    /// Number of entries currently in the local cache. <b>Local only</b> —
+    /// in proxy mode this returns 0 even when the server holds entries;
+    /// use <see cref="ServerKeysAsync"/> for the server-side count.
+    /// Mirrors cppcache <c>Region::size()</c>.
     /// </summary>
-    int Size { get; }
+    int LocalCount { get; }
 
 }
 

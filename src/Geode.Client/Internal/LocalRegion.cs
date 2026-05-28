@@ -114,7 +114,7 @@ internal class LocalRegion : RegionInternal
     /// Always-local entry count. The body of cppcache
     /// <c>LocalRegion::size_remote()</c>
     /// (<c>cppcache/src/LocalRegion.cpp:611-617</c>), exposed as a
-    /// non-virtual helper so <see cref="Size"/>'s no-tx branch can hit
+    /// non-virtual helper so <see cref="LocalCount"/>'s no-tx branch can hit
     /// it directly — mirrors cppcache's <c>LocalRegion::size_remote()</c>
     /// explicit qualifier at <c>LocalRegion.cpp:628</c>.
     /// </summary>
@@ -190,7 +190,7 @@ internal class LocalRegion : RegionInternal
         || (eventFlags is { } f && f.HasFlag(CacheEventFlags.Local));
 
     /// <summary>
-    /// Virtual hook used by <see cref="Size"/>'s in-tx branch. Default
+    /// Virtual hook used by <see cref="LocalCount"/>'s in-tx branch. Default
     /// body matches the non-virtual <see cref="LocalSizeRemote"/> —
     /// <see cref="ThinClientRegion"/> overrides (Phase 1.5+) to round-trip
     /// <c>TcrMessageSize</c> to the server. Mirrors cppcache
@@ -273,7 +273,8 @@ internal class LocalRegion : RegionInternal
     /// <summary>
     /// Mirrors cppcache <c>LocalRegion::size()</c>
     /// (<c>cppcache/src/LocalRegion.cpp:619-629</c>): tx-aware dispatch
-    /// over the local entry count.
+    /// over the local entry count. Renamed from cppcache's <c>size()</c>
+    /// to <c>LocalCount</c> in the C# port — see <see cref="IRegion.LocalCount"/>.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -294,7 +295,7 @@ internal class LocalRegion : RegionInternal
     /// We throw <see cref="NotSupportedException"/> instead.
     /// </para>
     /// </remarks>
-    public override int Size
+    public override int LocalCount
     {
         get
         {
@@ -306,9 +307,9 @@ internal class LocalRegion : RegionInternal
                     // cppcache LocalRegion.cpp:622-624 returns GF_NOTSUP
                     // as a uint count — we throw instead. Pure local
                     // region can't satisfy a tx (no server to coordinate
-                    // with), so calling Size in this combo is API misuse.
+                    // with), so calling LocalCount in this combo is API misuse.
                     throw new NotSupportedException(
-                        "Region.Size: not supported on a local-only region inside a transaction.");
+                        "Region.LocalCount: not supported on a local-only region inside a transaction.");
                 }
                 return SizeRemote();
             }

@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+
 namespace Geode.Client.Internal;
 
 /// <summary>
@@ -39,6 +41,11 @@ internal sealed class ThinClientPoolRegion(
     RegionAttributes attributes)
     : ThinClientRegion(serviceProvider, name, parent, attributes)
 {
+    readonly static ObjectFactory<ThinClientPoolRegion> _objectFactory =
+        ActivatorUtilities.CreateFactory<ThinClientPoolRegion>([typeof(string), typeof(RegionInternal), typeof(RegionAttributes)]);
+
+    public new static ThinClientPoolRegion Create(IServiceProvider serviceProvider, string name, RegionInternal? parent, RegionAttributes attributes)
+        => _objectFactory(serviceProvider, [ name, parent, attributes ]);
     // No fields beyond the base — cppcache ThinClientPoolRegion has no
     // private state of its own either. Override surface above.
 }

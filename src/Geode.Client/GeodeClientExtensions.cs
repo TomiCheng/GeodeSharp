@@ -4,6 +4,7 @@
 //using Geode.Client.Protocol;
 //using Geode.Client.Protocol.Serialization;
 //using Microsoft.Extensions.Configuration;
+using Geode.Client.Internal;
 using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -187,6 +188,7 @@ public static class GeodeClientExtensions
         services.TryAddScoped<TypeRegistry>();
         services.TryAddScoped<PdxTypeRegistry>();
         services.TryAddScoped<SerializationRegistry>();
+        services.TryAddScoped<ExpiryTaskManager>();
         services.TryAddSingleton<DmContextAccessor>();
         return services;
     }

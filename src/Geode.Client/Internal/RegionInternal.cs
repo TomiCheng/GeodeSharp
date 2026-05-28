@@ -245,8 +245,7 @@ internal abstract class RegionInternal(RegionAttributes attributes)
         throw new NotImplementedException("Cache back-reference not yet wired (Phase 1.5).");
 
     /// <inheritdoc />
-    public virtual int Size =>
-        throw new NotImplementedException("Local entry map not yet implemented.");
+    public abstract int Size { get; }
 
     // TODO future phases — internal-only API surface that cppcache
     // RegionInternal exposes; add as their respective phases ship:

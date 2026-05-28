@@ -62,6 +62,14 @@ internal sealed class SystemProperties
     // cppcache SystemProperties.cpp:112 — DefaultHeapLRULimit = 0 (disabled)
     public long HeapLRULimit { get; private set; }
 
+    /// <summary>
+    /// Process-wide heap-LRU on/off flag. Mirrors cppcache
+    /// <c>SystemProperties::heapLRULimitEnabled()</c>
+    /// (<c>cppcache/include/geode/SystemProperties.hpp:143</c>):
+    /// <c>m_heapLRULimit &gt; 0</c>.
+    /// </summary>
+    public bool HeapLRULimitEnabled => HeapLRULimit > 0;
+
     // cppcache SystemProperties.cpp:113 — DefaultHeapLRUDelta = 10 (% eviction step)
     public int HeapLRUDelta { get; private set; } = 10;
 

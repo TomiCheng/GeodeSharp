@@ -25,25 +25,11 @@ namespace Geode.Client.Internal;
 /// reads them.
 /// </para>
 /// </remarks>
-internal class LocalRegion(
-    IServiceProvider serviceProvider,
-    string name,
-    RegionInternal? parent,
-    RegionAttributes attributes) : RegionInternal(attributes)
+internal class LocalRegion : RegionInternal
 {
-    IServiceProvider _ = serviceProvider;
 
     static ObjectFactory<LocalRegion> _objectFactory
         = ActivatorUtilities.CreateFactory<LocalRegion>([typeof(string), typeof(RegionInternal), typeof(RegionAttributes)]);
-
-    internal static LocalRegion Create(
-        IServiceProvider serviceProvider,
-        string name,
-        RegionInternal? parent,
-        RegionAttributes attributes)
-    {
-        return _objectFactory(serviceProvider, [name, parent, attributes]);
-    }
 
     /// <summary>cppcache <c>m_attachedPool</c>: attached pool (we route via dm at <see cref="ThinClientRegion"/>).</summary>
     protected IPool? AttachedPool;
@@ -57,9 +43,6 @@ internal class LocalRegion(
     /// <summary>cppcache <c>m_enableTimeStatistics</c>: time-histogram flag (OTel always on; kept for parity).</summary>
     protected bool EnableTimeStatistics;
 
-    /// <summary>cppcache <c>m_entries</c> (<c>EntriesMap*</c>): local entry map (Phase 2+ caching-enabled). Renamed from cppcache's <c>m_entries</c> to avoid clash with <see cref="IRegion.Entries(bool)"/>.</summary>
-    protected object? EntriesMap;
-
     /// <summary>cppcache <c>expiry_task_id_</c>: region-level ExpiryTask id.</summary>
     protected object? ExpiryTaskId;
 
@@ -71,6 +54,9 @@ internal class LocalRegion(
 
     /// <summary>cppcache <c>m_loader</c>: CacheLoader (Phase 2+).</summary>
     protected object? Loader;
+
+    /// <summary>cppcache <c>m_entries</c> (<c>EntriesMap*</c>): local entry map (Phase 2+ caching-enabled). Renamed from cppcache's <c>m_entries</c> to (a) avoid clash with <see cref="IRegion.Entries(bool)"/> and (b) separate from the <see cref="EntriesMap"/> type name.</summary>
+    protected Lazy<EntriesMap?> LocalEntriesMap;
 
     /// <summary>cppcache <c>mutex_</c>: region-wide reader-writer lock (boost::shared_mutex).</summary>
     protected object? Mutex;
@@ -105,41 +91,113 @@ internal class LocalRegion(
     /// <summary>cppcache <c>m_writer</c>: CacheWriter (Phase 2+).</summary>
     protected object? Writer;
 
+    public LocalRegion(
+        IServiceProvider serviceProvider,
+        string name,
+        RegionInternal? parent,
+        RegionAttributes attributes) : base(attributes)
+    {
+        Parent = parent;
+        FullPath = parent is null ? "/" + name : parent.FullPath + "/" + name;
+        Name = name;
+        LocalEntriesMap = new Lazy<EntriesMap?>(() =>
+        {
+            if (attributes.CachingEnabled)
+            {
+                return EntriesMapFactory.CreateMap(serviceProvider, this, attributes);
+            }
+            return null;
+        }, LazyThreadSafetyMode.ExecutionAndPublication);
+    }
+
+    /// <summary>
+    /// Always-local entry count. The body of cppcache
+    /// <c>LocalRegion::size_remote()</c>
+    /// (<c>cppcache/src/LocalRegion.cpp:611-617</c>), exposed as a
+    /// non-virtual helper so <see cref="Size"/>'s no-tx branch can hit
+    /// it directly — mirrors cppcache's <c>LocalRegion::size_remote()</c>
+    /// explicit qualifier at <c>LocalRegion.cpp:628</c>.
+    /// </summary>
+    private int LocalSizeRemote()
+    {
+        // TODO Phase 1.5: CHECK_DESTROY_PENDING — cppcache
+        //   LocalRegion.cpp:612 takes a shared_lock + checks destroy
+        //   pending. Region-lifecycle flag still NIE (RegionInternal
+        //   .IsDestroyed); add the guard when the flag lands.
+
+        if (Attributes.CachingEnabled)
+        {
+            // cppcache LocalRegion.cpp:614 — m_entries->size().
+            // LocalEntriesMap is allocated in the ctor via
+            // EntriesMapFactory.CreateMap when CachingEnabled flips
+            // true (Phase 2+); until that wiring lands the field is
+            // still null so this dereference NREs before reaching the
+            // NIE on EntriesMap.Count.
+            return LocalEntriesMap.Value!.Count;
+        }
+
+        // Proxy / non-caching case — cppcache LocalRegion.cpp:616.
+        return 0;
+    }
+
     /// <summary>
     /// Parent region in the sub-region tree, or <see langword="null"/> for a
     /// root region. Mirrors cppcache <c>LocalRegion::m_parentRegion</c>.
     /// </summary>
-    protected RegionInternal? Parent { get; } = parent;
+    protected RegionInternal? Parent { get; }
 
-    public override string FullPath { get; } = parent is null
-            ? "/" + name
-            : parent.FullPath + "/" + name;
-
-    public override string Name { get; } = name;
+    internal static LocalRegion Create(
+        IServiceProvider serviceProvider,
+        string name,
+        RegionInternal? parent,
+        RegionAttributes attributes)
+    {
+        return _objectFactory(serviceProvider, [name, parent, attributes]);
+    }
 
     /// <summary>
-    /// Local entry count. Mirrors cppcache <c>LocalRegion::size()</c>
-    /// (<c>LocalRegion.cpp</c> via <c>m_entries->size()</c>). We're
-    /// proxy-only today (<see cref="EntriesMap"/> stays null), so the
-    /// local entry count is always 0 — that's the truthful answer for
-    /// a non-caching region. Override on a future caching-enabled
-    /// subclass when <see cref="EntriesMap"/> is materialised.
+    /// Current thread / async-flow's ambient transaction, or
+    /// <see langword="null"/> when no tx is open. Mirrors cppcache
+    /// <c>LocalRegion::getTXState()</c>
+    /// (<c>cppcache/src/LocalRegion.hpp:477</c>), which delegates to
+    /// <c>TSSTXStateWrapper::get().getTXState()</c>.
     /// </summary>
-    public override int Size => 0;
+    internal TXState? GetTXState()
+    {
+        // TODO Phase 4+ (transactions): wire to TSSTXStateWrapper
+        //   equivalent — likely a static AsyncLocal<TXState?> on a
+        //   TSSTXStateWrapper helper, set by CacheTransactionManager
+        //   .Begin / cleared by Commit / Rollback. Returning null today
+        //   matches the "no transaction in progress" branch in every
+        //   caller (e.g. LocalRegion::size line 619-629), so call sites
+        //   can already reference this method without behavioural drift.
+        return null;
+    }
 
-    // ── Abstract RegionInternal members satisfied as NIE ───────
-    // Mirrors cppcache LocalRegion being concrete: every IRegion op
-    // has a "local default" sitting at this layer; ThinClientRegion
-    // overrides them with wire-bound bodies. Until the local entry-map
-    // (EntriesMap) ships we throw NotImplementedException — when
-    // caching-enabled lands, these bodies switch to consulting
-    // EntriesMap (cppcache LocalRegion.cpp:getNoThrow / putNoThrow
-    // template path) and only fall through to a derived hook for the
-    // network leg.
+    /// <summary>
+    /// Whether the current op is local-only — either because this region
+    /// instance is a plain <see cref="LocalRegion"/> (no server backing)
+    /// or because the caller flagged the op with
+    /// <see cref="CacheEventFlags.Local"/>. Mirrors cppcache
+    /// <c>LocalRegion::isLocalOp</c>
+    /// (<c>cppcache/src/LocalRegion.hpp:482-485</c>).
+    /// </summary>
+    internal bool IsLocalOp(CacheEventFlags? eventFlags = null) =>
+        // cppcache `typeid(*this) == typeid(LocalRegion)`: exact-type
+        // (not derived) RTTI check. ThinClientRegion (and future
+        // subclasses) carry a server, so they return false here.
+        GetType() == typeof(LocalRegion)
+        || (eventFlags is { } f && f.HasFlag(CacheEventFlags.Local));
 
-    /// <inheritdoc />
-    public override IPool Pool =>
-        throw new NotImplementedException("LocalRegion has no attached pool; ThinClientRegion override carries it.");
+    /// <summary>
+    /// Virtual hook used by <see cref="Size"/>'s in-tx branch. Default
+    /// body matches the non-virtual <see cref="LocalSizeRemote"/> —
+    /// <see cref="ThinClientRegion"/> overrides (Phase 1.5+) to round-trip
+    /// <c>TcrMessageSize</c> to the server. Mirrors cppcache
+    /// <c>LocalRegion::size_remote()</c> as the virtual dispatch target
+    /// (called at <c>LocalRegion.cpp:625</c>).
+    /// </summary>
+    internal virtual int SizeRemote() => LocalSizeRemote();
 
     /// <inheritdoc />
     public override Task ClearAsync(object? callback = null, CancellationToken ct = default) =>
@@ -193,4 +251,69 @@ internal class LocalRegion(
     /// <inheritdoc />
     public override Task<object?> SelectValueAsync(string predicate, CancellationToken ct = default) =>
         throw new NotImplementedException("LocalRegion.SelectValueAsync: pending OQL routing through ThinClientRegion override.");
+
+    public override string FullPath { get; }
+
+    public override string Name { get; }
+
+    // ── Abstract RegionInternal members satisfied as NIE ───────
+    // Mirrors cppcache LocalRegion being concrete: every IRegion op
+    // has a "local default" sitting at this layer; ThinClientRegion
+    // overrides them with wire-bound bodies. Until the local entry-map
+    // (EntriesMap) ships we throw NotImplementedException — when
+    // caching-enabled lands, these bodies switch to consulting
+    // EntriesMap (cppcache LocalRegion.cpp:getNoThrow / putNoThrow
+    // template path) and only fall through to a derived hook for the
+    // network leg.
+
+    /// <inheritdoc />
+    public override IPool Pool =>
+        throw new NotImplementedException("LocalRegion has no attached pool; ThinClientRegion override carries it.");
+
+    /// <summary>
+    /// Mirrors cppcache <c>LocalRegion::size()</c>
+    /// (<c>cppcache/src/LocalRegion.cpp:619-629</c>): tx-aware dispatch
+    /// over the local entry count.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// cppcache differentiates the two paths via a non-virtual call
+    /// qualifier (<c>LocalRegion::size_remote()</c> at line 628) for the
+    /// no-tx branch vs. a virtual call (<c>size_remote()</c> at line
+    /// 625) for the in-tx branch. C# has no syntax to bypass virtual
+    /// dispatch from <c>this</c>, so the body is split into a non-virtual
+    /// helper (<see cref="LocalSizeRemote"/>) plus a virtual hook
+    /// (<see cref="SizeRemote"/>) — the no-tx branch calls the helper
+    /// directly, the in-tx branch goes through the virtual.
+    /// </para>
+    /// <para>
+    /// We deliberately do <b>not</b> mirror cppcache's
+    /// <c>return GF_NOTSUP;</c> on the tx + isLocalOp case
+    /// (<c>LocalRegion.cpp:623</c>) — that returns the raw int 12 as
+    /// though it were an entry count, which looks like a cppcache bug.
+    /// We throw <see cref="NotSupportedException"/> instead.
+    /// </para>
+    /// </remarks>
+    public override int Size
+    {
+        get
+        {
+            var txState = GetTXState();
+            if (txState is not null)
+            {
+                if (IsLocalOp())
+                {
+                    // cppcache LocalRegion.cpp:622-624 returns GF_NOTSUP
+                    // as a uint count — we throw instead. Pure local
+                    // region can't satisfy a tx (no server to coordinate
+                    // with), so calling Size in this combo is API misuse.
+                    throw new NotSupportedException(
+                        "Region.Size: not supported on a local-only region inside a transaction.");
+                }
+                return SizeRemote();
+            }
+            return LocalSizeRemote();
+        }
+    }
+
 }

@@ -14,7 +14,7 @@ public class CachingProxyEntryLruCreateAsyncTests(IGeodeCacheFactory factory)
     [Fact(Skip = "Pending ct entry guard")]
     public async Task CreateAsync_AlreadyCancelledToken_Throws()
     {
-        const string cacheName = nameof(CreateAsync_AlreadyCancelledToken_Throws);
+        const string cacheName = nameof(CachingProxyEntryLruCreateAsyncTests);
         try
         {
             var cache = await NewCacheAsync(cacheName);

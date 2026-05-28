@@ -29,7 +29,7 @@ public class ProxyClearAsyncTests(IGeodeCacheFactory factory)
     [Fact(Skip = "Pending ct entry guard")]
     public async Task ClearAsync_AlreadyCancelledToken_Throws()
     {
-        const string cacheName = nameof(ClearAsync_AlreadyCancelledToken_Throws);
+        const string cacheName = nameof(ProxyClearAsyncTests);
         try
         {
             var cache = await NewCacheAsync(cacheName);

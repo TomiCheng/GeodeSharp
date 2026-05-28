@@ -1,6 +1,6 @@
 using Xunit;
 
-namespace Geode.Client.Tests.ApiFirst;
+namespace Geode.Client.Tests.Pool;
 
 /// <summary>
 /// Public-surface tests for <see cref="IPoolManager"/> + <see cref="IPoolFactory"/>

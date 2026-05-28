@@ -14,7 +14,7 @@ public class LocalUnregisterKeysAsyncTests(IGeodeCacheFactory factory)
     [Fact(Skip = "Pending ct entry guard")]
     public async Task UnregisterKeysAsync_AlreadyCancelledToken_Throws()
     {
-        const string cacheName = nameof(UnregisterKeysAsync_AlreadyCancelledToken_Throws);
+        const string cacheName = nameof(LocalUnregisterKeysAsyncTests);
         try
         {
             var cache = await NewCacheAsync(cacheName);

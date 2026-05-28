@@ -14,7 +14,7 @@ public class CachingProxyEntryLruUnregisterRegexAsyncTests(IGeodeCacheFactory fa
     [Fact(Skip = "Pending ct entry guard")]
     public async Task UnregisterRegexAsync_AlreadyCancelledToken_Throws()
     {
-        const string cacheName = nameof(UnregisterRegexAsync_AlreadyCancelledToken_Throws);
+        const string cacheName = nameof(CachingProxyEntryLruUnregisterRegexAsyncTests);
         try
         {
             var cache = await NewCacheAsync(cacheName);

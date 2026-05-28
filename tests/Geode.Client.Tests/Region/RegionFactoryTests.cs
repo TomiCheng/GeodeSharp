@@ -1,7 +1,7 @@
 using Geode.Client.Internal;
 using Xunit;
 
-namespace Geode.Client.Tests.ApiFirst;
+namespace Geode.Client.Tests.Region;
 
 /// <summary>
 /// Public-surface tests for <see cref="RegionFactory"/> +

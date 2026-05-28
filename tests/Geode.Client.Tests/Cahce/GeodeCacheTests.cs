@@ -1,6 +1,6 @@
 using Xunit;
 
-namespace Geode.Client.Tests.ApiFirst;
+namespace Geode.Client.Tests.Cache;
 
 /// <summary>
 /// Public-surface tests for <see cref="IGeodeCacheFactory"/> — covers the

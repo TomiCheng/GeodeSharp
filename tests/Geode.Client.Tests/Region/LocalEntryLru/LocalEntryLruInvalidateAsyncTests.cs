@@ -14,7 +14,7 @@ public class LocalEntryLruInvalidateAsyncTests(IGeodeCacheFactory factory)
     [Fact(Skip = "Pending ct entry guard")]
     public async Task InvalidateAsync_AlreadyCancelledToken_Throws()
     {
-        const string cacheName = nameof(InvalidateAsync_AlreadyCancelledToken_Throws);
+        const string cacheName = nameof(LocalEntryLruInvalidateAsyncTests);
         try
         {
             var cache = await NewCacheAsync(cacheName);

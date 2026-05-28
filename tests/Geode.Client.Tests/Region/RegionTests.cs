@@ -1,4 +1,3 @@
-using Geode.Client.Tests.ApiFirst;
 using Xunit;
 
 namespace Geode.Client.Tests.Region;

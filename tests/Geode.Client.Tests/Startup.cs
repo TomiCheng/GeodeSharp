@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Geode.Client.Tests.Region;
+namespace Geode.Client.Tests;
 
 /// <summary>
 /// Xunit.DependencyInjection Startup for the <c>Region</c> namespace.

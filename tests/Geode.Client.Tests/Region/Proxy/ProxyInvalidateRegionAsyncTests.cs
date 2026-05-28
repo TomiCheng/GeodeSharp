@@ -14,7 +14,7 @@ public class ProxyInvalidateRegionAsyncTests(IGeodeCacheFactory factory)
     [Fact(Skip = "Pending ct entry guard")]
     public async Task InvalidateRegionAsync_AlreadyCancelledToken_Throws()
     {
-        const string cacheName = nameof(InvalidateRegionAsync_AlreadyCancelledToken_Throws);
+        const string cacheName = nameof(ProxyInvalidateRegionAsyncTests);
         try
         {
             var cache = await NewCacheAsync(cacheName);

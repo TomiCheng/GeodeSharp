@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Internal;
 
@@ -16,11 +17,30 @@ namespace Geode.Client.Internal;
 /// for the non-segment responsibilities (tombstone list, destroy tracker,
 /// region back-ref, expiry manager) which arrive Phase 2+.
 /// </remarks>
-internal class ConcurrentEntriesMap(IServiceProvider serviceProvider, LocalRegion region)
+internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
+    EntryFactory factory, bool concurrencyChecksEnabled, LocalRegion region, int concurrency)
     : EntriesMap
 {
     IServiceProvider _ = serviceProvider;
     LocalRegion _0 = region;
+
+    static readonly ObjectFactory<ConcurrentEntriesMap> _objectFactory
+        = ActivatorUtilities.CreateFactory<ConcurrentEntriesMap>(
+            [typeof(EntryFactory), typeof(bool), typeof(LocalRegion), typeof(int)]);
+
+    /// <summary>
+    /// DI-aware factory. Same pattern as <see cref="LocalRegion.Create"/> —
+    /// pre-baked <see cref="ObjectFactory{T}"/> avoids per-call ctor
+    /// resolution.
+    /// </summary>
+    /// <param name="factory"></param>
+    /// <param name="concurrencyChecksEnabled"></param>
+    /// <param name="concurrency"></param>
+    internal static ConcurrentEntriesMap Create(IServiceProvider serviceProvider,
+        EntryFactory factory, bool concurrencyChecksEnabled, LocalRegion region, int concurrency)
+    {
+        return _objectFactory(serviceProvider, [factory, concurrencyChecksEnabled, region, concurrency]);
+    }
 
     /// <summary>
     /// Backing store. Replaces cppcache <c>MapSegment[] m_segments</c>

@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <RootNamespace>Geode.Client.Tests</RootNamespace>
@@ -23,6 +23,14 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Geode.Client\Geode.Client.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Region\CachingProxy\" />
+    <Folder Include="Region\CachingProxyEntryLru\" />
+    <Folder Include="Region\Local\" />
+    <Folder Include="Region\LocalEntryLru\" />
+    <Folder Include="Region\Proxy\" />
   </ItemGroup>
 
 </Project>

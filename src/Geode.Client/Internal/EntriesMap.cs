@@ -15,4 +15,15 @@ internal abstract class EntriesMap
     /// pure virtual).
     /// </summary>
     internal abstract int Count { get; }
+
+    /// <summary>
+    /// Second-stage init invoked by <see cref="EntriesMapFactory.CreateMap"/>
+    /// after construction. Mirrors cppcache <c>EntriesMap::open(initialCapacity)</c>
+    /// (pure virtual) — in cppcache the body allocates the
+    /// <c>MapSegment</c> array and initialises each segment. In the
+    /// .NET port the storage (<see cref="System.Collections.Concurrent.ConcurrentDictionary{TKey, TValue}"/>)
+    /// is already live after ctor, so the default body is a no-op;
+    /// subclasses override when they need capacity-aware allocation.
+    /// </summary>
+    internal virtual void Open(int initialCapacity) { }
 }

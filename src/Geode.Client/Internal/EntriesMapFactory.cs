@@ -37,7 +37,7 @@ internal static class EntriesMapFactory
         LocalRegion localRegion,
         RegionAttributes attributes)
     {
-        EntriesMap? result = null;
+        EntriesMap? result;
 
         var initialCapacity = attributes.InitialCapacity;
         var concurrency = attributes.ConcurrencyLevel;
@@ -54,15 +54,15 @@ internal static class EntriesMapFactory
         //// ── 路徑 1:LRU map ──────────────────────────────────────
         if ((lruLimit != 0) || prop.HeapLRULimitEnabled)
         {
-            //  LRUAction::Action lruEvictionAction;
+            LRUAction.Action lruEvictionAction;
             var dpType = attributes.DiskPolicy;
             if (dpType == CacheDiskPolicy.Overflows)
             {
-                //        lruEvictionAction = LRUAction::OVERFLOW_TO_DISK;
+                lruEvictionAction = LRUAction.Action.OverflowToDisk;
             }
             else if ((dpType == CacheDiskPolicy.None) || prop.HeapLRULimitEnabled)
             {
-                //        lruEvictionAction = LRUAction::LOCAL_DESTROY;
+                lruEvictionAction = LRUAction.Action.LocalDestroy;
                 if (prop.HeapLRULimitEnabled) heapLRUEnabled = true;
             }
             else
@@ -71,7 +71,10 @@ internal static class EntriesMapFactory
             }
             if (ttl > TimeSpan.Zero || idle > TimeSpan.Zero)
             {
-                result = ActivatorUtilities.CreateInstance<LRUEntriesMap>(serviceProvider, localRegion);
+                var factory = LRUExpEntryFactory.Create(serviceProvider, concurrencyChecksEnabled);
+                result = LRUEntriesMap.Create(serviceProvider,
+                    factory, localRegion, lruEvictionAction, lruLimit, concurrencyChecksEnabled,
+                    concurrency, heapLRUEnabled);
                 //        result = new LRUEntriesMap(
                 //            &expiryTaskmanager,
                 //            std::make_unique<LRUExpEntryFactory>(concurrencyChecksEnabled),
@@ -80,18 +83,22 @@ internal static class EntriesMapFactory
             }
             else
             {
-                result = ActivatorUtilities.CreateInstance<LRUEntriesMap>(serviceProvider, localRegion);
+                var factory = LRUEntryFactory.Create(serviceProvider, concurrencyChecksEnabled);
+                result = LRUEntriesMap.Create(serviceProvider,
+                    factory, localRegion, lruEvictionAction, lruLimit, concurrencyChecksEnabled,
+                    concurrency, heapLRUEnabled);
                 //        result = new LRUEntriesMap(
                 //            &expiryTaskmanager,
                 //            std::make_unique<LRUEntryFactory>(concurrencyChecksEnabled),
                 //            region, lruEvictionAction, lruLimit,
                 //            concurrencyChecksEnabled, concurrency, heapLRUEnabled);
             }
-            _ = heapLRUEnabled;   // TODO Phase 2+: pass to LRUEntriesMap ctor (cppcache .cpp:72/79/86)
         }
         else if (ttl > TimeSpan.Zero || idle > TimeSpan.Zero)
         {
-            result = ActivatorUtilities.CreateInstance<ConcurrentEntriesMap>(serviceProvider, localRegion);
+            var factory = ExpEntryFactory.Create(serviceProvider, concurrencyChecksEnabled);
+            result = ConcurrentEntriesMap.Create(serviceProvider,
+                factory, concurrencyChecksEnabled, localRegion, concurrency);
             //    result = new ConcurrentEntriesMap(
             //        &expiryTaskmanager,
             //        std::make_unique<ExpEntryFactory>(concurrencyChecksEnabled),
@@ -101,14 +108,16 @@ internal static class EntriesMapFactory
         }
         else
         {
-            result = ActivatorUtilities.CreateInstance<ConcurrentEntriesMap>(serviceProvider, localRegion);
+            var factory = EntryFactory.Create(serviceProvider, concurrencyChecksEnabled);
+            result = ConcurrentEntriesMap.Create(serviceProvider,
+                factory, concurrencyChecksEnabled, localRegion, concurrency);
             //    result = new ConcurrentEntriesMap(
             //        &expiryTaskmanager,
             //        std::make_unique<EntryFactory>(concurrencyChecksEnabled),
             //        concurrencyChecksEnabled, region, concurrency);
         }
 
-        //result->open(initialCapacity);     // ← 分配 segment 陣列、設容量
+        result.Open(initialCapacity);     // ← 分配 segment 陣列、設容量
         return result;
     }
 }

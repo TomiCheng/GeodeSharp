@@ -52,8 +52,11 @@ internal partial class LocalRegion : RegionInternal
     /// <summary>cppcache <c>m_attachedPool</c>: attached pool (we route via dm at <see cref="ThinClientRegion"/>).</summary>
     protected IPool? AttachedPool;
 
-    /// <summary>cppcache <c>m_cacheStatistics</c>: per-region access / modification timestamps.</summary>
-    protected CachePerfStatistics CacheStatistics;
+    /// <summary>cppcache <c>m_cacheImpl-&gt;getCachePerfStats()</c> (<c>CachePerfStats</c>): cache-wide perf counters (puts / creates / delta). Distinct from the per-region access/modify timestamp <see cref="CacheStatistics"/>.</summary>
+    protected CachePerfStatistics CachePerfStats;
+
+    /// <summary>cppcache <c>m_cacheStatistics</c> (<c>CacheStatistics</c>): per-region last-access / last-modified timestamps for idle / TTL expiry. Returned by <c>getStatistics()</c>; written by <see cref="UpdateAccessAndModifiedTime"/>.</summary>
+    protected readonly CacheStatistics CacheStatistics = new();
 
     /// <summary>cppcache <c>m_destroyPending</c>: region teardown in progress.</summary>
     protected bool DestroyPending;
@@ -67,8 +70,8 @@ internal partial class LocalRegion : RegionInternal
     /// <summary>cppcache <c>m_isPRSingleHopEnabled</c>: single-hop routing for partitioned regions (Phase 4).</summary>
     protected bool IsPrSingleHopEnabled;
 
-    /// <summary>cppcache <c>m_listener</c>: CacheListener (Phase 2+).</summary>
-    protected object? Listener;
+    /// <summary>cppcache <c>m_listener</c>: <see cref="ICacheListener"/> (Phase 2+; null until a listener is attached).</summary>
+    protected ICacheListener? Listener;
 
     /// <summary>cppcache <c>m_loader</c>: CacheLoader (Phase 2+).</summary>
     protected object? Loader;
@@ -135,7 +138,7 @@ internal partial class LocalRegion : RegionInternal
         }, LazyThreadSafetyMode.ExecutionAndPublication);
         RegionStats = ActivatorUtilities.CreateInstance<RegionStatistics>(serviceProvider, FullPath);
         _logger = serviceProvider.GetRequiredService<ILogger<LocalRegion>>();
-        CacheStatistics = serviceProvider.GetRequiredService<CachePerfStatistics>();
+        CachePerfStats = serviceProvider.GetRequiredService<CachePerfStatistics>();
         _serviceProvider = serviceProvider;
     }
 
@@ -267,7 +270,7 @@ internal partial class LocalRegion : RegionInternal
                             _logger.LogDebug(
                                 "Region::localUpdate: updateNoThrow<{ActionName}> for key [{Key}] failed because of invalid delta.",
                                 action.Name, action.Key);
-                            CacheStatistics.DeltaMessageFailure();
+                            CachePerfStats.DeltaMessageFailure();
 
                             // Get full object from server.
                             var (newValue1, versionTag1) = await GetNoThrowFullObjectAsync(null, ct);
@@ -436,9 +439,116 @@ internal partial class LocalRegion : RegionInternal
         object? aCallbackArgument,
         CacheEventFlags eventFlags,
         EntryEventType type,
-        CancellationToken ct) =>
+        CancellationToken ct)
+    {
+        // cppcache 整個 body 包在 `if (m_listener != nullptr)` — 沒 listener 就
+        //   no-op return GF_NOERR。Phase 1.x Listener 永遠 null,這行就讓 put
+        //   走通;非 null 的 dispatch (Phase 2+ 真接 listener) 維持 NIE。
+        if (Listener is null)
+        {
+            return Task.CompletedTask;
+        }
+
         throw new NotImplementedException(
             "LocalRegion.InvokeCacheListenerForEntryEvent: pending Phase 2+ CacheListener feature.");
+        // cppcache LocalRegion::invokeCacheListenerForEntryEvent (LocalRegion.cpp:2693-2770):
+        //
+        //   GfErrType LocalRegion::invokeCacheListenerForEntryEvent(
+        //       const std::shared_ptr<CacheableKey>& key,
+        //       std::shared_ptr<Cacheable>& oldValue,
+        //       const std::shared_ptr<Cacheable>& newValue,
+        //       const std::shared_ptr<Serializable>& aCallbackArgument,
+        //       CacheEventFlags eventFlags, EntryEventType type, bool isLocal) {
+        //     GfErrType err = GF_NOERR;
+        //
+        //     // Check if we have a local cache listener. If so, invoke and return.
+        //     if (m_listener != nullptr) {
+        //       if (oldValue != nullptr && CacheableToken::isInvalid(oldValue)) {
+        //         oldValue = nullptr;
+        //       }
+        //       EntryEvent event(shared_from_this(), key, oldValue, newValue,
+        //                        aCallbackArgument, eventFlags.isNotification());
+        //       const char* eventStr = "unknown";
+        //       try {
+        //         bool updateStats = true;
+        //         /*Update the CacheWriter Stats*/
+        //         int64_t sampleStartNanos = startStatOpTime();
+        //         switch (type) {
+        //           case AFTER_UPDATE: {
+        //             //  when CREATE is received from server for notification
+        //             // then force an afterUpdate even if key is not present in cache.
+        //             if (oldValue != nullptr || eventFlags.isNotificationUpdate() ||
+        //                 isLocal) {
+        //               eventStr = "afterUpdate";
+        //               m_listener->afterUpdate(event);
+        //               break;
+        //             }
+        //             // if oldValue is nullptr then fall to AFTER_CREATE case
+        //             eventStr = "afterCreate";
+        //             m_listener->afterCreate(event);
+        //             break;
+        //           }
+        //           case AFTER_CREATE: {
+        //             eventStr = "afterCreate";
+        //             m_listener->afterCreate(event);
+        //             break;
+        //           }
+        //           case AFTER_DESTROY: {
+        //             eventStr = "afterDestroy";
+        //             m_listener->afterDestroy(event);
+        //             break;
+        //           }
+        //           case AFTER_INVALIDATE: {
+        //             eventStr = "afterInvalidate";
+        //             m_listener->afterInvalidate(event);
+        //             break;
+        //           }
+        //           case BEFORE_CREATE:
+        //           case BEFORE_UPDATE:
+        //           case BEFORE_INVALIDATE:
+        //           case BEFORE_DESTROY: {
+        //             updateStats = false;
+        //             break;
+        //           }
+        //         }
+        //         if (updateStats) {
+        //           m_cacheImpl->getCachePerfStats().incListenerCalls();
+        //           updateStatOpTime(m_regionStats->getStat(),
+        //                            m_regionStats->getListenerCallTimeId(),
+        //                            sampleStartNanos);
+        //           m_regionStats->incListenerCallsCompleted();
+        //         }
+        //       } catch (const Exception& ex) {
+        //         LOGERROR("Exception in CacheListener for key[%s]::%s: %s: %s",
+        //                  Utils::nullSafeToString(key).c_str(), eventStr,
+        //                  ex.getName().c_str(), ex.what());
+        //         err = GF_CACHE_LISTENER_EXCEPTION;
+        //       } catch (...) {
+        //         LOGERROR("Unknown exception in CacheListener for key[%s]::%s",
+        //                  Utils::nullSafeToString(key).c_str(), eventStr);
+        //         err = GF_CACHE_LISTENER_EXCEPTION;
+        //       }
+        //     }
+        //     return err;
+        //   }
+        //
+        // 翻譯備忘:
+        // - `if (m_listener == nullptr)` 整段 skip → Phase 1.x Listener 永遠 null,
+        //   `if (Listener is null) return Task.CompletedTask;` 一行就讓 put 走通。
+        //   下面的 dispatch 是 Phase 2+ CacheListener 真接才填。
+        // - cppcache `isLocal` 是第 7 個 arg,C# 簽章沒帶 — 翻 AFTER_UPDATE 的
+        //   fall-to-create 判斷時要補進來 (或從 eventFlags 推)。
+        // - oldValue invalid-token → null 正規化:CacheableToken.IsInvalid。
+        // - EntryEvent 型別還沒建 (Phase 2+ listener/writer 一起)。
+        // - AFTER_UPDATE 在 oldValue==null 且非 notification/local 時 fall through
+        //   到 afterCreate — switch fall-through,C# 要顯式處理 (沒有隱式貫穿)。
+        // - listener throw → cppcache 收成 GF_CACHE_LISTENER_EXCEPTION err code;
+        //   C# 港大概 catch 後拋 GeodeException 子類 (CacheListenerException?),
+        //   LOGERROR → _logger.LogError。
+        // - incListenerCalls / ListenerCallTime / incListenerCallsCompleted →
+        //   CachePerfStats + RegionStats 對應 (RegionStatistics 已有
+        //   CacheListenerCallCompleted)。
+    }
 
     /// <summary>
     /// CacheWriter dispatch — 依 <paramref name="type"/> 派發到
@@ -497,9 +607,37 @@ internal partial class LocalRegion : RegionInternal
     /// idle / TTL expiry task. NIE placeholder until the expiry-task
     /// scheduler lands.
     /// </remarks>
-    protected virtual void UpdateAccessAndModifiedTime(bool modified) =>
-        throw new NotImplementedException(
-            "LocalRegion.UpdateAccessAndModifiedTime: pending Phase 2+ expiry plumbing.");
+    protected virtual void UpdateAccessAndModifiedTime(bool modified)
+    {
+        // cppcache LocalRegion::updateAccessAndModifiedTime (LocalRegion.cpp:118-139).
+        // locking not required since setters use atomic operations.
+        if (!RegionExpiryEnabled)
+        {
+            return;
+        }
+
+        // cppcache `auto now = steady_clock::now()` → Stopwatch monotonic ticks。
+        //   SetLast*Time 還是 NIE — region-expiry 開啟時 (Phase 2+) 這裡會大聲
+        //   響,Phase 1.x 因上面 early-return 不會到。
+        var now = Stopwatch.GetTimestamp();
+        _logger.LogDebug("Setting last accessed time for region {FullPath} to {Time}", FullPath, now);
+        CacheStatistics.SetLastAccessedTime(now);
+        if (modified)
+        {
+            _logger.LogDebug("Setting last modified time for region {FullPath} to {Time}", FullPath, now);
+            CacheStatistics.SetLastModifiedTime(now);
+        }
+
+        // TODO (cppcache 自己也存疑): should we really touch the parent region??
+        // cppcache dynamic_cast<RegionInternal*>(m_parentRegion) — 我們的
+        //   UpdateAccessAndModifiedTime 掛在 LocalRegion (不在 RegionInternal),
+        //   所以 cast 對象是 LocalRegion;ThinClientRegion 繼承它,涵蓋。protected
+        //   跨 instance 同類別呼叫合法。
+        if (Parent is LocalRegion parent)
+        {
+            parent.UpdateAccessAndModifiedTime(modified);
+        }
+    }
 
     /// <summary>
     /// Touch a single entry's last-access / last-modified timestamps —
@@ -520,21 +658,19 @@ internal partial class LocalRegion : RegionInternal
         throw new NotImplementedException(
             "LocalRegion.UpdateAccessAndModifiedTimeForEntry: pending Phase 2+ expiry plumbing.");
 
+    protected bool EntryExpiryEnabled => Attributes.EntryExpiryEnabled;
+
     /// <summary>
-    /// Whether the region's entry-level expiry policy is configured (TTL
+    /// Whether the region's region-level expiry policy is configured (TTL
     /// or idle-timeout &gt; 0). Mirrors cppcache
-    /// <c>RegionInternal::entryExpiryEnabled</c>
-    /// (<c>cppcache/src/RegionInternal.hpp:313-315</c>) — inline
-    /// non-virtual pure-getter over <c>m_regionAttributes</c>. Property
-    /// in C# port (data-like, no side effects).
+    /// <c>RegionInternal::regionExpiryEnabled</c>
+    /// (<c>cppcache/src/RegionInternal.hpp:317-319</c>) — inline
+    /// non-virtual pure-getter forwarding to
+    /// <see cref="RegionAttributes.RegionExpiryEnabled"/>. Sibling of
+    /// <see cref="EntryExpiryEnabled"/>.
     /// </summary>
-    /// <remarks>
-    /// Phase 2+ expiry feature: real body reads
-    /// <c>Attributes.EntryTimeToLive</c> / <c>EntryIdleTimeout</c>; NIE
-    /// placeholder until those config knobs land.
-    /// </remarks>
-    protected bool EntryExpiryEnabled => throw new NotImplementedException(
-        "LocalRegion.EntryExpiryEnabled: pending Phase 2+ entry-expiry config (TTL / idle-timeout).");
+    protected bool RegionExpiryEnabled => Attributes.RegionExpiryEnabled;
+      
 
     /// <summary>
     /// Parent region in the sub-region tree, or <see langword="null"/> for a
@@ -643,7 +779,7 @@ internal partial class LocalRegion : RegionInternal
                 }
                 catch (GfErrTypeException ex) when (ex.Code == GfErrType.InvalidDelta)
                 {
-                    CacheStatistics.DeltaMessageFailure();
+                    CachePerfStats.DeltaMessageFailure();
                     var (newValue1, versionTag1) = await GetNoThrowFullObjectAsync(eventId, ct)
                         .ConfigureAwait(false);
                     if (newValue1 is not null)
@@ -654,7 +790,7 @@ internal partial class LocalRegion : RegionInternal
                 // Means that delta is on and there is no failure.
                 if (delta is not null)
                 {
-                    CacheStatistics.DeltaReceived();
+                    CachePerfStats.DeltaReceived();
                 }
             }
 
@@ -680,12 +816,12 @@ internal partial class LocalRegion : RegionInternal
         // update the stats
         if (isUpdate)
         {
-            CacheStatistics.Put();
+            CachePerfStats.Put();
         }
         else
         {
             RegionStats.Create();
-            CacheStatistics.Create();
+            CachePerfStats.Create();
         }
         return oldValue;
     }

@@ -102,6 +102,21 @@ public sealed class RegionAttributes
 
     // RegionAttributes.cpp:501 — m_poolName default empty string
     public string PoolName { get; set; } = string.Empty;
+    /// <summary>
+    /// Whether entry-level expiry is configured (TTL or idle-timeout
+    /// &gt; 0). Mirrors cppcache
+    /// <c>RegionAttributes::getEntryExpiryEnabled</c>
+    /// (<c>cppcache/include/geode/RegionAttributes.hpp:334-337</c>).
+    /// </summary>
+    public bool EntryExpiryEnabled => EntryTimeToLive > TimeSpan.Zero || EntryIdleTimeout > TimeSpan.Zero;
+
+    /// <summary>
+    /// Whether region-level expiry is configured (TTL or idle-timeout
+    /// &gt; 0). Mirrors cppcache
+    /// <c>RegionAttributes::getRegionExpiryEnabled</c>
+    /// (<c>cppcache/include/geode/RegionAttributes.hpp:339-342</c>).
+    /// </summary>
+    public bool RegionExpiryEnabled => RegionTimeToLive > TimeSpan.Zero || RegionIdleTimeout > TimeSpan.Zero;
 
     /// <summary>
     /// Deep copy used by <see cref="RegionAttributesFactory.Create"/> so the

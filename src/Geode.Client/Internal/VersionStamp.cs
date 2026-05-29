@@ -16,4 +16,5 @@ internal sealed class VersionStamp
 {
     public void ProcessVersionTag(LocalRegion region, object key, VersionTag versionTag, bool deltaCheck) => throw new NotImplementedException();
     public void SetVersions(VersionTag versionTag) => throw new NotImplementedException();
+    public void SetVersions(VersionStamp other) => throw new NotImplementedException();
 }

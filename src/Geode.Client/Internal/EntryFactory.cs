@@ -49,5 +49,46 @@ internal class EntryFactory(IServiceProvider serviceProvider, bool concurrencyCh
     public MapEntry NewEntry(object key, object newValue,
         int updateCount, int destroyTracker,
         VersionTag? versionTag, VersionStamp? carriedStamp = null)
-        => throw new NotImplementedException();
+    {
+        // cppcache MapSegment::putNoEntry race-loser 早退 (僅在 !concurrencyChecks):
+        //   updateCount >= 0 → caller (AddTrackerForEntry) 在 race-loser,GfErrType
+        //     收成 throw GfErrTypeException(CacheEntryUpdated);UpdateNoThrowAsync
+        //     catch switch 已在等。
+        //   destroyTracker > 0 → 查 m_destroyedKeys、比較 update counter;destroy-
+        //     tracker subsystem 整套 Phase 2+,先 NIE。
+        if (!ConcurrencyChecksEnabled)
+        {
+            if (updateCount >= 0)
+            {
+                throw new GfErrTypeException(GfErrType.CacheEntryUpdated);
+            }
+            if (destroyTracker > 0)
+            {
+                throw new NotImplementedException(
+                    "EntryFactory.NewEntry: destroy-tracker race detection pending Phase 2+ tracker subsystem.");
+            }
+        }
+
+        // cppcache EntryFactory::newMapEntry — concurrency-checks 切兩種 entry 型別
+        MapEntry entry = ConcurrencyChecksEnabled
+            ? new VersionedMapEntryImpl()
+            : new MapEntryImpl();
+        // cppcache `m_entryFactory->newMapEntry(_, key, newEntry)` 之後 key 寫進
+        //   m_key — C# 港 MapEntry 還沒 Key field,待 GetEntry 路徑要用時補。
+        entry.Value = newValue;
+        if (ConcurrencyChecksEnabled)
+        {
+            if (versionTag is not null)
+            {
+                entry.VersionStamp.SetVersions(versionTag);
+            }
+            else if (carriedStamp is not null)
+            {
+                entry.VersionStamp.SetVersions(carriedStamp);
+            }
+        }
+        // cppcache `m_map.emplace(key, newEntry)` 留給 caller
+        //   (ConcurrentEntriesMap.Put 已做 `_map[key] = fresh`)。
+        return entry;
+    }
 }

@@ -34,9 +34,10 @@ internal abstract class EntriesMap
     /// Mirrors cppcache <c>EntriesMap::getEntry</c>
     /// (<c>cppcache/src/EntriesMap.hpp:90-92</c>, pure virtual) — the two
     /// <c>shared_ptr&amp;</c> out-params become a returned tuple per the
-    /// codebase out-param → tuple convention.
+    /// codebase out-param → tuple convention. Body lives on
+    /// <see cref="ConcurrentEntriesMap.GetEntry"/>.
     /// </summary>
-    public (MapEntry? Entry, object? Value) GetEntry(object key) => throw new NotImplementedException();
+    public abstract (MapEntry? Entry, object? Value) GetEntry(object key);
 
     /// <summary>
     /// Inserts <paramref name="newValue"/> for <paramref name="key"/>

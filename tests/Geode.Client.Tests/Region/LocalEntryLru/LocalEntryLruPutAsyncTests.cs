@@ -56,4 +56,75 @@ public class LocalEntryLruPutAsyncTests(IGeodeCacheFactory factory)
             await factory.DisposeCacheAsync(cacheName);
         }
     }
+
+    // Put-data smoke test on an LRU-bounded Local region: storing an entry
+    // should complete without throwing. RegionShortcut.LocalEntryLru routes
+    // through LRUEntriesMap (extends ConcurrentEntriesMap); exercises the
+    // same Put path plus whatever LRU bookkeeping the LRU map adds.
+    [Fact]
+    public async Task PutAsync_StoresValue()
+    {
+        const string cacheName = nameof(LocalEntryLruPutAsyncTests) + "_put";
+        try
+        {
+            var cache = await NewCacheAsync(cacheName);
+            var region = await cache
+                .CreateRegionFactory(RegionShortcut.LocalEntryLru)
+                .CreateAsync<string, string>("orders", TestContext.Current.CancellationToken);
+
+            await region.PutAsync("k", "v", ct: TestContext.Current.CancellationToken);
+        }
+        finally
+        {
+            await factory.DisposeCacheAsync(cacheName);
+        }
+    }
+
+    [Fact]
+    public async Task PutAsync_WithCallback_StoresValue()
+    {
+        const string cacheName = nameof(LocalEntryLruPutAsyncTests) + "_putCallback";
+        try
+        {
+            var cache = await NewCacheAsync(cacheName);
+            var region = await cache
+                .CreateRegionFactory(RegionShortcut.LocalEntryLru)
+                .CreateAsync<string, string>("orders", TestContext.Current.CancellationToken);
+
+            await region.PutAsync("k", "v", callback: "cb", ct: TestContext.Current.CancellationToken);
+        }
+        finally
+        {
+            await factory.DisposeCacheAsync(cacheName);
+        }
+    }
+
+    // LRU eviction: with a 2-entry limit, putting a 3rd entry must evict the
+    // least-recently-used one, capping the local entry count at 2.
+    // RED until LRUEntriesMap's eviction (LRUQueue + trigger) is implemented
+    // — today LRUEntriesMap inherits ConcurrentEntriesMap.Put with no LRU
+    // bookkeeping, so all 3 entries stay and LocalCount == 3.
+    [Fact]
+    public async Task PutAsync_BeyondLruLimit_EvictsToLimit()
+    {
+        const string cacheName = nameof(LocalEntryLruPutAsyncTests) + "_lruEvict";
+        try
+        {
+            var cache = await NewCacheAsync(cacheName);
+            var region = await cache
+                .CreateRegionFactory(RegionShortcut.LocalEntryLru)
+                .SetLruEntriesLimit(2)
+                .CreateAsync<string, string>("orders", TestContext.Current.CancellationToken);
+
+            await region.PutAsync("k1", "v1", ct: TestContext.Current.CancellationToken);
+            await region.PutAsync("k2", "v2", ct: TestContext.Current.CancellationToken);
+            await region.PutAsync("k3", "v3", ct: TestContext.Current.CancellationToken);
+
+            Assert.Equal(2, region.LocalCount);
+        }
+        finally
+        {
+            await factory.DisposeCacheAsync(cacheName);
+        }
+    }
 }

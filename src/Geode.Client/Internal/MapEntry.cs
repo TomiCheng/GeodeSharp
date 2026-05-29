@@ -38,6 +38,31 @@ internal abstract class MapEntry
         "MapEntry.VersionStamp: pending Phase 2+ concurrency-checks plumbing.");
 
     /// <summary>
+    /// Per-entry LRU bookkeeping (LRU-list node + overflow persistence
+    /// handle). Mirrors cppcache <c>MapEntry::getLRUProperties</c>
+    /// (<c>cppcache/src/MapEntry.hpp:57</c>, pure virtual) — non-LRU entries
+    /// throw (like <see cref="VersionStamp"/> for non-versioned); an
+    /// LRU-variant entry overrides to return its
+    /// <see cref="LRUEntryProperties"/>. No LRU-variant entry exists yet, so
+    /// the base always throws; reached only on the overflow path (Phase 4).
+    /// </summary>
+    public virtual LRUEntryProperties LRUProperties => throw new NotImplementedException(
+        "MapEntry.LRUProperties: non-LRU entry has none; pending Phase 2+ LRU-variant entry.");
+
+    /// <summary>
+    /// This entry's key (set once at construction, never reassigned).
+    /// Mirrors cppcache <c>MapEntry::getKey</c> /
+    /// <c>MapEntryImpl::getKeyI</c> (<c>cppcache/src/MapEntry.hpp:52</c>
+    /// pure virtual / <c>cppcache/src/MapEntryImpl.hpp:56-58</c>) — the
+    /// <c>shared_ptr&amp;</c> out-param becomes a return value, read-only
+    /// (cppcache <c>m_key</c> is ctor-only, no setter). Concrete storage on
+    /// <see cref="MapEntryImpl"/>; base throws like the sibling
+    /// <see cref="VersionStamp"/> / <see cref="LRUProperties"/> NIEs.
+    /// </summary>
+    public virtual object Key => throw new NotImplementedException(
+        "MapEntry.Key: pending Phase 2+ entry-key storage on MapEntryImpl.");
+
+    /// <summary>
     /// Current entry value (<see langword="null"/> for
     /// tombstone / deleted-but-not-collected entries). Mirrors cppcache
     /// <c>MapEntry::getValue</c> / <c>setValue</c>

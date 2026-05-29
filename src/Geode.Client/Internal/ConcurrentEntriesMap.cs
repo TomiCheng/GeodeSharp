@@ -63,6 +63,31 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
     public override object? GetFromDisk(object key, MapEntry entry) => throw new NotImplementedException();
 
     /// <inheritdoc />
+    public override (MapEntry? Entry, object? Value) GetEntry(object key)
+    {
+        // cppcache ConcurrentEntriesMap::getEntry → segmentFor → MapSegment::getEntry
+        //   (MapSegment.cpp:379-402). m_spinlock → ConcurrentDictionary lock-free;
+        //   getImplPtr 不需要(_map 直接存 MapEntry)。
+        if (!_map.TryGetValue(key, out var entry))
+        {
+            return (null, null);
+        }
+
+        // cppcache mePtr->getValueI(value) 把 destroyed token 正規化成 null
+        //   (MapEntryImpl::getValueI),接著的判斷再加 tombstone。我們 Value
+        //   不做正規化,所以這裡顯式檢 destroyed + tombstone(+ null)= not found。
+        //   注意:invalid token 不算 not found（cppcache getValueI 只折 destroyed,
+        //   invalidated entry 會把 invalid token 當作「找到」回傳）。
+        var value = entry.Value;
+        if (value is null || CacheableToken.IsDestroyed(value) || CacheableToken.IsTombstone(value))
+        {
+            return (null, null);
+        }
+
+        return (entry, value);
+    }
+
+    /// <inheritdoc />
     public override (MapEntry Entry, object? OldValue, bool IsUpdate) Put(
         object key, object newValue, int updateCount, int destroyTracker, VersionTag? versionTag,
         DataInput? delta = null)

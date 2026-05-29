@@ -838,6 +838,31 @@ internal partial class LocalRegion : RegionInternal
     }
 
     /// <summary>
+    /// Destroys <paramref name="key"/> locally (and, when
+    /// <paramref name="eventFlags"/> distributes, on the server). Mirrors
+    /// cppcache <c>LocalRegion::destroyNoThrow</c>
+    /// (<c>cppcache/src/LocalRegion.hpp:298-302</c>) — sibling of
+    /// <see cref="PutNoThrowAsync"/>; the body will delegate to
+    /// <c>UpdateNoThrowAsync&lt;DestroyActions&gt;</c> once the destroy
+    /// strategy lands. Caller today is the LRU evict path
+    /// (<see cref="LRULocalDestroyAction"/>) with
+    /// <c>EVICTION | LOCAL</c> flags. <paramref name="versionTag"/> is a
+    /// by-value input here (cppcache passes it by value, not by-ref like
+    /// <see cref="PutNoThrowRemoteAsync"/>); <see cref="Protocol.GfErrType"/>
+    /// collapses to throw/void per the codebase err-code → exception
+    /// convention.
+    /// </summary>
+    internal Task DestroyNoThrowAsync(
+        object key,
+        object? aCallbackArgument,
+        int updateCount,
+        CacheEventFlags eventFlags,
+        VersionTag? versionTag = null,
+        CancellationToken ct = default) =>
+        throw new NotImplementedException(
+            "LocalRegion.DestroyNoThrowAsync: pending DestroyActions + UpdateNoThrowAsync<DestroyActions> pipeline.");
+
+    /// <summary>
     /// Propagates the put to the remote server, if any. Mirrors cppcache
     /// <c>LocalRegion::putNoThrow_remote</c>
     /// (<c>cppcache/src/LocalRegion.cpp:3043-3048</c>) — the base impl is

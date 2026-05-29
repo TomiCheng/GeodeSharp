@@ -159,3 +159,40 @@ class(目前部分未登記):
 - **訂閱事件的 async 形狀** — cppcache `CacheListener` 是 sync
   callback;.NET 慣例會做 `IAsyncEnumerable<RegionEvent>` 或
   `Channel<T>` 推送,讓 listener 可以 await。決策推到實作時。
+- **Heap-LRU entry sizing(設計討論,未實作)** — `LocalEntryLru`
+  的 entry-count 淘汰簡單(看 `_map.Count > LruEntriesLimit`),但對純
+  記憶體的 local cache,**heap LRU(看記憶體用量)才是真正想要的
+  bound** — 筆數擋不住「1000 筆大 blob」。難點:Local 存活的 CLR
+  物件(不序列化),.NET 又沒有便宜又準的 per-object size。
+  - **cppcache 怎麼做**:`Serializable::objectSize()` 每型別自報
+    (default 回 0,「只有用 HeapLRU 才需實作」);`LRUEntriesMap`
+    put 時算差量累加到 atomic `m_currentMapSize`,`processLRU()` 超標
+    就從 `lru_queue_` 踢最舊。size **不存 MapEntry**,evict 時重算。
+    PDX 好算是因為 `PdxInstanceImpl` 握著序列化 `buffer_`,size ≈
+    `buffer_.size()`。
+  - **我們打算走的 sizing spec**(取代「每型別 objectSize 契約」):
+    `SerializationRegistry` 提供 **length-only pass** — counting /
+    measure-mode 的 `DataOutput`(`GetSpan` 回收 scratch 不長大,
+    `WrittenCount` 照累加),跑既有 `WriteObjectAsync` 走訪但不產生
+    bytes,回 `WrittenCount`。三路 dispatch:
+    `IPdxSerializable` → 型別自報 `ObjectSize()`;被 `IPdxSerializer`
+    處理 → `serializer.ObjectSize(obj)`;一般有 converter 的型別 →
+    counting pass;**以上都不是(沒 converter)→ 0**(對齊 cppcache
+    「回 0 = 不參與 heap 控管」)。
+  - **與 cppcache 的差異 / 我們的優化**:長度 **cache 在 `MapEntry`**
+    (put 算一次,evict 直接讀,不像 cppcache 重算);running total 放
+    `LRUEntriesMap` 的 counter(對齊 `m_currentMapSize`)。
+  - **估算精度**:heap 帳不用 byte 級精準(cppcache `objectSize` 也是
+    估)。直覺值:`string` ≈ `Length*2`、`int[]` ≈ `Length*4`、
+    `byte[]` ≈ `Length`(+ DSCode tag / 長度前綴幾 bytes)。
+  - **更深的取捨**:heap 帳便宜的前提是「值以序列化形式存著」(PDX
+    握 buffer 即如此)。若要 heap LRU 對所有型別都便宜,真正的問題是
+    **Local 要存活物件還是 blob** — 存 blob → size = blob 長度(免費)
+    但 get 要反序列化。counting pass 是「不改儲存策略也能量長度」的
+    折衷。
+  - 觸發設定兩條:entry-count(`RegionAttributes.LruEntriesLimit`,
+    per-region,有 factory setter)vs heap(`SystemProperties
+    .HeapLRULimit`,全 cache,`appsettings` 的 `Heap.LRULimit`)。
+    後者 `LRUEntriesMap` ctor 收了 `heapLRUEnabled` 但目前未讀
+    (CS9113)。**先做 entry-count + `LOCAL_DESTROY`,heap LRU 照本
+    spec 後排。**

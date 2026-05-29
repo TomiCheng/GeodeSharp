@@ -369,4 +369,9 @@ internal sealed class SerializationRegistry(
         //     remote-schema divergence scenario shows up.
         return value;
     }
+    public long CheckAndGetObjectSize(object? newValue)
+    {
+        // TODO
+        return 0L;
+    }
 }

@@ -105,4 +105,30 @@ public class LocalPutAsyncTests(IGeodeCacheFactory factory)
             await factory.DisposeCacheAsync(cacheName);
         }
     }
+
+    // Put with a non-null callback argument threads it through the pipeline
+    // (PutActions.CallbackArgument) and completes. Smoke-level only — there
+    // is no observable sink for the callback yet (CacheListener / CacheWriter
+    // aren't attachable and their dispatch is NIE), so this confirms the
+    // callback doesn't break the put, not that any hook received it. A true
+    // "listener observed the callback" test waits on listener wiring +
+    // InvokeCacheListenerForEntryEvent dispatch.
+    [Fact]
+    public async Task PutAsync_WithCallback_StoresValue()
+    {
+        const string cacheName = nameof(LocalPutAsyncTests) + "_putCallback";
+        try
+        {
+            var cache = await NewCacheAsync(cacheName);
+            var region = await cache
+                .CreateRegionFactory(RegionShortcut.Local)
+                .CreateAsync<string, string>("orders", TestContext.Current.CancellationToken);
+
+            await region.PutAsync("k", "v", callback: "cb", ct: TestContext.Current.CancellationToken);
+        }
+        finally
+        {
+            await factory.DisposeCacheAsync(cacheName);
+        }
+    }
 }

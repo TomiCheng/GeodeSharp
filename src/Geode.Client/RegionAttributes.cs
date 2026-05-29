@@ -5,117 +5,97 @@ namespace Geode.Client;
 
 /// <summary>
 /// Region configuration bag built by <see cref="RegionAttributesFactory"/>.
-/// Snapshotted via <see cref="Clone"/> at <see cref="RegionAttributesFactory.Create"/>
-/// time so further factory mutations don't affect already-built regions.
 /// </summary>
-/// <remarks>
-/// Mirrors cppcache <c>RegionAttributes</c>
-/// (<c>cppcache/include/geode/RegionAttributes.hpp</c> +
-/// <c>cppcache/src/RegionAttributes.cpp:36-58</c>) 1:1. Phase 1.x carries
-/// only the fields exposed through <see cref="RegionFactory"/> setters;
-/// expiration / listener / persistence / partition-resolver fields land
-/// in Phase 2+ — they're declared now so feature ports can grep for the
-/// cppcache name and find the C# counterpart at the same shape.
-/// </remarks>
-public sealed class RegionAttributes
+public sealed class RegionAttributes : ICloneable
 {
     // ── Map attributes (cppcache RegionAttributes.cpp:50-53) ─────
 
-    // RegionAttributes.cpp:50 — m_initialCapacity(10000)
+    /// <summary>Initial bucket count of the local entry map.</summary>
     public int InitialCapacity { get; set; } = 10000;
 
-    // RegionAttributes.cpp:51 — m_loadFactor(0.75)
+    /// <summary>Load factor of the local entry map.</summary>
     public float LoadFactor { get; set; } = 0.75f;
 
-    // RegionAttributes.cpp:52 — m_concurrencyLevel(16)
+    /// <summary>Estimated concurrent-writer count sizing the local entry map's striping.</summary>
     public int ConcurrencyLevel { get; set; } = 16;
 
-    // RegionAttributes.cpp:43 — m_lruEntriesLimit(0)
+    /// <summary>Max local entries before LRU eviction; <c>0</c> disables LRU.</summary>
     public int LruEntriesLimit { get; set; }
 
-    // RegionAttributes.cpp:53 — m_diskPolicy(DiskPolicyType::NONE)
+    /// <summary>What happens to entries past the LRU limit (none / overflow-to-disk).</summary>
     public CacheDiskPolicy DiskPolicy { get; set; } = CacheDiskPolicy.None;
 
-    // RegionAttributes.cpp:42 — m_lruEvictionAction(ExpirationAction::LOCAL_DESTROY)
+    /// <summary>Action applied to an LRU-evicted entry (local-destroy / invalidate).</summary>
     public CacheExpirationAction LruEvictionAction { get; set; } = CacheExpirationAction.LocalDestroy;
 
-    // ── Caching / cloning / concurrency (cppcache .cpp:44, 57-58) ─
+    // ── Caching / cloning / concurrency ──────────────────────────
 
-    // RegionAttributes.cpp:44 — m_caching(true)
+    /// <summary>Whether entries are stored locally; <see langword="false"/> routes every op to the server.</summary>
     public bool CachingEnabled { get; set; } = true;
 
-    // RegionAttributes.cpp:57 — m_isClonable(false)
+    /// <summary>Whether to clone the old value before applying a delta.</summary>
     public bool CloningEnabled { get; set; }
 
-    // RegionAttributes.cpp:58 — m_isConcurrencyChecksEnabled(true)
+    /// <summary>Whether per-entry version checks run on region entries.</summary>
     public bool ConcurrencyChecksEnabled { get; set; } = true;
 
-    // ── Expiration (cppcache .cpp:38-41, 46-49) ─────────────────
+    // ── Expiration ───────────────────────────────────────────────
     // 4 (duration, action) pairs. Phase 2+ expiration phase wires
     // the regional / per-entry timers; today they're carried so
     // EntriesMapFactory's ttl/idle branch can already read them.
 
-    // RegionAttributes.cpp:49 — m_regionTimeToLive(0s)
+    /// <summary>Region-wide time-to-live; <see cref="TimeSpan.Zero"/> disables.</summary>
     public TimeSpan RegionTimeToLive { get; set; } = TimeSpan.Zero;
 
-    // RegionAttributes.cpp:38 — m_regionTimeToLiveExpirationAction(INVALIDATE)
+    /// <summary>Action applied when the region's time-to-live expires.</summary>
     public CacheExpirationAction RegionTimeToLiveAction { get; set; } = CacheExpirationAction.Invalidate;
 
-    // RegionAttributes.cpp:48 — m_regionIdleTimeout(0s)
+    /// <summary>Region-wide idle timeout; <see cref="TimeSpan.Zero"/> disables.</summary>
     public TimeSpan RegionIdleTimeout { get; set; } = TimeSpan.Zero;
 
-    // RegionAttributes.cpp:39 — m_regionIdleTimeoutExpirationAction(INVALIDATE)
+    /// <summary>Action applied when the region's idle timeout expires.</summary>
     public CacheExpirationAction RegionIdleTimeoutAction { get; set; } = CacheExpirationAction.Invalidate;
 
-    // RegionAttributes.cpp:47 — m_entryTimeToLive(0s)
+    /// <summary>Per-entry time-to-live; <see cref="TimeSpan.Zero"/> disables.</summary>
     public TimeSpan EntryTimeToLive { get; set; } = TimeSpan.Zero;
 
-    // RegionAttributes.cpp:40 — m_entryTimeToLiveExpirationAction(INVALIDATE)
+    /// <summary>Action applied when an entry's time-to-live expires.</summary>
     public CacheExpirationAction EntryTimeToLiveAction { get; set; } = CacheExpirationAction.Invalidate;
 
-    // RegionAttributes.cpp:46 — m_entryIdleTimeout(0s)
+    /// <summary>Per-entry idle timeout; <see cref="TimeSpan.Zero"/> disables.</summary>
     public TimeSpan EntryIdleTimeout { get; set; } = TimeSpan.Zero;
 
-    // RegionAttributes.cpp:41 — m_entryIdleTimeoutExpirationAction(INVALIDATE)
+    /// <summary>Action applied when an entry's idle timeout expires.</summary>
     public CacheExpirationAction EntryIdleTimeoutAction { get; set; } = CacheExpirationAction.Invalidate;
 
-    // ── Callback objects (cppcache header getCacheLoader / etc.) ─
-    // Parked as object? until each callback interface ships
-    // (Phase 2+: ICacheLoader / ICacheWriter / ICacheListener;
-    // Phase 4: IPartitionResolver for partitioned regions). cppcache
-    // also carries Library + Factory string pairs for cache.xml dynamic
-    // loading; not ported — .NET goes through DI / Type registration.
+    // ── Callback objects ─────────────────────────────────────────
+    // No factory setter wired yet (Phase 2+ / Phase 4).
 
-    // RegionAttributes header:87 — getCacheLoader() → shared_ptr<CacheLoader>
-    public object? CacheLoader { get; set; }
+    /// <summary>Loader invoked on a cache miss, or <see langword="null"/> for none.</summary>
+    public ICacheLoader? CacheLoader { get; set; }
 
-    // RegionAttributes header:94 — getCacheWriter() → shared_ptr<CacheWriter>
-    public object? CacheWriter { get; set; }
+    /// <summary>Writer consulted before a mutating op (may veto), or <see langword="null"/> for none.</summary>
+    public ICacheWriter? CacheWriter { get; set; }
 
-    // RegionAttributes header:101 — getCacheListener() → shared_ptr<CacheListener>
-    public object? CacheListener { get; set; }
+    /// <summary>Listener notified after cache events, or <see langword="null"/> for none.</summary>
+    public ICacheListener? CacheListener { get; set; }
 
-    // RegionAttributes header:109 — getPartitionResolver() → shared_ptr<PartitionResolver>
-    public object? PartitionResolver { get; set; }
+    /// <summary>Resolver mapping entries to partition buckets for single-hop routing, or <see langword="null"/> for none.</summary>
+    public IPartitionResolver? PartitionResolver { get; set; }
 
     // ── Pool ─────────────────────────────────────────────────────
 
-    // RegionAttributes.cpp:501 — m_poolName default empty string
+    /// <summary>Name of the pool the region attaches to; empty falls back to the cache's default pool.</summary>
     public string PoolName { get; set; } = string.Empty;
-    /// <summary>
-    /// Whether entry-level expiry is configured (TTL or idle-timeout
-    /// &gt; 0). Mirrors cppcache
-    /// <c>RegionAttributes::getEntryExpiryEnabled</c>
-    /// (<c>cppcache/include/geode/RegionAttributes.hpp:334-337</c>).
-    /// </summary>
+
+    /// <summary>Whether server→client notification (subscription / register-interest) is enabled for the region.</summary>
+    /// <remarks>No factory setter — set internally / forced on for HA regions, not via the user attributes factory. Phase 4+ (subscription / HA channel); no reader until then.</remarks>
+    public bool ClientNotificationEnabled { get; set; }
+
+    /// <summary>Whether entry-level expiry is configured (TTL or idle-timeout &gt; 0).</summary>
     public bool EntryExpiryEnabled => EntryTimeToLive > TimeSpan.Zero || EntryIdleTimeout > TimeSpan.Zero;
 
-    /// <summary>
-    /// Whether region-level expiry is configured (TTL or idle-timeout
-    /// &gt; 0). Mirrors cppcache
-    /// <c>RegionAttributes::getRegionExpiryEnabled</c>
-    /// (<c>cppcache/include/geode/RegionAttributes.hpp:339-342</c>).
-    /// </summary>
+    /// <summary>Whether region-level expiry is configured (TTL or idle-timeout &gt; 0).</summary>
     public bool RegionExpiryEnabled => RegionTimeToLive > TimeSpan.Zero || RegionIdleTimeout > TimeSpan.Zero;
 
     /// <summary>
@@ -148,6 +128,10 @@ public sealed class RegionAttributes
             CacheListener = CacheListener,
             PartitionResolver = PartitionResolver,
             PoolName = PoolName,
+            ClientNotificationEnabled = ClientNotificationEnabled,
         };
     }
+
+    /// <summary>Explicit <see cref="ICloneable"/> implementation delegating to the strongly-typed <see cref="Clone"/>.</summary>
+    object ICloneable.Clone() => Clone();
 }

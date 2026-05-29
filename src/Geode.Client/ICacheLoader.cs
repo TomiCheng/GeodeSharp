@@ -7,8 +7,8 @@ namespace Geode.Client;
 public interface ICacheLoader
 {
     /// <summary>Produce the value for <paramref name="key"/> on a miss, or <see langword="null"/> if none.</summary>
-    object? Load(IRegion region, object key, object? callbackArgument);
+    ValueTask<object?> LoadAsync(IRegion region, object key, object? callbackArgument, CancellationToken ct = default);
 
     /// <summary>When the loader is detached or the cache is closed.</summary>
-    void Close(IRegion region) { }
+    ValueTask CloseAsync(IRegion region, CancellationToken ct = default) => default;
 }

@@ -199,7 +199,7 @@ internal partial class LocalRegion : RegionInternal
             // invokeCacheWriterForEntryEvent method has the check that if oldValue
             // is a CacheableToken then it sets it to nullptr; also determines if it
             // should be BEFORE_UPDATE or BEFORE_CREATE depending on oldValue
-            if (!InvokeCacheWriterForEntryEvent(action.Key, action.OldValue, action.Value,
+            if (!await InvokeCacheWriterForEntryEvent(action.Key, action.OldValue, action.Value,
                 action.CallbackArgument, action.EventFlags, action.BeforeEventType))
             {
                 action.LogCacheWriterFailure();
@@ -420,8 +420,8 @@ internal partial class LocalRegion : RegionInternal
 
     /// <summary>
     /// CacheListener dispatch — 派發到 <c>Listener</c> 的
-    /// <c>AfterCreate</c> / <c>AfterUpdate</c> / <c>AfterDestroy</c> /
-    /// <c>AfterInvalidate</c> callback。Mirrors cppcache
+    /// <c>AfterCreateAsync</c> / <c>AfterUpdateAsync</c> / <c>AfterDestroyAsync</c> /
+    /// <c>AfterInvalidateAsync</c> callback。Mirrors cppcache
     /// <c>LocalRegion::invokeCacheListenerForEntryEvent</c>
     /// (<c>cppcache/src/LocalRegion.hpp:546</c>).
     /// </summary>
@@ -432,7 +432,7 @@ internal partial class LocalRegion : RegionInternal
     /// 擋住的話會走到這 — 之後 body 內部要先看 <c>Listener is null</c>
     /// 直接 return。NIE stub 純占位讓翻譯行對得起來。
     /// </remarks>
-    protected Task InvokeCacheListenerForEntryEvent(
+    protected ValueTask InvokeCacheListenerForEntryEvent(
         object key,
         object? oldValue,
         object? newValue,
@@ -446,7 +446,7 @@ internal partial class LocalRegion : RegionInternal
         //   走通;非 null 的 dispatch (Phase 2+ 真接 listener) 維持 NIE。
         if (Listener is null)
         {
-            return Task.CompletedTask;
+            return default;
         }
 
         throw new NotImplementedException(
@@ -552,8 +552,8 @@ internal partial class LocalRegion : RegionInternal
 
     /// <summary>
     /// CacheWriter dispatch — 依 <paramref name="type"/> 派發到
-    /// <c>Writer</c> 的 <c>BeforeCreate</c> / <c>BeforeUpdate</c> /
-    /// <c>BeforeDestroy</c> / <c>BeforeInvalidate</c> callback;回
+    /// <c>Writer</c> 的 <c>BeforeCreateAsync</c> / <c>BeforeUpdateAsync</c> /
+    /// <c>BeforeDestroyAsync</c> / <c>BeforeInvalidateAsync</c> callback;回
     /// <see langword="true"/> 表 writer 同意該 op,<see langword="false"/>
     /// 表 veto。Mirrors cppcache
     /// <c>LocalRegion::invokeCacheWriterForEntryEvent</c>
@@ -572,7 +572,7 @@ internal partial class LocalRegion : RegionInternal
     /// method 不會被觸發 — NIE stub 純占位讓翻譯行對得起來。
     /// </para>
     /// </remarks>
-    protected bool InvokeCacheWriterForEntryEvent(
+    protected ValueTask<bool> InvokeCacheWriterForEntryEvent(
         object key,
         object? oldValue,
         object? newValue,

@@ -105,12 +105,22 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
             bool isOldValueToken = CacheableToken.IsToken(oldValue);
             if (CacheableToken.IsOverflowed(oldValue))
             {
-                var persistenceInfo = entry.LRUProperties.PersistenceInfo;
-                oldValue = _persistenceManager!.Read(key, persistenceInfo);
-                if (oldValue is not null)
-                {
-                    _persistenceManager.Destroy(key, persistenceInfo);
-                }
+                // cppcache reads the overflowed value back inline:
+                //   oldValue = m_pmPtr->read(key, persistenceInfo);
+                //   if (oldValue != nullptr) m_pmPtr->destroy(key, persistenceInfo);
+                // IPersistenceManager is now async (ReadAsync / DestroyAsync),
+                // but this Put override is synchronous (mirrors cppcache's sync
+                // ConcurrentEntriesMap::put). We will NOT sync-over-async here
+                // (banned by the async-first rule; risks threadpool deadlock) —
+                // the whole overflow read-back / eviction path must itself become
+                // async in Phase 4. Deferred with the rest of the overflow
+                // accounting (cf. ValidEntriesSize() NIE below). Unreachable in
+                // Phase 1.x: no overflow-to-disk write path exists yet, so
+                // oldValue is never an overflow token.
+                throw new NotImplementedException(
+                    "LRUEntriesMap.Put: Phase 4 overflow read-back pending an async " +
+                    "eviction path (IPersistenceManager.ReadAsync/DestroyAsync cannot " +
+                    "be awaited from the synchronous Put override).");
             }
 
             // TODO:  when can newValue be a token ??

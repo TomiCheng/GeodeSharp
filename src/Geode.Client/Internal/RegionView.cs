@@ -63,8 +63,8 @@ internal sealed class RegionView<TKey, TValue>(IRegion inner, TypedResultAdapter
     public IRegion CreateSubregion(string name, RegionAttributes attributes) => inner.CreateSubregion(name, attributes);
 
     // ── Typed ops (the C# call-site shape) ─────────────────────
-    public Task PutAsync(TKey key, TValue value, object? callback = null, CancellationToken ct = default)
-        => inner.PutAsync(key, value!, callback, ct);
+    public Task PutAsync(TKey key, TValue? value, object? callback = null, CancellationToken ct = default)
+        => inner.PutAsync(key, value, callback, ct);
 
     public async Task<TValue?> GetAsync(TKey key, object? callback = null, CancellationToken ct = default)
     {
@@ -205,7 +205,7 @@ internal sealed class RegionView<TKey, TValue>(IRegion inner, TypedResultAdapter
     }
 
     // ── Object-typed ops (explicit interface — forward to inner) ──
-    Task IRegion.PutAsync(object key, object value, object? callback, CancellationToken ct)
+    Task IRegion.PutAsync(object key, object? value, object? callback, CancellationToken ct)
         => inner.PutAsync(key, value, callback, ct);
 
     Task<object?> IRegion.GetAsync(object key, object? callback, CancellationToken ct)

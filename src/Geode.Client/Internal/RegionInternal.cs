@@ -37,7 +37,7 @@ internal abstract class RegionInternal(RegionAttributes attributes)
     /// Region attributes snapshot taken at <see cref="RegionFactory.CreateAsync"/>
     /// time. Mirrors cppcache <c>RegionInternal::m_regionAttributes</c>.
     /// </summary>
-    protected RegionAttributes Attributes { get; } = attributes;
+    protected internal RegionAttributes Attributes { get; } = attributes;
 
     public abstract Task ClearAsync(object? callback = null, CancellationToken ct = default);
 
@@ -155,7 +155,7 @@ internal abstract class RegionInternal(RegionAttributes attributes)
         throw new NotImplementedException("Local entry map not yet implemented.");
     public abstract Task PutAllAsync(IReadOnlyDictionary<object, object> map, object? callback = null, CancellationToken ct = default);
 
-    public abstract Task PutAsync(object key, object value, object? callback = null, CancellationToken ct = default);
+    public abstract Task PutAsync(object key, object? value, object? callback = null, CancellationToken ct = default);
     public abstract Task<IReadOnlyList<object>> QueryAsync(string predicate, CancellationToken ct = default);
 
     /// <inheritdoc />

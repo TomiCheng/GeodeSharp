@@ -165,7 +165,7 @@ public interface IRegion
     /// <summary>
     /// Put <paramref name="value"/> under <paramref name="key"/> on the server.
     /// </summary>
-    Task PutAsync(object key, object value, object? callback = null, CancellationToken ct = default);
+    Task PutAsync(object key, object? value, object? callback = null, CancellationToken ct = default);
 
     /// <summary>
     /// Runs an OQL <paramref name="predicate"/> (WHERE-clause only, or a full
@@ -347,8 +347,8 @@ public interface IRegion<TKey, TValue> : IRegion
 
     /// <inheritdoc cref="IRegion.PutAllAsync(IReadOnlyDictionary{object,object}, object?, CancellationToken)" />
     Task PutAllAsync(IReadOnlyDictionary<TKey, TValue> map, object? callback = null, CancellationToken ct = default);
-    /// <inheritdoc cref="IRegion.PutAsync(object, object, object?, CancellationToken)" />
-    Task PutAsync(TKey key, TValue value, object? callback = null, CancellationToken ct = default);
+    /// <inheritdoc cref="IRegion.PutAsync(object, object?, object?, CancellationToken)" />
+    Task PutAsync(TKey key, TValue? value, object? callback = null, CancellationToken ct = default);
 
     /// <inheritdoc cref="IRegion.RemoveAllAsync(IReadOnlyCollection{object}, object?, CancellationToken)" />
     Task RemoveAllAsync(IReadOnlyCollection<TKey> keys, object? callback = null, CancellationToken ct = default);

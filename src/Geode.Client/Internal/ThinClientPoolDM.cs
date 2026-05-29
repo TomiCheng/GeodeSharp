@@ -1887,6 +1887,7 @@ internal class ThinClientPoolDM(
         // TODO Phase 2+: if (val <= 0 && _clearPdxRegistry) ClearPdxTypeRegistry();
         //   cppcache ThinClientPoolDM.cpp:2065-2067.
     }
+    public void UpdateNotificationStats(bool value1, int value2) => throw new NotImplementedException();
 }
 
 /*

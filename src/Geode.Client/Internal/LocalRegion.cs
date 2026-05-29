@@ -41,6 +41,14 @@ internal partial class LocalRegion : RegionInternal
     /// </summary>
     private readonly ILogger<LocalRegion> _logger;
 
+    /// <summary>
+    /// Captured DI root — handed to per-op action factories
+    /// (<see cref="PutActions.Create"/> 等) so each action 拿自己的
+    /// <c>ILogger&lt;TAction&gt;</c>,不再透過 <see cref="_logger"/>
+    /// reach-through。
+    /// </summary>
+    private readonly IServiceProvider _serviceProvider;
+
     /// <summary>cppcache <c>m_attachedPool</c>: attached pool (we route via dm at <see cref="ThinClientRegion"/>).</summary>
     protected IPool? AttachedPool;
 
@@ -99,8 +107,8 @@ internal partial class LocalRegion : RegionInternal
     /// <summary>cppcache <c>m_subRegions</c>: synchronized_map name → sub-region.</summary>
     protected object? SubRegions;
 
-    /// <summary>cppcache <c>m_tombstoneList</c>: CRDT tombstone tracking.</summary>
-    protected object? TombstoneList;
+    /// <summary>cppcache <c>m_tombstoneList</c>: CRDT tombstone tracking. Phase 2+ concurrency-checks 落地時 allocate。</summary>
+    internal TombstoneList? TombstoneList;
 
     /// <summary>cppcache <c>m_transactionEnabled</c>: TX support flag.</summary>
     protected bool TransactionEnabled;
@@ -128,6 +136,7 @@ internal partial class LocalRegion : RegionInternal
         RegionStats = ActivatorUtilities.CreateInstance<RegionStatistics>(serviceProvider, FullPath);
         _logger = serviceProvider.GetRequiredService<ILogger<LocalRegion>>();
         CacheStatistics = serviceProvider.GetRequiredService<CachePerfStatistics>();
+        _serviceProvider = serviceProvider;
     }
 
     /// <summary>
@@ -266,7 +275,7 @@ internal partial class LocalRegion : RegionInternal
                             {
                                 try
                                 {
-                                    LocalEntriesMap.Value!.Put(action.Key, newValue1, action.Entry, action.OldValue, action.UpdateCount, 0,
+                                    (action.Entry, action.OldValue, _) = LocalEntriesMap.Value!.Put(action.Key, newValue1, action.UpdateCount, 0,
                                         versionTag1 ?? action.VersionTag!);
                                 }
                                 catch (GfErrTypeException ex1)
@@ -423,7 +432,7 @@ internal partial class LocalRegion : RegionInternal
     protected Task InvokeCacheListenerForEntryEvent(
         object key,
         object? oldValue,
-        object newValue,
+        object? newValue,
         object? aCallbackArgument,
         CacheEventFlags eventFlags,
         EntryEventType type,
@@ -456,12 +465,76 @@ internal partial class LocalRegion : RegionInternal
     protected bool InvokeCacheWriterForEntryEvent(
         object key,
         object? oldValue,
-        object newValue,
+        object? newValue,
         object? aCallbackArgument,
         CacheEventFlags eventFlags,
         EntryEventType type) =>
         throw new NotImplementedException(
             "LocalRegion.InvokeCacheWriterForEntryEvent: pending Phase 2+ CacheWriter feature.");
+
+    /// <summary>
+    /// Schedule the entry-level expiry task for a freshly-created (or
+    /// freshly-promoted) entry. Mirrors cppcache
+    /// <c>LocalRegion::registerEntryExpiryTask</c>
+    /// (<c>cppcache/src/LocalRegion.hpp:558</c>).
+    /// </summary>
+    /// <remarks>
+    /// Phase 2+ expiry plumbing: cppcache pushes an <c>ExpiryTask</c>
+    /// onto <see cref="ExpiryTaskId"/>'s scheduler. NIE placeholder
+    /// until the scheduler + per-entry task id surface land.
+    /// </remarks>
+    protected void RegisterEntryExpiryTask(MapEntry entry) =>
+        throw new NotImplementedException(
+            "LocalRegion.RegisterEntryExpiryTask: pending Phase 2+ expiry plumbing.");
+
+    /// <summary>
+    /// Touch the region-wide last-access / last-modified timestamps.
+    /// Mirrors cppcache <c>LocalRegion::updateAccessAndModifiedTime</c>
+    /// (<c>cppcache/src/LocalRegion.hpp:146</c>, <c>override</c>).
+    /// </summary>
+    /// <remarks>
+    /// Phase 2+ expiry plumbing: writes timestamps for the region-level
+    /// idle / TTL expiry task. NIE placeholder until the expiry-task
+    /// scheduler lands.
+    /// </remarks>
+    protected virtual void UpdateAccessAndModifiedTime(bool modified) =>
+        throw new NotImplementedException(
+            "LocalRegion.UpdateAccessAndModifiedTime: pending Phase 2+ expiry plumbing.");
+
+    /// <summary>
+    /// Touch a single entry's last-access / last-modified timestamps —
+    /// used after an update to refresh the entry's idle / TTL countdown
+    /// without re-scheduling. Mirrors cppcache
+    /// <c>LocalRegion::updateAccessAndModifiedTimeForEntry</c>
+    /// (<c>cppcache/src/LocalRegion.hpp:556-557</c>, <c>override</c>).
+    /// </summary>
+    /// <remarks>
+    /// Phase 2+ expiry plumbing: cppcache writes
+    /// <c>entry-&gt;getExpProperties()</c>'s last-access / last-modified;
+    /// reachable only when <see cref="EntryExpiryEnabled"/> is true and
+    /// an existing entry already has a scheduled task. NIE placeholder
+    /// until <c>MapEntry</c>'s expiry-properties surface + the scheduler
+    /// land.
+    /// </remarks>
+    protected virtual void UpdateAccessAndModifiedTimeForEntry(MapEntry entry, bool modified) =>
+        throw new NotImplementedException(
+            "LocalRegion.UpdateAccessAndModifiedTimeForEntry: pending Phase 2+ expiry plumbing.");
+
+    /// <summary>
+    /// Whether the region's entry-level expiry policy is configured (TTL
+    /// or idle-timeout &gt; 0). Mirrors cppcache
+    /// <c>RegionInternal::entryExpiryEnabled</c>
+    /// (<c>cppcache/src/RegionInternal.hpp:313-315</c>) — inline
+    /// non-virtual pure-getter over <c>m_regionAttributes</c>. Property
+    /// in C# port (data-like, no side effects).
+    /// </summary>
+    /// <remarks>
+    /// Phase 2+ expiry feature: real body reads
+    /// <c>Attributes.EntryTimeToLive</c> / <c>EntryIdleTimeout</c>; NIE
+    /// placeholder until those config knobs land.
+    /// </remarks>
+    protected bool EntryExpiryEnabled => throw new NotImplementedException(
+        "LocalRegion.EntryExpiryEnabled: pending Phase 2+ entry-expiry config (TTL / idle-timeout).");
 
     /// <summary>
     /// Parent region in the sub-region tree, or <see langword="null"/> for a
@@ -511,16 +584,157 @@ internal partial class LocalRegion : RegionInternal
         // subclasses) carry a server, so they return false here.
         GetType() == typeof(LocalRegion)
         || (eventFlags is { } f && f.HasFlag(CacheEventFlags.Local));
+
+    /// <summary>
+    /// Writes the entry to the local in-memory map (create or update) and
+    /// bumps region stats / expiry tasks. Mirrors cppcache
+    /// <c>LocalRegion::putLocal</c>
+    /// (<c>cppcache/src/LocalRegion.cpp:2471-2543</c>). Target of
+    /// <see cref="PutActions.LocalUpdateAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// cppcache out-param <c>oldValue</c>
+    /// (<c>std::shared_ptr&lt;Cacheable&gt;&amp;</c>) → return value;
+    /// <c>versionTag</c> / <c>delta</c> / <c>eventId</c> are inputs. The
+    /// <c>GfErrType</c> return collapses: hard failures throw, while
+    /// pipeline signals (<c>GF_INVALID_DELTA</c>,
+    /// <c>GF_CACHE_CONCURRENT_MODIFICATION_EXCEPTION</c> from
+    /// <c>m_entries-&gt;put</c>/<c>create</c>) ride
+    /// <see cref="GfErrTypeException"/> for the caller to <c>switch</c>.
+    /// </para>
+    /// <para>
+    /// Phase 2+ caching-enabled: needs <see cref="LocalEntriesMap"/>
+    /// (<c>EntriesMap</c> create / put) + expiry-task plumbing, both
+    /// still NIE. The <c>GF_INVALID_DELTA</c> branch round-trips
+    /// <see cref="GetNoThrowFullObjectAsync"/> (hence async). NIE
+    /// placeholder until those land.
+    /// </para>
+    /// </remarks>
+    internal async Task<object?> PutLocalAsync(
+        string name,
+        bool isCreate,
+        object key,
+        object? value,
+        bool cachingEnabled,
+        int updateCount,
+        int destroyTracker,
+        VersionTag? versionTag,
+        DataInput? delta = null,
+        object? eventId = null,
+        CancellationToken ct = default)
+    {
+        var isUpdate = !isCreate;
+        object? oldValue = null;
+        if (cachingEnabled)
+        {
+            MapEntry? entry = null;
+            _logger.LogDebug("{ActionName}: region [{FullPath}] putting key [{Key}], value [{Value}]",
+                name, FullPath, key, value);
+            if (isCreate)
+            {
+                (entry, oldValue) = LocalEntriesMap.Value!.Create(key, value!, updateCount, destroyTracker, versionTag);
+            }
+            else
+            {
+                try
+                {
+                    (entry, oldValue, isUpdate) = LocalEntriesMap.Value!.Put(key, value!, updateCount, destroyTracker, versionTag!, delta);
+                }
+                catch (GfErrTypeException ex) when (ex.Code == GfErrType.InvalidDelta)
+                {
+                    CacheStatistics.DeltaMessageFailure();
+                    var (newValue1, versionTag1) = await GetNoThrowFullObjectAsync(eventId, ct)
+                        .ConfigureAwait(false);
+                    if (newValue1 is not null)
+                    {
+                        (entry, oldValue, isUpdate) = LocalEntriesMap.Value!.Put(key, newValue1, updateCount, destroyTracker, (versionTag1 ?? versionTag)!);
+                    }
+                }
+                // Means that delta is on and there is no failure.
+                if (delta is not null)
+                {
+                    CacheStatistics.DeltaReceived();
+                }
+            }
+
+            _logger.LogDebug(
+                "{ActionName}: region [{FullPath}] {Operation} key [{Key}], value [{Value}]",
+                name, FullPath, isUpdate ? "updated" : "created", key, value);
+
+            // entry/region expiration
+            if (EntryExpiryEnabled)
+            {
+                if (isUpdate && entry!.IsExpiryTaskScheduled)
+                {
+                    UpdateAccessAndModifiedTimeForEntry(entry, true);
+                }
+                else
+                {
+                    RegisterEntryExpiryTask(entry!);
+                }
+            }
+            UpdateAccessAndModifiedTime(true);
+        }
+
+        // update the stats
+        if (isUpdate)
+        {
+            CacheStatistics.Put();
+        }
+        else
+        {
+            RegionStats.Create();
+            CacheStatistics.Create();
+        }
+        return oldValue;
+    }
     internal async Task PutNoThrowAsync(
         object key,
-        object value,
+        object? value,
         object? callbackArgument,
         int updateCount,
         CacheEventFlags eventFlags,
         CancellationToken ct = default)
     {
-        var put = new PutActions(this, key, value, callbackArgument, updateCount, eventFlags);
+        var put = PutActions.Create(_serviceProvider, this, key, value, callbackArgument, updateCount, eventFlags);
         await UpdateNoThrowAsync(put, ct);
+    }
+
+    /// <summary>
+    /// Propagates the put to the remote server, if any. Mirrors cppcache
+    /// <c>LocalRegion::putNoThrow_remote</c>
+    /// (<c>cppcache/src/LocalRegion.cpp:3043-3048</c>) — the base impl is
+    /// a no-op success (a pure local region has no server backing);
+    /// <c>ThinClientRegion</c> overrides
+    /// (<c>cppcache/src/ThinClientRegion.cpp:888</c>) with the
+    /// <c>TcrMessagePut</c> wire round-trip. Target of
+    /// <see cref="PutActions.RemoteUpdateAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// cppcache out-param <c>versionTag</c>
+    /// (<c>std::shared_ptr&lt;VersionTag&gt;&amp;</c>) → return value; C#
+    /// async can't take <c>ref</c>/<c>out</c>. The
+    /// <c>RemoteUpdateAsync</c> caller writes the result back to
+    /// <c>action.VersionTag</c>. <c>checkDelta</c> keeps cppcache's
+    /// <see langword="true"/> default.
+    /// </para>
+    /// <para>
+    /// Phase 1.x proxy-only: the real put always routes through the
+    /// <c>ThinClientRegion</c> override, so this base body is never
+    /// reached for a server-backed region. NIE placeholder until either
+    /// the override lands or a genuine local-only no-op is wired.
+    /// </para>
+    /// </remarks>
+    internal virtual Task<VersionTag?> PutNoThrowRemoteAsync(
+        object key,
+        object? value,
+        object? aCallbackArgument,
+        bool checkDelta = true,
+        CancellationToken ct = default)
+    {
+        return Task.FromResult((VersionTag?)null);
     }
 
     /// <summary>
@@ -564,7 +778,7 @@ internal partial class LocalRegion : RegionInternal
     public override Task PutAllAsync(IReadOnlyDictionary<object, object> map, object? callback = null, CancellationToken ct = default) =>
         throw new NotImplementedException("LocalRegion.PutAllAsync: pending local entry map.");
 
-    public override async Task PutAsync(object key, object value, object? callbackArgument = null, CancellationToken ct = default)
+    public override async Task PutAsync(object key, object? value, object? callbackArgument = null, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         var sampleStartTimestamp = Stopwatch.GetTimestamp();
@@ -669,5 +883,7 @@ internal partial class LocalRegion : RegionInternal
     /// <inheritdoc />
     public override IPool Pool =>
         throw new NotImplementedException("LocalRegion has no attached pool; ThinClientRegion override carries it.");
+
+    
 
 }

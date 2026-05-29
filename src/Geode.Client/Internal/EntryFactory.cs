@@ -1,3 +1,4 @@
+using Geode.Client.Protocol;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Geode.Client.Internal;
@@ -34,4 +35,19 @@ internal class EntryFactory(IServiceProvider serviceProvider, bool concurrencyCh
     {
         return _objectFactory(serviceProvider, [concurrencyChecksEnabled]);
     }
+    /// <summary>
+    /// Build a fresh <see cref="MapEntry"/> for <paramref name="key"/>.
+    /// Mirrors cppcache <c>MapSegment::putNoEntry</c> ctor-time args
+    /// (<c>cppcache/src/MapSegment.hpp:125-130</c>) folded into the
+    /// factory: <paramref name="updateCount"/> + <paramref name="destroyTracker"/>
+    /// seed concurrent-update bookkeeping; <paramref name="versionTag"/>
+    /// seeds the new entry's stamp; <paramref name="carriedStamp"/> is
+    /// non-<see langword="null"/> only on tombstone-resurrection — it
+    /// carries the prior entry's version history into the replacement so
+    /// distributed concurrency-checks stay coherent.
+    /// </summary>
+    public MapEntry NewEntry(object key, object newValue,
+        int updateCount, int destroyTracker,
+        VersionTag? versionTag, VersionStamp? carriedStamp = null)
+        => throw new NotImplementedException();
 }

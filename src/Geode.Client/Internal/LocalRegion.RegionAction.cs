@@ -30,11 +30,11 @@ partial class LocalRegion
         string Name { get; }
         object? OldValue { get; set; }
         object Key { get; }
-        object Value { get; }
+        object? Value { get; }
         object? CallbackArgument { get; }
         CacheEventFlags EventFlags { get; }
         int UpdateCount { get; set; }
         VersionTag? VersionTag { get; set; }
-        MapEntry? Entry { get; }
+        MapEntry? Entry { get; set; }
     }
 }

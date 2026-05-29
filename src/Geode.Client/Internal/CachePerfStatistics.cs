@@ -185,6 +185,20 @@ internal class CachePerfStatistics(SystemProperties systemProperties)
     public void DeltaMessageFailure() => _deltaMessageFailures.Add(1, _cacheNameTag);
 
     /// <summary>
+    /// Total delta messages received from server (successfully applied —
+    /// either directly or after invalid-delta fallback fetched a full
+    /// object and re-put). Mirrors cppcache <c>deltaReceived</c>
+    /// IntCounter (<c>CachePerfStats.hpp:237-239</c>).
+    /// </summary>
+    private static readonly Counter<int> _deltaReceived = _meter.CreateCounter<int>(
+        "DeltaReceived",
+        unit: "entries",
+        description: "Total delta messages received from server. Mirrors cppcache `deltaReceived` IntCounter.");
+
+    /// <summary>Bump <see cref="_deltaReceived"/>.</summary>
+    public void DeltaReceived() => _deltaReceived.Add(1, _cacheNameTag);
+
+    /// <summary>
     /// Elapsed time spent applying one delta message received from server.
     /// Mirrors cppcache <c>processedDeltaMessagesTime</c> LongCounter (ns;
     /// <c>CachePerfStats.hpp:93-97</c>). <c>.Count</c> subsumes cppcache

@@ -1,3 +1,5 @@
+using Geode.Client.Protocol;
+
 namespace Geode.Client.Internal;
 
 /// <summary>
@@ -26,4 +28,8 @@ internal abstract class EntriesMap
     /// subclasses override when they need capacity-aware allocation.
     /// </summary>
     internal virtual void Open(int initialCapacity) { }
+    public int AddTrackerForEntry(object key, object? oldValue, bool addIfAbsent, bool failIfPresent, bool value) => throw new NotImplementedException();
+    public void RemoveTrackerForEntry(object key) => throw new NotImplementedException();
+    public void Put(object key, object newValue1, MapEntry? entry, object? oldValue, int updateCount, int value, VersionTag versionTag)
+        => throw new NotImplementedException();
 }

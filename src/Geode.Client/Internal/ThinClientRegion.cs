@@ -456,41 +456,41 @@ internal partial class ThinClientRegion(
         }
     }
 
-    public override async Task PutAsync(object key, object value, object? callback = null, CancellationToken ct = default)
-    {
-        using var _ = _dmContextAccessor.BeginScope(_dm!);
-        _logger.LogTrace("PutAsync: region={RegionPath}, key={Key}", FullPath, key);
-        var (threadId, sequenceId) = _eventIdGenerator.Next();
-        var request = await TcrMessageBuilder
-         .Create(_serviceProvider, MessageType.Put)   // cppcache TcrMessage.cpp:1999 — m_msgType = TcrMessage::PUT
-         .AddRegionNamePart(FullPath)
-         .AddNullObjectPart()
-         .AddInt32Part(0)
-         .AddKeyPart(key)
-         .AddCacheableBooleanPart(false)  // isDelta
-         .AddValuePart(value)
-         .AddEventIdPart(threadId, sequenceId)
-         .BuildAsync(ct);
+    //public override async Task PutAsync(object key, object value, object? callback = null, CancellationToken ct = default)
+    //{
+    //    using var _ = _dmContextAccessor.BeginScope(_dm!);
+    //    _logger.LogTrace("PutAsync: region={RegionPath}, key={Key}", FullPath, key);
+    //    var (threadId, sequenceId) = _eventIdGenerator.Next();
+    //    var request = await TcrMessageBuilder
+    //     .Create(_serviceProvider, MessageType.Put)   // cppcache TcrMessage.cpp:1999 — m_msgType = TcrMessage::PUT
+    //     .AddRegionNamePart(FullPath)
+    //     .AddNullObjectPart()
+    //     .AddInt32Part(0)
+    //     .AddKeyPart(key)
+    //     .AddCacheableBooleanPart(false)  // isDelta
+    //     .AddValuePart(value)
+    //     .AddEventIdPart(threadId, sequenceId)
+    //     .BuildAsync(ct);
 
-        var reply = await _dm!
-            .SendSyncRequestAsync(request, ct: ct)
-            .ConfigureAwait(false);
+    //    var reply = await _dm!
+    //        .SendSyncRequestAsync(request, ct: ct)
+    //        .ConfigureAwait(false);
 
 
-        switch (reply.MessageType)
-        {
-            case MessageType.Reply:
-                return;
+    //    switch (reply.MessageType)
+    //    {
+    //        case MessageType.Reply:
+    //            return;
 
-            case MessageType.Exception:
-                throw new GeodeException(
-                    $"Server exception on Put '{FullPath}': " +
-                    TcrMessageHelper.DecodeExceptionPreview(reply));
-            default:
-                throw new GeodeException(
-                    $"Unexpected reply type {reply.MessageType} for Put on '{FullPath}'.");
-        }
-    }
+    //        case MessageType.Exception:
+    //            throw new GeodeException(
+    //                $"Server exception on Put '{FullPath}': " +
+    //                TcrMessageHelper.DecodeExceptionPreview(reply));
+    //        default:
+    //            throw new GeodeException(
+    //                $"Unexpected reply type {reply.MessageType} for Put on '{FullPath}'.");
+    //    }
+    //}
 
     /// <summary>
     /// Shared OQL routing for region convenience methods

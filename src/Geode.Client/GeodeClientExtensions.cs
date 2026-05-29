@@ -189,6 +189,7 @@ public static class GeodeClientExtensions
         services.TryAddScoped<PdxTypeRegistry>();
         services.TryAddScoped<SerializationRegistry>();
         services.TryAddScoped<ExpiryTaskManager>();
+        services.TryAddScoped<CachePerfStatistics>();
         services.TryAddSingleton<DmContextAccessor>();
         return services;
     }

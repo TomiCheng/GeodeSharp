@@ -7,4 +7,5 @@ namespace Geode.Client.Internal;
 /// </summary>
 internal sealed class TXState
 {
+    public void SetDirty() => throw new NotImplementedException();
 }

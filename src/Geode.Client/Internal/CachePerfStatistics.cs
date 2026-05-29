@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using Geode.Client.Services;
 
 namespace Geode.Client.Internal;
 
@@ -22,16 +23,24 @@ namespace Geode.Client.Internal;
 /// counters but uses <c>incInt(id, +1)</c> / <c>incInt(id, -1)</c>, which
 /// is UpDownCounter semantics). cppcache <c>CachePerfStats</c> is
 /// singleton-per-cache (<c>findFirstStatisticsByType("CachePerfStats")</c>);
-/// we follow suit and don't tag with a <c>cacheName</c> until a real
-/// multi-cache observability need surfaces.
+/// we follow suit (DI <c>Scoped</c>) and tag every emission with
+/// <c>cacheName</c> (from <see cref="SystemProperties.Name"/>) so
+/// multi-cache deployments can group-by in exporters.
 /// </remarks>
-internal class CachePerfStatistics
+internal class CachePerfStatistics(SystemProperties systemProperties)
 {
     private static readonly string _assemblyVersion =
         typeof(CachePerfStatistics).Assembly.GetName().Version?.ToString() ?? "0.0.0";
 
     /// <summary>Shared Meter for all cache-scoped instruments.</summary>
     private static readonly Meter _meter = new("Geode.Client.Cache", _assemblyVersion);
+
+    /// <summary>
+    /// Cached <c>cacheName</c> tag attached to every instrument
+    /// emission — lets multi-cache exporters group-by cache name.
+    /// </summary>
+    private readonly KeyValuePair<string, object?> _cacheNameTag =
+        new("cacheName", systemProperties.Name);
 
     /// <summary>
     /// Total entry creates across the cache. Mirrors cppcache <c>creates</c>
@@ -43,7 +52,7 @@ internal class CachePerfStatistics
         description: "Total entry creates across the cache. Mirrors cppcache `creates` IntCounter.");
 
     /// <summary>Bump <see cref="_creates"/>.</summary>
-    public void Create() => _creates.Add(1);
+    public void Create() => _creates.Add(1, _cacheNameTag);
 
     /// <summary>
     /// Total entry puts across the cache. Mirrors cppcache <c>puts</c>
@@ -55,7 +64,7 @@ internal class CachePerfStatistics
         description: "Total entry puts across the cache. Mirrors cppcache `puts` IntCounter.");
 
     /// <summary>Bump <see cref="_puts"/>.</summary>
-    public void Put() => _puts.Add(1);
+    public void Put() => _puts.Add(1, _cacheNameTag);
 
     /// <summary>
     /// Total entry gets across the cache. Mirrors cppcache <c>gets</c>
@@ -67,7 +76,7 @@ internal class CachePerfStatistics
         description: "Total entry gets across the cache. Mirrors cppcache `gets` IntCounter.");
 
     /// <summary>Bump <see cref="_gets"/>.</summary>
-    public void Get() => _gets.Add(1);
+    public void Get() => _gets.Add(1, _cacheNameTag);
 
     /// <summary>
     /// Total entry-get hits (server returned a value). Mirrors cppcache
@@ -79,7 +88,7 @@ internal class CachePerfStatistics
         description: "Total entry-get hits. Mirrors cppcache `hits` IntCounter.");
 
     /// <summary>Bump <see cref="_hits"/>.</summary>
-    public void Hit() => _hits.Add(1);
+    public void Hit() => _hits.Add(1, _cacheNameTag);
 
     /// <summary>
     /// Total entry-get misses (server returned no value / not found). Mirrors
@@ -91,7 +100,7 @@ internal class CachePerfStatistics
         description: "Total entry-get misses. Mirrors cppcache `misses` IntCounter.");
 
     /// <summary>Bump <see cref="_misses"/>.</summary>
-    public void Miss() => _misses.Add(1);
+    public void Miss() => _misses.Add(1, _cacheNameTag);
 
     /// <summary>
     /// Total entry destroys across the cache. Mirrors cppcache <c>destroys</c>
@@ -103,7 +112,7 @@ internal class CachePerfStatistics
         description: "Total entry destroys across the cache. Mirrors cppcache `destroys` IntCounter.");
 
     /// <summary>Bump <see cref="_destroys"/>.</summary>
-    public void Destroy() => _destroys.Add(1);
+    public void Destroy() => _destroys.Add(1, _cacheNameTag);
 
     /// <summary>
     /// Total entries overflowed to persistence backup. Mirrors cppcache
@@ -117,7 +126,7 @@ internal class CachePerfStatistics
         description: "Total entries overflowed to persistence backup. Mirrors cppcache `overflows` IntCounter.");
 
     /// <summary>Bump <see cref="_overflows"/>.</summary>
-    public void Overflow() => _overflows.Add(1);
+    public void Overflow() => _overflows.Add(1, _cacheNameTag);
 
     /// <summary>
     /// Total entries retrieved from persistence backup into the cache.
@@ -131,7 +140,7 @@ internal class CachePerfStatistics
         description: "Total entries retrieved from persistence backup. Mirrors cppcache `retrieves` IntCounter.");
 
     /// <summary>Bump <see cref="_retrieves"/>.</summary>
-    public void Retrieve() => _retrieves.Add(1);
+    public void Retrieve() => _retrieves.Add(1, _cacheNameTag);
 
     /// <summary>
     /// Total cache-listener invocations that completed. Mirrors cppcache
@@ -145,7 +154,7 @@ internal class CachePerfStatistics
         description: "Total cache-listener invocations that completed. Mirrors cppcache `cacheListenerCallsCompleted` IntCounter.");
 
     /// <summary>Bump <see cref="_cacheListenerCallsCompleted"/>.</summary>
-    public void CacheListenerCallCompleted() => _cacheListenerCallsCompleted.Add(1);
+    public void CacheListenerCallCompleted() => _cacheListenerCallsCompleted.Add(1, _cacheNameTag);
 
     /// <summary>
     /// Total puts containing delta sent client → server. Mirrors cppcache
@@ -159,7 +168,7 @@ internal class CachePerfStatistics
         description: "Total puts containing delta sent client→server. Mirrors cppcache `deltaPuts` IntCounter.");
 
     /// <summary>Bump <see cref="_deltaPuts"/>.</summary>
-    public void DeltaPut() => _deltaPuts.Add(1);
+    public void DeltaPut() => _deltaPuts.Add(1, _cacheNameTag);
 
     /// <summary>
     /// Total messages containing delta received from server that failed
@@ -173,7 +182,7 @@ internal class CachePerfStatistics
         description: "Total delta messages received from server that failed to apply. Mirrors cppcache `deltaMessageFailures` IntCounter.");
 
     /// <summary>Bump <see cref="_deltaMessageFailures"/>.</summary>
-    public void DeltaMessageFailure() => _deltaMessageFailures.Add(1);
+    public void DeltaMessageFailure() => _deltaMessageFailures.Add(1, _cacheNameTag);
 
     /// <summary>
     /// Elapsed time spent applying one delta message received from server.
@@ -193,7 +202,7 @@ internal class CachePerfStatistics
 
     /// <summary>Record one <see cref="_processedDeltaMessageTime"/> sample.</summary>
     public void ProcessedDeltaMessage(TimeSpan elapsed) =>
-        _processedDeltaMessageTime.Record(elapsed.TotalSeconds);
+        _processedDeltaMessageTime.Record(elapsed.TotalSeconds, _cacheNameTag);
 
     /// <summary>
     /// Current number of tombstones the client knows about. cppcache
@@ -209,10 +218,10 @@ internal class CachePerfStatistics
         description: "Current number of tombstones the client knows about. Mirrors cppcache `tombstoneCount` (used as inc/dec gauge).");
 
     /// <summary>Bump <see cref="_tombstoneCount"/> by +1.</summary>
-    public void TombstoneAdded() => _tombstoneCount.Add(1);
+    public void TombstoneAdded() => _tombstoneCount.Add(1, _cacheNameTag);
 
     /// <summary>Bump <see cref="_tombstoneCount"/> by -1.</summary>
-    public void TombstoneRemoved() => _tombstoneCount.Add(-1);
+    public void TombstoneRemoved() => _tombstoneCount.Add(-1, _cacheNameTag);
 
     /// <summary>
     /// Current bytes consumed by tombstones across all regions. cppcache
@@ -228,10 +237,10 @@ internal class CachePerfStatistics
         description: "Current bytes consumed by tombstones. Mirrors cppcache `nonReplicatedTombstonesSize` (used as inc/dec gauge).");
 
     /// <summary>Bump <see cref="_tombstoneSize"/> by <paramref name="bytes"/>.</summary>
-    public void TombstoneSizeAdded(long bytes) => _tombstoneSize.Add(bytes);
+    public void TombstoneSizeAdded(long bytes) => _tombstoneSize.Add(bytes, _cacheNameTag);
 
     /// <summary>Bump <see cref="_tombstoneSize"/> by <c>-bytes</c>.</summary>
-    public void TombstoneSizeRemoved(long bytes) => _tombstoneSize.Add(-bytes);
+    public void TombstoneSizeRemoved(long bytes) => _tombstoneSize.Add(-bytes, _cacheNameTag);
 
     /// <summary>
     /// Total conflicting events elided rather than dispatched to listeners.
@@ -245,7 +254,7 @@ internal class CachePerfStatistics
         description: "Total conflicting events elided rather than dispatched to listeners. Mirrors cppcache `conflatedEvents` IntCounter.");
 
     /// <summary>Bump <see cref="_conflatedEvents"/>.</summary>
-    public void ConflatedEvent() => _conflatedEvents.Add(1);
+    public void ConflatedEvent() => _conflatedEvents.Add(1, _cacheNameTag);
 
     /// <summary>
     /// Elapsed time of one PdxInstance <c>GetObject</c> deserialization.
@@ -262,7 +271,7 @@ internal class CachePerfStatistics
 
     /// <summary>Record one <see cref="_pdxInstanceDeserializationTime"/> sample.</summary>
     public void PdxInstanceDeserialization(TimeSpan elapsed) =>
-        _pdxInstanceDeserializationTime.Record(elapsed.TotalSeconds);
+        _pdxInstanceDeserializationTime.Record(elapsed.TotalSeconds, _cacheNameTag);
 
     /// <summary>
     /// Total times a deserialization created a PdxInstance (rather than
@@ -276,7 +285,7 @@ internal class CachePerfStatistics
         description: "Total times a deserialization created a PdxInstance. Mirrors cppcache `pdxInstanceCreations` IntCounter.");
 
     /// <summary>Bump <see cref="_pdxInstanceCreations"/>.</summary>
-    public void PdxInstanceCreation() => _pdxInstanceCreations.Add(1);
+    public void PdxInstanceCreation() => _pdxInstanceCreations.Add(1, _cacheNameTag);
 
     /// <summary>
     /// Bytes produced by one PDX serialization. Mirrors cppcache
@@ -294,7 +303,7 @@ internal class CachePerfStatistics
         description: "Bytes produced by one PDX serialization. .Count subsumes cppcache `pdxSerializations`; .Sum subsumes cppcache `pdxSerializedBytes`.");
 
     /// <summary>Record one <see cref="_pdxSerializedBytes"/> sample.</summary>
-    public void PdxSerialization(long bytes) => _pdxSerializedBytes.Record(bytes);
+    public void PdxSerialization(long bytes) => _pdxSerializedBytes.Record(bytes, _cacheNameTag);
 
     /// <summary>
     /// Bytes read by one PDX deserialization. Mirrors cppcache
@@ -312,7 +321,7 @@ internal class CachePerfStatistics
         description: "Bytes read by one PDX deserialization. .Count subsumes cppcache `pdxDeserializations`; .Sum subsumes cppcache `pdxDeserializedBytes`.");
 
     /// <summary>Record one <see cref="_pdxDeserializedBytes"/> sample.</summary>
-    public void PdxDeserialization(long bytes) => _pdxDeserializedBytes.Record(bytes);
+    public void PdxDeserialization(long bytes) => _pdxDeserializedBytes.Record(bytes, _cacheNameTag);
 
     /// <summary>
     /// Reader for the <see cref="_entries"/> pull-mode gauge. cppcache

@@ -1,4 +1,7 @@
+using System.Diagnostics;
+using Geode.Client.Protocol;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Geode.Client.Internal;
 
@@ -25,17 +28,24 @@ namespace Geode.Client.Internal;
 /// reads them.
 /// </para>
 /// </remarks>
-internal class LocalRegion : RegionInternal
+internal partial class LocalRegion : RegionInternal
 {
 
     static ObjectFactory<LocalRegion> _objectFactory
         = ActivatorUtilities.CreateFactory<LocalRegion>([typeof(string), typeof(RegionInternal), typeof(RegionAttributes)]);
 
+    /// <summary>
+    /// Logger for cppcache <c>LOGFINEST</c> / <c>LOGDEBUG</c> mirror
+    /// calls inside the CRUD pipeline (race-loser / version-conflict
+    /// / invalid-delta diagnostics).
+    /// </summary>
+    private readonly ILogger<LocalRegion> _logger;
+
     /// <summary>cppcache <c>m_attachedPool</c>: attached pool (we route via dm at <see cref="ThinClientRegion"/>).</summary>
     protected IPool? AttachedPool;
 
     /// <summary>cppcache <c>m_cacheStatistics</c>: per-region access / modification timestamps.</summary>
-    protected object? CacheStatistics;
+    protected CachePerfStatistics CacheStatistics;
 
     /// <summary>cppcache <c>m_destroyPending</c>: region teardown in progress.</summary>
     protected bool DestroyPending;
@@ -58,14 +68,21 @@ internal class LocalRegion : RegionInternal
     /// <summary>cppcache <c>m_entries</c> (<c>EntriesMap*</c>): local entry map (Phase 2+ caching-enabled). Renamed from cppcache's <c>m_entries</c> to (a) avoid clash with <see cref="IRegion.Entries(bool)"/> and (b) separate from the <see cref="EntriesMap"/> type name.</summary>
     protected Lazy<EntriesMap?> LocalEntriesMap;
 
-    /// <summary>cppcache <c>mutex_</c>: region-wide reader-writer lock (boost::shared_mutex).</summary>
-    protected object? Mutex;
+    /// <summary>
+    /// cppcache <c>mutex_</c>: region-wide reader-writer lock
+    /// (cppcache 用 <c>boost::shared_mutex</c>;C# 港用
+    /// <see cref="AsyncReaderWriterLock"/> 的 Phase 1.x 降級實作 —
+    /// 排他鎖偽裝成 RW lock,API shape 對齊未來真 RW 實作)。
+    /// </summary>
+    protected readonly AsyncReaderWriterLock Mutex = new();
 
     /// <summary>cppcache <c>m_persistenceManager</c>: PersistenceManager (CLAUDE.md «Not implemented»).</summary>
     protected object? PersistenceManager;
 
-    /// <summary>cppcache <c>m_regionStats</c>: per-region Meter sink.</summary>
-    protected RegionStatistics? RegionStats;
+    /// <summary>
+    /// cppcache <c>m_regionStats</c>: per-region Meter sink.
+    /// </summary>
+    protected readonly RegionStatistics RegionStats;
 
     /// <summary>cppcache <c>m_released</c>: dispose path completed.</summary>
     protected bool Released;
@@ -108,6 +125,9 @@ internal class LocalRegion : RegionInternal
             }
             return null;
         }, LazyThreadSafetyMode.ExecutionAndPublication);
+        RegionStats = ActivatorUtilities.CreateInstance<RegionStatistics>(serviceProvider, FullPath);
+        _logger = serviceProvider.GetRequiredService<ILogger<LocalRegion>>();
+        CacheStatistics = serviceProvider.GetRequiredService<CachePerfStatistics>();
     }
 
     /// <summary>
@@ -139,6 +159,309 @@ internal class LocalRegion : RegionInternal
         // Proxy / non-caching case — cppcache LocalRegion.cpp:616.
         return 0;
     }
+
+    async Task UpdateNoThrowAsync(IRegionAction action, CancellationToken ct)
+    {
+        action.CheckArgs();
+        await CheckDestroyPendingAsync(ct).ConfigureAwait(false);
+
+        var txState = action.TxState;
+        if (txState is not null)
+        {
+            if (IsLocalOp(action.EventFlags))
+            {
+                throw new NotSupportedException("Local-only op not supported inside a transaction.");
+            }
+
+            await action.RemoteUpdateAsync(ct);
+            txState.SetDirty();
+            return;
+        }
+
+        var cachingEnabled = Attributes.CachingEnabled;
+
+        //  do not invoke the writer in case of notification/eviction or expiration
+        if (Writer is not null && action.EventFlags.InvokeCacheWriter())
+        {
+            action.GetCallbackOldValue();
+            // invokeCacheWriterForEntryEvent method has the check that if oldValue
+            // is a CacheableToken then it sets it to nullptr; also determines if it
+            // should be BEFORE_UPDATE or BEFORE_CREATE depending on oldValue
+            if (!InvokeCacheWriterForEntryEvent(action.Key, action.OldValue, action.Value,
+                action.CallbackArgument, action.EventFlags, action.BeforeEventType))
+            {
+                action.LogCacheWriterFailure();
+                throw new CacheWriterException($"CacheWriter vetoed {action.Name} on '{FullPath}'.");
+            }
+        }
+        bool remoteOpDone = false;
+        // try the remote update; but if this fails (e.g. due to security
+        // exception) do not do the local update
+        // uses the technique of adding a tracking to the entry before proceeding
+        // for put; if the update counter changes when the remote update completes
+        // then it means that the local entry was overwritten in the meantime
+        // by a notification or another thread, so we do not do the local update
+        if (!action.EventFlags.IsLocal() && !action.EventFlags.IsNotification())
+        {
+            if (cachingEnabled && action.UpdateCount < 0 && !Attributes.ConcurrencyChecksEnabled)
+            {
+                // add a tracking for the entry
+                if ((action.UpdateCount = LocalEntriesMap.Value!.AddTrackerForEntry(action.Key, action.OldValue, action.AddIfAbsent, action.FailIfPresent, true)) < 0)
+                {
+                    if (action.OldValue is not null)
+                    {
+                        throw new EntryExistsException($"Entry already exists for key on '{FullPath}'.");
+                    }
+                }
+            }
+
+
+            // propagate the update to remote server, if any
+            try
+            {
+                await action.RemoteUpdateAsync(ct);
+            }
+            catch (Exception)
+            {
+                if (action.UpdateCount >= 0 && !Attributes.ConcurrencyChecksEnabled)
+                {
+                    LocalEntriesMap.Value!.RemoveTrackerForEntry(action.Key);
+                }
+                throw;
+            }
+            remoteOpDone = true;
+        }
+
+        if (!action.EventFlags.IsNotification() || GetProcessedMarker())
+        {
+            try
+            {
+                await action.LocalUpdateAsync(action.UpdateCount, remoteOpDone, ct);
+            }
+            catch (GfErrTypeException ex)
+            {
+                switch (ex.Code)
+                {
+                    case GfErrType.CacheEntryUpdated:
+                        _logger.LogTrace(
+                            "{ActionName}: did not change local value for key [{Key}] since it has been updated by another thread while operation was in progress",
+                            action.Name, action.Key);
+                        break;
+
+                    case GfErrType.CacheConcurrentModificationException:
+                        _logger.LogDebug(
+                            "Region::localUpdate: updateNoThrow<{ActionName}> for key [{Key}] failed because the cache already contains an entry with higher version. The cache listener will not be invoked.",
+                            action.Name, action.Key);
+                        break;
+                    case GfErrType.InvalidDelta:
+                        {
+                            _logger.LogDebug(
+                                "Region::localUpdate: updateNoThrow<{ActionName}> for key [{Key}] failed because of invalid delta.",
+                                action.Name, action.Key);
+                            CacheStatistics.DeltaMessageFailure();
+
+                            // Get full object from server.
+                            var (newValue1, versionTag1) = await GetNoThrowFullObjectAsync(null, ct);
+                            if (newValue1 is not null)
+                            {
+                                try
+                                {
+                                    LocalEntriesMap.Value!.Put(action.Key, newValue1, action.Entry, action.OldValue, action.UpdateCount, 0,
+                                        versionTag1 ?? action.VersionTag!);
+                                }
+                                catch (GfErrTypeException ex1)
+                                {
+                                    if (ex1.Code == GfErrType.CacheConcurrentModificationException)
+                                    {
+                                        _logger.LogDebug(
+                                            "Region::localUpdate: updateNoThrow<{ActionName}> for key [{Key}] failed because the cache already contains an entry with higher version. The cache listener will not be invoked.",
+                                            action.Name, action.Key);
+                                        return;
+                                    }
+                                    else
+                                    {
+                                        throw;
+                                    }
+                                }
+                            }
+                            //         std::shared_ptr<VersionTag> versionTag1;
+                            //         err = getNoThrow_FullObject(eventId, newValue1, versionTag1);
+                            //         if (err == GF_NOERR && newValue1 != nullptr) {
+                            //           err = m_entries->put(key, newValue1, entry, oldValue, updateCount, 0,
+                            //                                versionTag1 != nullptr ? versionTag1 : versionTag);
+                            //           if (err == GF_CACHE_CONCURRENT_MODIFICATION_EXCEPTION) {
+                            //             LOGDEBUG(
+                            //                 "Region::localUpdate: updateNoThrow<%s> for key [%s] failed because the cache already contains \
+                            //               an entry with higher version. The cache listener will not be invoked.",
+                            //                 TAction::name(), Utils::nullSafeToString(key).c_str());
+                            //             // Cache listener won't be called in this case
+                            //             return GF_NOERR;
+                            //           } else if (err != GF_NOERR) {
+                            //             return err;
+                            //           }
+                            //         }
+                        }
+                        break;
+                }
+                throw;
+            }
+        }
+        else
+        {
+            action.GetCallbackOldValue();
+            if (action.UpdateCount >= 0 && !Attributes.ConcurrencyChecksEnabled)
+            {
+                LocalEntriesMap.Value!.RemoveTrackerForEntry(action.Key);
+            }
+        }
+        if (!action.EventFlags.IsNoCallbacks())
+        {
+            await InvokeCacheListenerForEntryEvent(action.Key, action.OldValue, action.Value,
+                action.CallbackArgument, action.EventFlags, action.AfterEventType, ct);
+        }
+    }
+
+    /// <summary>
+    /// Throws <see cref="RegionDestroyedException"/> when the region's
+    /// lifecycle flag (<see cref="DestroyPending"/>) is set. Mirrors
+    /// cppcache <c>CHECK_DESTROY_PENDING_NOTHROW</c> macro
+    /// (<c>cppcache/src/LocalRegion.hpp:66-74</c>) — collapsed into a
+    /// method since C# has no macros.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// cppcache macro does two things: (1) take a region-wide
+    /// <c>shared_lock</c> on <c>mutex_</c>, (2) read
+    /// <c>m_destroyPending</c> + return <c>GF_CACHE_REGION_DESTROYED_EXCEPTION</c>
+    /// on truth. C# port: (1) <see cref="Mutex"/> read-lock via
+    /// <see cref="AsyncReaderWriterLock.EnterReadLockAsync"/> (Phase
+    /// 1.x 降級成排他鎖,Phase 2+ 換真 RW 實作不動 call site);
+    /// (2) <c>throw</c> 取代 err-code,同
+    /// <see cref="IRegionAction.CheckArgs"/> 的 exception-only 策略。
+    /// </para>
+    /// <para>
+    /// cppcache's sibling <c>CHECK_DESTROY_PENDING</c> (throwing
+    /// variant; <c>LocalRegion.hpp:54-64</c>) collapses to the same
+    /// method here — the <c>NoThrow</c> / non-<c>NoThrow</c> split is
+    /// the cppcache err-code-vs-exception divide and disappears under
+    /// our exception-only design.
+    /// </para>
+    /// </remarks>
+    protected async Task CheckDestroyPendingAsync(CancellationToken ct = default)
+    {
+        //#define CHECK_DESTROY_PENDING_NOTHROW(lock_type)         \
+        //        boost::lock_type < decltype(mutex_) > checkGuard{ mutex_}; \
+        //  do  {                                                   \
+        //    if (m_destroyPending){    \
+        //      return GF_CACHE_REGION_DESTROYED_EXCEPTION;        \
+        //    }                                                    \
+        //  } while (0)
+
+        await Mutex.EnterReadLockAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (DestroyPending)
+            {
+                throw new RegionDestroyedException(
+                    $"Region {FullPath} has been destroyed.");
+            }
+        }
+        finally
+        {
+            Mutex.ExitReadLock();
+        }
+    }
+
+    /// <summary>
+    /// Delta-fallback hook — server-pushed delta apply 失敗時用
+    /// <paramref name="eventId"/> 從 server 重抓完整物件。Mirrors
+    /// cppcache <c>LocalRegion::getNoThrow_FullObject</c>
+    /// (<c>cppcache/src/LocalRegion.cpp:3189-3193</c>) — base impl
+    /// 永遠回 <see langword="null"/>;<c>ThinClientRegion</c>
+    /// Phase 4+ delta propagation 落地時 override 做 wire round-trip。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// cppcache 簽章兩個 out param (<c>newValue</c> + <c>versionTag</c>),
+    /// C# async 不能用 <c>ref</c>/<c>out</c>,改回傳 tuple。Phase 1.x
+    /// 沒訂閱通道 → 沒 server-pushed delta → 沒 <c>InvalidDelta</c>
+    /// case → 這 method 永遠不被呼叫,NIE stub 純占位讓翻譯行
+    /// 對得起來。
+    /// </para>
+    /// </remarks>
+    protected virtual Task<(object? NewValue, VersionTag? VersionTag)>
+        GetNoThrowFullObjectAsync(object? eventId, CancellationToken ct) =>
+        throw new NotImplementedException(
+            "LocalRegion.GetNoThrowFullObjectAsync: pending Phase 4+ delta propagation.");
+
+    /// <summary>
+    /// True when the subscription channel has consumed the initial-image
+    /// "all caught up" marker. Mirrors cppcache
+    /// <c>LocalRegion::getProcessedMarker</c>
+    /// (<c>cppcache/src/LocalRegion.hpp:408</c>) — base 永遠
+    /// <see langword="true"/>;<c>ThinClientHARegion</c> Phase 4+ HA /
+    /// 訂閱真做時 override 拉 <c>m_processedMarker</c> +
+    /// <c>!isDurableClient()</c>。Phase 1.x proxy-only 沒訂閱通道,
+    /// notification 路徑進不來,base 回 true 永遠不會錯。
+    /// </summary>
+    protected virtual bool GetProcessedMarker() => true;
+
+    /// <summary>
+    /// CacheListener dispatch — 派發到 <c>Listener</c> 的
+    /// <c>AfterCreate</c> / <c>AfterUpdate</c> / <c>AfterDestroy</c> /
+    /// <c>AfterInvalidate</c> callback。Mirrors cppcache
+    /// <c>LocalRegion::invokeCacheListenerForEntryEvent</c>
+    /// (<c>cppcache/src/LocalRegion.hpp:546</c>).
+    /// </summary>
+    /// <remarks>
+    /// Phase 2+ CacheListener feature 落地才填 body。Phase 1.x
+    /// <see cref="Listener"/> 永遠 <see langword="null"/>,call site
+    /// 在 <c>UpdateNoThrowAsync</c> 不被 <see cref="CacheEventFlagsExtensions.IsNoCallbacks"/>
+    /// 擋住的話會走到這 — 之後 body 內部要先看 <c>Listener is null</c>
+    /// 直接 return。NIE stub 純占位讓翻譯行對得起來。
+    /// </remarks>
+    protected Task InvokeCacheListenerForEntryEvent(
+        object key,
+        object? oldValue,
+        object newValue,
+        object? aCallbackArgument,
+        CacheEventFlags eventFlags,
+        EntryEventType type,
+        CancellationToken ct) =>
+        throw new NotImplementedException(
+            "LocalRegion.InvokeCacheListenerForEntryEvent: pending Phase 2+ CacheListener feature.");
+
+    /// <summary>
+    /// CacheWriter dispatch — 依 <paramref name="type"/> 派發到
+    /// <c>Writer</c> 的 <c>BeforeCreate</c> / <c>BeforeUpdate</c> /
+    /// <c>BeforeDestroy</c> / <c>BeforeInvalidate</c> callback;回
+    /// <see langword="true"/> 表 writer 同意該 op,<see langword="false"/>
+    /// 表 veto。Mirrors cppcache
+    /// <c>LocalRegion::invokeCacheWriterForEntryEvent</c>
+    /// (<c>cppcache/src/LocalRegion.cpp:2573-2660</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// cppcache 的 <c>BEFORE_UPDATE</c> 分支若 <paramref name="oldValue"/>
+    /// 為 <see langword="null"/> 會 fall through 到 <c>BEFORE_CREATE</c>
+    /// — 行為 1:1 翻過來時要保留。
+    /// </para>
+    /// <para>
+    /// Phase 2+ CacheWriter feature 落地才填 body。Phase 1.x
+    /// <see cref="Writer"/> 永遠 <see langword="null"/>,call sites
+    /// 一律被 <c>if (Writer is not null &amp;&amp; ...)</c> 擋住,這個
+    /// method 不會被觸發 — NIE stub 純占位讓翻譯行對得起來。
+    /// </para>
+    /// </remarks>
+    protected bool InvokeCacheWriterForEntryEvent(
+        object key,
+        object? oldValue,
+        object newValue,
+        object? aCallbackArgument,
+        CacheEventFlags eventFlags,
+        EntryEventType type) =>
+        throw new NotImplementedException(
+            "LocalRegion.InvokeCacheWriterForEntryEvent: pending Phase 2+ CacheWriter feature.");
 
     /// <summary>
     /// Parent region in the sub-region tree, or <see langword="null"/> for a
@@ -188,6 +511,17 @@ internal class LocalRegion : RegionInternal
         // subclasses) carry a server, so they return false here.
         GetType() == typeof(LocalRegion)
         || (eventFlags is { } f && f.HasFlag(CacheEventFlags.Local));
+    internal async Task PutNoThrowAsync(
+        object key,
+        object value,
+        object? callbackArgument,
+        int updateCount,
+        CacheEventFlags eventFlags,
+        CancellationToken ct = default)
+    {
+        var put = new PutActions(this, key, value, callbackArgument, updateCount, eventFlags);
+        await UpdateNoThrowAsync(put, ct);
+    }
 
     /// <summary>
     /// Virtual hook used by <see cref="LocalCount"/>'s in-tx branch. Default
@@ -198,6 +532,8 @@ internal class LocalRegion : RegionInternal
     /// (called at <c>LocalRegion.cpp:625</c>).
     /// </summary>
     internal virtual int SizeRemote() => LocalSizeRemote();
+
+
 
     /// <inheritdoc />
     public override Task ClearAsync(object? callback = null, CancellationToken ct = default) =>
@@ -228,9 +564,26 @@ internal class LocalRegion : RegionInternal
     public override Task PutAllAsync(IReadOnlyDictionary<object, object> map, object? callback = null, CancellationToken ct = default) =>
         throw new NotImplementedException("LocalRegion.PutAllAsync: pending local entry map.");
 
-    /// <inheritdoc />
-    public override Task PutAsync(object key, object value, object? callback = null, CancellationToken ct = default) =>
-        throw new NotImplementedException("LocalRegion.PutAsync: pending local entry map.");
+    public override async Task PutAsync(object key, object value, object? callbackArgument = null, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        var sampleStartTimestamp = Stopwatch.GetTimestamp();
+        try
+        {
+            await PutNoThrowAsync(
+                key, value, callbackArgument,
+                updateCount: -1,
+                eventFlags: CacheEventFlags.Normal,
+                ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            // cppcache updateStatOpTime (LocalRegion.cpp:364) — record
+            // regardless of success / failure so the histogram counts
+            // both outcomes.
+            RegionStats.Put(Stopwatch.GetElapsedTime(sampleStartTimestamp));
+        }
+    }
 
     /// <inheritdoc />
     public override Task<IReadOnlyList<object>> QueryAsync(string predicate, CancellationToken ct = default) =>
@@ -253,22 +606,6 @@ internal class LocalRegion : RegionInternal
         throw new NotImplementedException("LocalRegion.SelectValueAsync: pending OQL routing through ThinClientRegion override.");
 
     public override string FullPath { get; }
-
-    public override string Name { get; }
-
-    // ── Abstract RegionInternal members satisfied as NIE ───────
-    // Mirrors cppcache LocalRegion being concrete: every IRegion op
-    // has a "local default" sitting at this layer; ThinClientRegion
-    // overrides them with wire-bound bodies. Until the local entry-map
-    // (EntriesMap) ships we throw NotImplementedException — when
-    // caching-enabled lands, these bodies switch to consulting
-    // EntriesMap (cppcache LocalRegion.cpp:getNoThrow / putNoThrow
-    // template path) and only fall through to a derived hook for the
-    // network leg.
-
-    /// <inheritdoc />
-    public override IPool Pool =>
-        throw new NotImplementedException("LocalRegion has no attached pool; ThinClientRegion override carries it.");
 
     /// <summary>
     /// Mirrors cppcache <c>LocalRegion::size()</c>
@@ -316,5 +653,21 @@ internal class LocalRegion : RegionInternal
             return LocalSizeRemote();
         }
     }
+
+    public override string Name { get; }
+
+    // ── Abstract RegionInternal members satisfied as NIE ───────
+    // Mirrors cppcache LocalRegion being concrete: every IRegion op
+    // has a "local default" sitting at this layer; ThinClientRegion
+    // overrides them with wire-bound bodies. Until the local entry-map
+    // (EntriesMap) ships we throw NotImplementedException — when
+    // caching-enabled lands, these bodies switch to consulting
+    // EntriesMap (cppcache LocalRegion.cpp:getNoThrow / putNoThrow
+    // template path) and only fall through to a derived hook for the
+    // network leg.
+
+    /// <inheritdoc />
+    public override IPool Pool =>
+        throw new NotImplementedException("LocalRegion has no attached pool; ThinClientRegion override carries it.");
 
 }

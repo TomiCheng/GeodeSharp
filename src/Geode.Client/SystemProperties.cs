@@ -3,10 +3,7 @@ using Microsoft.Extensions.Logging;
 namespace Geode.Client;
 
 /// <summary>
-/// Per-cache settings snapshot — drives one <see cref="IGeodeCache"/>
-/// instance. Mirror of cppcache <c>SystemProperties</c>
-/// (<c>cppcache/include/geode/SystemProperties.hpp</c>); defaults match the
-/// <c>Default*</c> constants in <c>cppcache/src/SystemProperties.cpp:78-126</c>.
+/// Per-cache settings snapshot — drives one <see cref="IGeodeCache"/> instance.
 /// </summary>
 /// <remarks>
 /// All properties expose a public setter so the host can populate / override
@@ -17,143 +14,136 @@ namespace Geode.Client;
 /// </remarks>
 public sealed class SystemProperties
 {
-    // cppcache SystemProperties.cpp:87 — DefaultSamplingInterval = 1s
+    /// <summary>Statistics sampling interval. Default: 1 second.</summary>
     public TimeSpan StatisticsSampleInterval { get; set; } = TimeSpan.FromSeconds(1);
 
-    // cppcache SystemProperties.cpp:88 — DefaultSamplingEnabled = false
+    /// <summary>Whether statistics sampling is enabled. Default: <see langword="false"/>.</summary>
     public bool StatisticsEnabled { get; set; }
 
-    // cppcache SystemProperties.cpp:90 — DefaultStatArchive = "statArchive.gfs"
+    /// <summary>Statistics archive file path. Default: <c>statArchive.gfs</c>.</summary>
     public string StatisticsArchiveFile { get; set; } = "statArchive.gfs";
 
-    // cppcache SystemProperties.cpp:91 — DefaultLogFilename = "" (stdout)
+    /// <summary>Log file path; empty routes to stdout. Default: empty.</summary>
     public string LogFilename { get; set; } = string.Empty;
 
-    // cppcache SystemProperties.cpp:93-94 — DefaultLogLevel = LogLevel::Config.
-    // .NET LogLevel has no "Config"; Information is the closest level.
+    /// <summary>Minimum log severity emitted. Default: <see cref="LogLevel.Information"/>.</summary>
     public LogLevel LogLevel { get; set; } = LogLevel.Information;
 
-    // cppcache SystemProperties.cpp:144 — m_disableShufflingEndpoint(false)
+    /// <summary>Disable shuffling of the endpoint list on pool startup. Default: <see langword="false"/>.</summary>
     public bool DisableShufflingEndpoint { get; set; }
 
-    // cppcache SystemProperties.hpp:233 — DefaultName = ""
+    /// <summary>Cache instance name. Default: empty.</summary>
     public string Name { get; set; } = string.Empty;
 
-    // cppcache SystemProperties.hpp:235 — DefaultCacheXMLFile = ""
+    /// <summary>Legacy field; <c>cache.xml</c> is not used by this client. Default: empty.</summary>
     public string CacheXMLFile { get; set; } = string.Empty;
 
-    // cppcache SystemProperties.cpp:107 — DefaultLogFileSizeLimit = 0 (unlimited)
+    /// <summary>Single log-file size limit in bytes; <c>0</c> means unlimited. Default: <c>0</c>.</summary>
     public uint LogFileSizeLimit { get; set; }
 
-    // cppcache SystemProperties.cpp:108 — DefaultLogDiskSpaceLimit = 0 (unlimited)
+    /// <summary>Total log-disk space limit in bytes; <c>0</c> means unlimited. Default: <c>0</c>.</summary>
     public uint LogDiskSpaceLimit { get; set; }
 
-    // cppcache SystemProperties.cpp:109 — DefaultStatsFileSizeLimit = 0 (unlimited)
+    /// <summary>Single statistics-file size limit in bytes; <c>0</c> means unlimited. Default: <c>0</c>.</summary>
     public uint StatsFileSizeLimit { get; set; }
 
-    // cppcache SystemProperties.cpp:110 — DefaultStatsDiskSpaceLimit = 0 (unlimited)
+    /// <summary>Total statistics-disk space limit in bytes; <c>0</c> means unlimited. Default: <c>0</c>.</summary>
     public uint StatsDiskSpaceLimit { get; set; }
 
-    // cppcache SystemProperties.cpp:96 — DefaultConnectionPoolSize = 5
+    /// <summary>Default number of connections per pool. Default: <c>5</c>.</summary>
     public uint ConnectionPoolSize { get; set; } = 5;
 
-    // cppcache SystemProperties.cpp:112 — DefaultHeapLRULimit = 0 (disabled)
+    /// <summary>Heap-LRU eviction trigger in bytes; <c>0</c> disables heap-LRU. Default: <c>0</c>.</summary>
     public long HeapLRULimit { get; set; }
 
-    /// <summary>
-    /// Process-wide heap-LRU on/off flag. Mirrors cppcache
-    /// <c>SystemProperties::heapLRULimitEnabled()</c>
-    /// (<c>cppcache/include/geode/SystemProperties.hpp:143</c>):
-    /// <c>m_heapLRULimit &gt; 0</c>.
-    /// </summary>
+    /// <summary>Process-wide heap-LRU on/off flag; <see langword="true"/> when <see cref="HeapLRULimit"/> &gt; <c>0</c>.</summary>
     public bool HeapLRULimitEnabled => HeapLRULimit > 0;
 
-    // cppcache SystemProperties.cpp:113 — DefaultHeapLRUDelta = 10 (% eviction step)
+    /// <summary>Heap-LRU eviction step, in percent of current heap. Default: <c>10</c>.</summary>
     public int HeapLRUDelta { get; set; } = 10;
 
-    // cppcache SystemProperties.cpp:115 — DefaultMaxSocketBufferSize = 65 * 1024
+    /// <summary>Socket buffer size in bytes (send and receive). Default: <c>66560</c> (65 KB).</summary>
     public int MaxSocketBufferSize { get; set; } = 65 * 1024;
 
-    // cppcache SystemProperties.cpp:116 — DefaultPingInterval = 10s
+    /// <summary>Interval between liveness pings to each server. Default: 10 seconds.</summary>
     public TimeSpan PingInterval { get; set; } = TimeSpan.FromSeconds(10);
 
-    // cppcache SystemProperties.cpp:117 — DefaultRedundancyMonitorInterval = 10s
+    /// <summary>Interval at which subscription redundancy is checked and restored. Default: 10 seconds.</summary>
     public TimeSpan RedundancyMonitorInterval { get; set; } = TimeSpan.FromSeconds(10);
 
-    // cppcache SystemProperties.cpp:118 — DefaultNotifyAckInterval = 1s
+    /// <summary>Interval for acknowledging received subscription messages. Default: 1 second.</summary>
     public TimeSpan NotifyAckInterval { get; set; } = TimeSpan.FromSeconds(1);
 
-    // cppcache SystemProperties.cpp:119 — DefaultNotifyDupCheckLife = 300s
+    /// <summary>TTL for the duplicate-notification suppression cache. Default: 300 seconds.</summary>
     public TimeSpan NotifyDupCheckLife { get; set; } = TimeSpan.FromSeconds(300);
 
-    // cppcache SystemProperties.hpp:386 — m_securityPropertiesPtr (shared_ptr<Properties> bag)
+    /// <summary>Free-form security property bag passed to the server during handshake. Default: empty.</summary>
     public IReadOnlyDictionary<string, string> SecurityProperties { get; set; } =
         new Dictionary<string, string>();
 
-    // cppcache SystemProperties.hpp:294 — securityClientDhAlgo (marked _GEODE_DEPRECATED_)
+    /// <summary>Diffie-Hellman algorithm for legacy client encryption (deprecated). Default: empty.</summary>
     public string SecurityClientDhAlgo { get; set; } = string.Empty;
 
-    // cppcache SystemProperties.hpp:299 — securityClientKsPath
+    /// <summary>Path to the legacy client keystore for DH-based encryption. Default: empty.</summary>
     public string SecurityClientKsPath { get; set; } = string.Empty;
 
-    // cppcache SystemProperties.cpp:80 — DefaultDurableClientId = ""
+    /// <summary>Durable-client identifier; empty disables durable mode. Default: empty.</summary>
     public string DurableClientId { get; set; } = string.Empty;
 
-    // cppcache SystemProperties.cpp:81 — DefaultDurableTimeout = 300s
+    /// <summary>Server-side queue retention for a disconnected durable client. Default: 300 seconds.</summary>
     public TimeSpan DurableTimeout { get; set; } = TimeSpan.FromSeconds(300);
 
-    // cppcache SystemProperties.cpp:83 — DefaultConnectTimeout = 59s
+    /// <summary>TCP connect timeout per server. Default: 59 seconds.</summary>
     public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(59);
 
-    // cppcache SystemProperties.cpp:84 — DefaultConnectWaitTimeout = 0 (Linux only)
+    /// <summary>Linux-only post-connect wait window; <see cref="TimeSpan.Zero"/> disables. Default: zero.</summary>
     public TimeSpan ConnectWaitTimeout { get; set; } = TimeSpan.Zero;
 
-    // cppcache SystemProperties.cpp:85 — DefaultBucketWaitTimeout = 0 (Linux only)
+    /// <summary>Wait window for partition-bucket resolution; <see cref="TimeSpan.Zero"/> disables. Default: zero.</summary>
     public TimeSpan BucketWaitTimeout { get; set; } = TimeSpan.Zero;
 
-    // cppcache SystemProperties.cpp:98 — DefaultAutoReadyForEvents = true
+    /// <summary>Whether the cache auto-signals readiness for server events on init. Default: <see langword="true"/>.</summary>
     public bool AutoReadyForEvents { get; set; } = true;
 
-    // cppcache SystemProperties.cpp:99 — DefaultSslEnabled = false
+    /// <summary>Whether SSL/TLS is enabled for all server connections. Default: <see langword="false"/>.</summary>
     public bool SslEnabled { get; set; }
 
-    // cppcache SystemProperties.cpp:100 — DefaultTimeStatisticsEnabled = false
+    /// <summary>Whether per-operation time statistics are recorded. Default: <see langword="false"/>.</summary>
     public bool TimeStatisticsEnabled { get; set; }
 
-    // cppcache SystemProperties.cpp:102 — DefaultSslKeyStore = ""
+    /// <summary>Path to the client SSL keystore. Default: empty.</summary>
     public string SslKeyStore { get; set; } = string.Empty;
 
-    // cppcache SystemProperties.cpp:103 — DefaultSslTrustStore = ""
+    /// <summary>Path to the client SSL truststore. Default: empty.</summary>
     public string SslTrustStore { get; set; } = string.Empty;
 
-    // cppcache SystemProperties.cpp:104 — DefaultSslKeystorePassword = ""
+    /// <summary>Password for the client SSL keystore. Default: empty.</summary>
     public string SslKeystorePassword { get; set; } = string.Empty;
 
-    // cppcache SystemProperties.cpp:78 — DefaultConflateEvents = "server"
+    /// <summary>Notification-event conflation mode (<c>server</c> / <c>true</c> / <c>false</c>). Default: <c>server</c>.</summary>
     public string ConflateEvents { get; set; } = "server";
 
-    // cppcache SystemProperties.cpp:121 — DefaultThreadPoolSize = hardware_concurrency * 2
+    /// <summary>Worker thread pool size. Default: <see cref="Environment.ProcessorCount"/> × 2.</summary>
     public uint ThreadPoolSize { get; set; } = (uint)(Environment.ProcessorCount * 2);
 
-    // cppcache SystemProperties.cpp:122 — DefaultSuspendedTxTimeout = 30s
+    /// <summary>TTL for suspended transactions. Default: 30 seconds.</summary>
     public TimeSpan SuspendedTxTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
-    // cppcache SystemProperties.cpp:123 — DefaultTombstoneTimeout = 480s
+    /// <summary>TTL for tombstones (deleted-entry markers). Default: 480 seconds.</summary>
     public TimeSpan TombstoneTimeout { get; set; } = TimeSpan.FromSeconds(480);
 
-    // cppcache SystemProperties.cpp:125 — DefaultEnableChunkHandlerThread = false
+    /// <summary>Whether to dispatch chunk-handling onto a dedicated thread. Default: <see langword="false"/>.</summary>
     public bool EnableChunkHandlerThread { get; set; }
 
-    // cppcache SystemProperties.cpp:126 — DefaultOnClientDisconnectClearPdxTypeIds = false
+    /// <summary>Whether to clear the PDX type-id cache on client disconnect. Default: <see langword="false"/>.</summary>
     public bool OnClientDisconnectClearPdxTypeIds { get; set; }
 
     // ── Serialization safety caps ────────────────────────────────────
     //
-    // No cppcache analog — our additions to defend against hostile / buggy
-    // wire payloads claiming gigabyte-scale lengths. Tuning is the host's
-    // call: raise for legitimate bulk-data workloads, lower for tighter
-    // sandboxing. Validated at host build time by the Hosting package's
-    // options validator.
+    // Defends against hostile / buggy wire payloads claiming gigabyte-scale
+    // lengths. Tuning is the host's call: raise for legitimate bulk-data
+    // workloads, lower for tighter sandboxing. Validated at host build time
+    // by the Hosting package's options validator.
 
     /// <summary>
     /// Maximum nested-container depth on encode / decode. Default <b>64</b>

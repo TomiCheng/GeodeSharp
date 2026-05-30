@@ -48,4 +48,13 @@ internal static class CacheEventFlagsExtensions
     /// </summary>
     public static bool IsNoCallbacks(this CacheEventFlags flags) =>
         (flags & CacheEventFlags.NoCallbacks) != 0;
+
+    /// <summary>
+    /// True when the op is an eviction or expiration. Mirrors cppcache
+    /// <c>CacheEventFlags::isEvictOrExpire</c>
+    /// (<c>cppcache/src/RegionInternal.hpp:111-113</c>).
+    /// </summary>
+    public static bool IsEvictOrExpire(this CacheEventFlags flags) =>
+        throw new NotImplementedException(
+            "CacheEventFlagsExtensions.IsEvictOrExpire: pending LRU / expiry plumbing.");
 }

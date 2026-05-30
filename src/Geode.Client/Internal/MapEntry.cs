@@ -9,7 +9,7 @@ namespace Geode.Client.Internal;
 /// interface) to match the sibling <see cref="EntriesMap"/> and because
 /// <see cref="VersionedMapEntryImpl"/> reuses <see cref="MapEntryImpl"/>'s
 /// value storage (implementation inheritance). Skeleton only — members
-/// land with the caching-enabled phase (Phase 2+).
+/// land with the caching-enabled work.
 /// </summary>
 internal abstract class MapEntry
 {
@@ -18,24 +18,22 @@ internal abstract class MapEntry
     /// Mirrors cppcache
     /// <c>MapEntryImpl::getExpProperties().task_scheduled()</c>
     /// (<c>cppcache/src/MapEntry.hpp</c>, <c>ExpProperties</c> chain).
-    /// Flat property here for Phase 2+ NIE convenience; cppcache's
+    /// Flat property here for NIE convenience; cppcache's
     /// two-step <c>ExpProperties</c> accessor will be reintroduced when
     /// the full expiry surface lands.
     /// </summary>
     public virtual bool IsExpiryTaskScheduled => throw new NotImplementedException(
-        "MapEntry.IsExpiryTaskScheduled: pending Phase 2+ expiry plumbing.");
+        "MapEntry.IsExpiryTaskScheduled: pending expiry plumbing.");
 
     /// <summary>
     /// Per-entry concurrency-check version stamp. Mirrors cppcache
-    /// <c>MapEntryImpl::getVersionStamp()</c>
+    /// <c>MapEntry::getVersionStamp</c>
     /// (<c>cppcache/src/MapEntry.hpp:59</c>, pure virtual,
     /// <c>VersionStamp&amp;</c> by-reference for in-place mutation).
-    /// Phase 2+ concurrency-checks feature 落地後,
-    /// <see cref="VersionStamp"/> 才會帶 fields + <c>ProcessVersionTag</c>
-    /// / <c>SetVersions</c> 方法。
+    /// Non-versioned <see cref="MapEntryImpl"/> throws;
+    /// <see cref="VersionedMapEntryImpl"/> returns its composed stamp.
     /// </summary>
-    public virtual VersionStamp VersionStamp => throw new NotImplementedException(
-        "MapEntry.VersionStamp: pending Phase 2+ concurrency-checks plumbing.");
+    public abstract VersionStamp VersionStamp { get; }
 
     /// <summary>
     /// Per-entry LRU bookkeeping (LRU-list node + overflow persistence
@@ -44,10 +42,10 @@ internal abstract class MapEntry
     /// throw (like <see cref="VersionStamp"/> for non-versioned); an
     /// LRU-variant entry overrides to return its
     /// <see cref="LRUEntryProperties"/>. No LRU-variant entry exists yet, so
-    /// the base always throws; reached only on the overflow path (Phase 4).
+    /// the base always throws; reached only on the overflow path.
     /// </summary>
     public virtual LRUEntryProperties LRUProperties => throw new NotImplementedException(
-        "MapEntry.LRUProperties: non-LRU entry has none; pending Phase 2+ LRU-variant entry.");
+        "MapEntry.LRUProperties: non-LRU entry has none; pending LRU-variant entry.");
 
     /// <summary>
     /// This entry's key (set once at construction, never reassigned).
@@ -60,7 +58,7 @@ internal abstract class MapEntry
     /// <see cref="VersionStamp"/> / <see cref="LRUProperties"/> NIEs.
     /// </summary>
     public virtual object Key => throw new NotImplementedException(
-        "MapEntry.Key: pending Phase 2+ entry-key storage on MapEntryImpl.");
+        "MapEntry.Key: pending entry-key storage on MapEntryImpl.");
 
     /// <summary>
     /// Current entry value (<see langword="null"/> for
@@ -72,4 +70,25 @@ internal abstract class MapEntry
     /// inbound shape. Concrete storage on <see cref="MapEntryImpl"/>.
     /// </summary>
     public abstract object? Value { get; set; }
+
+    /// <summary>
+    /// Per-entry tracker counter used by the put/remove pipeline to detect
+    /// a race between a tracked op and an intervening update. Mirrors
+    /// cppcache <c>MapEntry::getUpdateCount</c>
+    /// (<c>cppcache/src/MapEntry.hpp:111</c>, pure virtual). Storage lands
+    /// on <see cref="MapEntryImpl"/> when the tracker subsystem is wired.
+    /// </summary>
+    public virtual int UpdateCount => throw new NotImplementedException(
+        "MapEntry.UpdateCount: pending tracker subsystem.");
+
+    /// <summary>
+    /// Any cleanup required for this entry (e.g. removing from the LRU list).
+    /// Mirrors cppcache <c>MapEntry::cleanup</c>
+    /// (<c>cppcache/src/MapEntry.hpp:116</c>, pure virtual). No-op for
+    /// non-LRU entries; LRU-variant entries override to unlink from
+    /// the LRU queue.
+    /// </summary>
+    public virtual void Cleanup(CacheEventFlags eventFlags) =>
+        throw new NotImplementedException(
+            "MapEntry.Cleanup: pending LRU-variant entry override.");
 }

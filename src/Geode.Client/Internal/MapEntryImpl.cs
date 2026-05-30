@@ -10,10 +10,21 @@ namespace Geode.Client.Internal;
 /// 對應 sibling <see cref="VersionedMapEntryImpl"/> 才會帶
 /// <see cref="VersionStamp"/>。
 /// Skeleton only — Key / Value / cleanup / LRU / Exp properties land
-/// with the caching-enabled phase (Phase 2+).
+/// with the caching-enabled work.
 /// </summary>
 internal class MapEntryImpl : MapEntry
 {
     /// <inheritdoc />
     public override object? Value { get; set; }
+
+    /// <summary>
+    /// Non-versioned entry has no stamp. Mirrors cppcache
+    /// <c>MapEntryImpl::getVersionStamp</c>
+    /// (<c>cppcache/src/MapEntryImpl.hpp</c>) which throws
+    /// <c>IllegalStateException("called for non-versioned MapEntry")</c>;
+    /// per the BCL exception policy that's <see cref="InvalidOperationException"/>.
+    /// </summary>
+    public override VersionStamp VersionStamp =>
+        throw new InvalidOperationException(
+            "VersionStamp called for non-versioned MapEntry.");
 }

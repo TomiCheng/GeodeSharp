@@ -6,7 +6,7 @@ namespace Geode.Client.Internal;
 /// cppcache <c>TombstoneList</c>
 /// (<c>cppcache/src/TombstoneList.hpp:40</c>). Skeleton only — members
 /// (erase / add / iterate / GC) land with the concurrency-checks +
-/// tombstone GC subsystem (Phase 2+).
+/// tombstone GC subsystem.
 /// </summary>
 internal sealed class TombstoneList
 {
@@ -18,4 +18,11 @@ internal sealed class TombstoneList
     /// (<c>cppcache/src/TombstoneList.hpp:47</c>)。
     /// </summary>
     public bool Erase(object key, bool cancelTask = true) => throw new NotImplementedException();
+
+    /// <summary>
+    /// 把 <paramref name="entry"/> 加進 tombstone list,並安排 GC task。
+    /// Mirrors cppcache <c>TombstoneList::add</c>
+    /// (<c>cppcache/src/TombstoneList.hpp:43</c>)。
+    /// </summary>
+    public void Add(MapEntry entry) => throw new NotImplementedException();
 }

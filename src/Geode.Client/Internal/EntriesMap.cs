@@ -6,7 +6,7 @@ namespace Geode.Client.Internal;
 /// Abstract concurrent map of <see cref="MapEntry"/> backing a
 /// caching-enabled region. Mirrors cppcache <c>EntriesMap</c>
 /// (<c>cppcache/src/EntriesMap.hpp</c>). Skeleton only — most members
-/// land with the caching-enabled phase (Phase 2+); concrete impl is
+/// land with the caching-enabled work; concrete impl is
 /// <see cref="ConcurrentEntriesMap"/>.
 /// </summary>
 internal abstract class EntriesMap
@@ -58,12 +58,33 @@ internal abstract class EntriesMap
         int destroyTracker,
         VersionTag? versionTag) => throw new NotImplementedException();
     public int AddTrackerForEntry(object key, object? oldValue, bool addIfAbsent, bool failIfPresent, bool value) => throw new NotImplementedException();
-    public void RemoveTrackerForEntry(object key) => throw new NotImplementedException();
+    /// <summary>
+    /// Drops the tracker for <paramref name="key"/>. Mirrors cppcache
+    /// <c>EntriesMap::removeTrackerForEntry</c>
+    /// (<c>cppcache/src/EntriesMap.hpp:150-151</c>, pure virtual). Body
+    /// lives on <see cref="ConcurrentEntriesMap.RemoveTrackerForEntry"/>.
+    /// </summary>
+    public abstract void RemoveTrackerForEntry(object key);
 
 
     public abstract (MapEntry Entry, object? OldValue, bool IsUpdate) Put(
         object key, object newValue, int updateCount, int destroyTracker, VersionTag? versionTag,
         DataInput? delta = null);
+
+    /// <summary>
+    /// Removes the entry under <paramref name="key"/>; returns the prior
+    /// <see cref="MapEntry"/> + value (both <see langword="null"/> when the
+    /// key was absent). Mirrors cppcache <c>EntriesMap::remove</c>
+    /// (<c>cppcache/src/EntriesMap.hpp:96-104</c>, pure virtual) — the two
+    /// <c>shared_ptr&amp;</c> out-params (<c>result</c>, <c>me</c>) become a
+    /// returned tuple per the codebase out-param → tuple convention.
+    /// Body lives on <see cref="ConcurrentEntriesMap.Remove"/>.
+    /// </summary>
+    public abstract (MapEntry? Entry, object? OldValue) Remove(
+        object key,
+        int updateCount,
+        VersionTag? versionTag,
+        bool afterRemote);
 
     /// <summary>
     /// 把 overflow 到磁碟的 entry value 撈回記憶體。Mirrors cppcache

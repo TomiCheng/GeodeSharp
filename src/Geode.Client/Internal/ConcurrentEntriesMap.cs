@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using Geode.Client.Protocol;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -16,7 +17,7 @@ namespace Geode.Client.Internal;
 /// already does the striping (≈ <c>4 × Environment.ProcessorCount</c>
 /// internal lock buckets) plus lock-free reads. The class itself stays
 /// for the non-segment responsibilities (tombstone list, destroy tracker,
-/// region back-ref, expiry manager) which arrive Phase 2+.
+/// region back-ref, expiry manager) which arrive when caching-enabled lands.
 /// </remarks>
 internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
     EntryFactory factory, bool concurrencyChecksEnabled, LocalRegion region, int concurrency)
@@ -47,7 +48,7 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
     /// Backing store. Replaces cppcache <c>MapSegment[] m_segments</c>
     /// + per-segment <c>unordered_map</c> + manual lock striping.
     /// </summary>
-    // TODO Phase 2+: ctor will take (concurrency, initialCapacity) from
+    // TODO: ctor will take (concurrency, initialCapacity) from
     //   RegionAttributes once EntriesMapFactory's plain branch is wired.
     //   Default-construct for now so Count works against an empty map.
     private readonly ConcurrentDictionary<object, MapEntry> _map = new();
@@ -88,6 +89,205 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
     }
 
     /// <inheritdoc />
+    public override void RemoveTrackerForEntry(object key)
+    {
+        throw new NotImplementedException(
+            "ConcurrentEntriesMap.RemoveTrackerForEntry: pending tracker subsystem.");
+        // cppcache 三層攤平到這個 method:
+        //   ConcurrentEntriesMap::removeTrackerForEntry(key) →
+        //     MapSegment::removeTrackerForEntry(key) →
+        //       MapSegment::removeTrackerForEntry(key, entry, entryImpl)  ← 真實 body
+        // .NET ConcurrentDictionary 已內建分段鎖,中層 dispatch 收成這裡。
+        //
+        // ── cppcache ConcurrentEntriesMap::removeTrackerForEntry (ConcurrentEntriesMap.cpp:195-201):
+        //
+        //   void ConcurrentEntriesMap::removeTrackerForEntry(
+        //       const std::shared_ptr<CacheableKey>& key) {
+        //     // This function is disabled if concurrency checks are enabled. The versioning
+        //     // changes takes care of the version and no need for tracking the entry
+        //     if (m_concurrencyChecksEnabled) return;
+        //     segmentFor(key)->removeTrackerForEntry(key);
+        //   }
+        //
+        // ── cppcache MapSegment::removeTrackerForEntry(key) (MapSegment.cpp:540-551):
+        //
+        //   void MapSegment::removeTrackerForEntry(
+        //       const std::shared_ptr<CacheableKey>& key) {
+        //     if (m_concurrencyChecksEnabled) return;
+        //     std::lock_guard<decltype(m_spinlock)> lk(m_spinlock);
+        //
+        //     const auto& find = m_map.find(key);
+        //     if (find != m_map.end()) {
+        //       auto& entry = find->second;
+        //       auto impl = entry->getImplPtr();
+        //       removeTrackerForEntry(key, entry, impl);
+        //     }
+        //   }
+        //
+        // ── cppcache MapSegment::removeTrackerForEntry(key, entry, entryImpl) (MapSegment.hpp:99-123):
+        //
+        //   // remove a tracker for the given entry
+        //   inline void removeTrackerForEntry(const std::shared_ptr<CacheableKey>& key,
+        //                                     std::shared_ptr<MapEntry>& entry,
+        //                                     std::shared_ptr<MapEntryImpl>& entryImpl) {
+        //     // This function is disabled if concurrency checks are enabled. The
+        //     // versioning
+        //     // changes takes care of the version and no need for tracking the entry
+        //     if (m_concurrencyChecksEnabled) return;
+        //     std::pair<bool, int> trackerPair = entry->removeTracker();
+        //     if (trackerPair.second <= 0) {
+        //       std::shared_ptr<Cacheable> value;
+        //       if (entryImpl == nullptr) {
+        //         entryImpl = entry->getImplPtr();
+        //       }
+        //       entryImpl->getValueI(value);
+        //       if (value == nullptr) {
+        //         // get rid of an entry marked as destroyed
+        //         m_map.erase(key);
+        //         return;
+        //       }
+        //     }
+        //     if (trackerPair.first) {
+        //       entry = entryImpl ? entryImpl : entry->getImplPtr();
+        //       m_map[key] = entry;
+        //     }
+        //   }
+        //
+        // 翻譯前的注意:
+        //   - 第一/二層的 `if (m_concurrencyChecksEnabled) return;` early-out
+        //     合進這層:if (region.Attributes.ConcurrencyChecksEnabled) return;
+        //   - entry->removeTracker() → MapEntry.RemoveTracker (NIE) 回 (bool, int);
+        //     需在 MapEntry 上 NIE 新增。
+        //   - trackerPair.second <= 0 + value == null → `_map.TryRemove(key, out _)`
+        //     (對映 `m_map.erase(key)`)。
+        //   - trackerPair.first 真實作 → 把 entry 換成 entryImpl 後寫回 `_map[key]`
+        //     。在 C# `MapEntryImpl` 已收成 `MapEntry`,這條重新指派可能可以省掉。
+    }
+
+    /// <inheritdoc />
+    public override (MapEntry? Entry, object? OldValue) Remove(
+        object key,
+        int updateCount,
+        VersionTag? versionTag,
+        bool afterRemote)
+    {
+        // cppcache ConcurrentEntriesMap::remove + MapSegment::remove 兩層攤平。
+        // ConcurrentEntriesMap dispatches by key hash; MapSegment 做真實工作。
+        // .NET ConcurrentDictionary 已內建分段鎖,兩層收成一層。
+        // cppcache `if (isEntryFound) --m_size` 收掉 — _map.Count 自帶。
+
+        // ── cppcache MapSegment::remove L312-321 — concurrency-checks branch ─
+        if (region.Attributes.ConcurrencyChecksEnabled)
+        {
+            return RemoveWhenConcurrencyEnabled(key, updateCount, versionTag, afterRemote);
+        }
+
+        // ── cppcache L323-337 — happy path (no concurrency-checks) ─────────
+        // m_spinlock + m_map.find + m_map.erase 三步,ConcurrentDictionary.TryRemove 一次完成。
+        if (!_map.TryRemove(key, out var entry))
+        {
+            // cppcache: didn't unbind, probably no entry...
+            //   destroyTrackers > 0 → m_destroyedKeys[key] = destroyTrackers + 1
+            //   destroy-tracker bookkeeping 還沒做,跳過。
+            // cppcache returns GF_CACHE_ENTRY_NOT_FOUND; 對應 (null, null)。
+            return (null, null);
+        }
+
+        // ── cppcache L339-342 — updateCount race detection ────────────────
+        // if (updateCount >= 0 && updateCount != entry->getUpdateCount())
+        //   return GF_CACHE_ENTRY_UPDATED;
+        // MapEntry.UpdateCount accessor 還沒擺 + AddTrackerForEntry NIE,
+        //   tracker 子系統真上線時補。
+
+        // ── cppcache L344-349 — getValueI + tombstone normalize ───────────
+        var oldValue = entry.Value;
+        if (CacheableToken.IsTombstone(oldValue))
+        {
+            oldValue = null;
+        }
+        // cppcache: `if (oldValue) me = entryImpl;` — entry 只在 value 非 null 時帶出。
+        return (oldValue is null ? null : entry, oldValue);
+    }
+
+    /// <summary>
+    /// Concurrency-checks branch. Mirrors cppcache
+    /// <c>MapSegment::removeWhenConcurrencyEnabled</c>
+    /// (<c>cppcache/src/MapSegment.cpp:240</c>) — version-tag 比對 +
+    /// tombstone 寫入 + <c>TombstoneList</c> 紀錄。concurrency-checks
+    /// 真上線時實作。
+    /// </summary>
+    private (MapEntry? Entry, object? OldValue) RemoveWhenConcurrencyEnabled(
+        object key,
+        int updateCount,
+        VersionTag? versionTag,
+        bool afterRemote)
+    {
+        // cppcache MapSegment::removeWhenConcurrencyEnabled (MapSegment.cpp:240-303).
+        // m_spinlock 收掉(ConcurrentDictionary 自帶)。err-codes ride exceptions
+        // (ProcessVersionTag throws GfErrTypeException for version conflicts).
+
+        if (_map.TryGetValue(key, out var entry))
+        {
+            // cppcache: versionStamp = entry->getVersionStamp();
+            //   stamp 是 reference type,後續 mutate 對 entry 立即可見;
+            //   cppcache 因為是 value-copy 才需要最後再 setVersions 寫回。
+            var versionStamp = entry.VersionStamp;
+            if (versionTag is not null)
+            {
+                // cppcache: processVersionTag err → 早退;C# 拋 GfErrTypeException,
+                //   UpdateNoThrowAsync catch switch 接 (CacheConcurrentModification
+                //   / CacheEntryUpdated)。cppcache 用 entry->getImplPtr()->getKeyI(keyPtr)
+                //   只是因為 shared_ptr 語意拿不到原 key;我們直接用 key 參數。
+                versionStamp.ProcessVersionTag(region, key, versionTag, deltaCheck: false);
+                versionStamp.SetVersions(versionTag);
+            }
+
+            // cppcache: entryImpl->getValueI(oldValue); if (oldValue) me = entryImpl;
+            //   entry 只在 value 非 null 時帶出 (見最後 return)。
+            var oldValue = entry.Value;
+
+            // cppcache: 以 tombstone 蓋過原 entry(走 putForTrackedEntry 是為了
+            //   走 tracker / version-check 路徑),成功才把 entry 登錄到 tombstone
+            //   list 等 GC。失敗 (race / version conflict) 透過 GfErrTypeException
+            //   往上拋,跳過 TombstoneList.Add。
+            PutForTrackedEntry(entry, key, CacheableToken.Tombstone, updateCount, delta: null);
+            region.TombstoneList?.Add(entry);
+
+            if (CacheableToken.IsTombstone(oldValue))
+            {
+                // cppcache: 原本就已經是 tombstone,沒實際拿掉東西。
+                //   afterRemote 容忍(server 已成功,本地只是同步)→ GF_NOERR;
+                //   否則 GF_CACHE_ENTRY_NOT_FOUND。兩條路在 C# 都收成 (null, null)
+                //   —— DestroyActions.LocalUpdateAsync 用 oldValue==null 判定不需要
+                //   cleanup,等同 cppcache localUpdate 跳過 success-path 的效果。
+                return (null, null);
+            }
+
+            return (oldValue is null ? null : entry, oldValue);
+        }
+
+        // ── cppcache: entry not found ──────────────────────────────────────
+        if (versionTag is not null)
+        {
+            // cppcache: putNoEntry(key, tombstone, mapEntry, -1, 0, versionTag);
+            //   m_tombstoneList->add(mapEntry).
+            //   為這個 key 種一個 tombstone,讓未來任何 update 都有 stamp 可比。
+            //   -1 / 0 是 cppcache helper 對 tracker / destroyTracker 的固定填值。
+            var mapEntry = factory.NewEntry(key, CacheableToken.Tombstone,
+                updateCount: -1, destroyTracker: 0, versionTag);
+            _map[key] = mapEntry;
+            region.TombstoneList?.Add(mapEntry);
+        }
+
+        // cppcache: afterRemote ? GF_NOERR : GF_CACHE_ENTRY_NOT_FOUND。
+        //   兩條都收成 (null, null) — caller (DestroyActions) 現行走法
+        //   不會區分這兩種 err code,success-path stats 照常打。之後真的
+        //   接到 err pipeline 時,改成拋 sentinel 讓 LocalRegion::localUpdate
+        //   的 early-return 對齊。
+        return (null, null);
+    }
+
+    /// <inheritdoc />
     public override (MapEntry Entry, object? OldValue, bool IsUpdate) Put(
         object key, object newValue, int updateCount, int destroyTracker, VersionTag? versionTag,
         DataInput? delta = null)
@@ -115,7 +315,7 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
             _map[key] = fresh;
             entry = fresh;                                             // ← writeback gap
 
-            //_map[key] = new MapEntry();   // 最小占位 — Phase 1.x 走 walking-skeleton
+            //_map[key] = new MapEntry();   // 最小占位 — walking-skeleton
         }
         else
         {
@@ -146,8 +346,8 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
             {
                 // cppcache MapSegment::remove_entry (L354-357) 是
                 //   m_tombstoneList->erase(key) + m_map.erase(key) 兩步走;
-                //   C# 對齊。Phase 1.x region.TombstoneList 還沒 allocate,
-                //   `?.` 短路,Phase 2+ 落地後真噴。
+                //   C# 對齊。region.TombstoneList 還沒 allocate,
+                //   `?.` 短路,真實落地後才噴。
                 region.TombstoneList?.Erase(key);
                 // 拔掉 tombstone 並從它身上拿 (已經 ProcessVersionTag /
                 //   SetVersions mutate 過的) stamp 帶到 fresh entry,history 延續。
@@ -165,10 +365,10 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
                 // cppcache 在 putForTrackedEntry 用 `updateCount < 0 ||
                 //   m_concurrencyChecksEnabled` 切兩路;C# 鏡像:
                 //   * 兩條件都不成立 → 「tracked put + 需要 race detection」→
-                //     PutForTrackedEntry (Phase 2+ NIE)
+                //     PutForTrackedEntry (tracker branches still NIE)
                 //   * concurrencyChecksEnabled → 寫成功後需要 tombstone-list erase
                 //     → 也走 PutForTrackedEntry
-                //   * 其餘 (Phase 1.x default:updateCount < 0,checks off) →
+                //   * 其餘 (預設:updateCount < 0,checks off) →
                 //     走下面 inline happy path。
                 if (updateCount >= 0 || region.Attributes.ConcurrencyChecksEnabled)
                 {
@@ -187,9 +387,9 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
                         || CacheableToken.IsInvalid(existingValue)
                         || CacheableToken.IsTombstone(existingValue))
                     {
-                        (region.Pool as ThinClientPoolDM)?.UpdateNotificationStats(false, 0);
+                        (region.Pool as ThinClientPoolDM)?.UpdateNotificationStats(false, TimeSpan.Zero);
                         // cppcache: m_poolDM->updateNotificationStats(false, 0)
-                        //   wire 通知統計 Phase 4+。
+                        //   wire 通知統計待加。
                         throw new GfErrTypeException(GfErrType.InvalidDelta);
                     }
 
@@ -199,7 +399,7 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
                         existingValue = GetFromDisk(key, existing);
                         if (existingValue is null)
                         {
-                            (region.Pool as ThinClientPoolDM)?.UpdateNotificationStats(false, 0);
+                            (region.Pool as ThinClientPoolDM)?.UpdateNotificationStats(false, TimeSpan.Zero);
                             throw new GfErrTypeException(GfErrType.InvalidDelta);
                         }
                     }
@@ -219,12 +419,17 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
                         {
                             // clone path:不動原物,套 delta 到 clone 後寫回
                             var tempVal = (IDelta)valueWithDelta.Clone();
+                            // TODO: cppcache 包了 clock::now() 前後計時,成功後
+                            //   m_poolDM->updateNotificationStats(true, elapsed)。
+                            //   timing + 成功側 call 都還沒翻。
                             tempVal.FromDelta(delta);
                             existing.Value = tempVal;
                         }
                         else
                         {
                             // in-place path:直接 mutate 原物
+                            // TODO: 同上 — cppcache 計時 + updateNotificationStats(true, elapsed)
+                            //   還沒翻。
                             valueWithDelta.FromDelta(delta);
                             existing.Value = valueWithDelta;
                         }
@@ -243,7 +448,7 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
                 //   VersionStamp 是 value-copy,需要再寫回一次;C# 是 reference
                 //   type,省掉第二次 setVersions。
                 //
-                // Writeback 對兩條 branch 都一致:Phase 2+ PutForTrackedEntry
+                // Writeback 對兩條 branch 都一致:PutForTrackedEntry
                 //   返回成功時也是這套 entry / oldValue / isUpdate (跟 inline
                 //   path 同款),所以擺在 if/else if/else 外。
                 entry = existing;
@@ -260,38 +465,157 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
     /// <summary>
     /// Tracked-entry update path. Mirrors cppcache
     /// <c>MapSegment::putForTrackedEntry</c>
-    /// (<c>cppcache/src/MapSegment.cpp:601-668</c>) — MapSegment collapse
-    /// 後落腳在這。Phase 1.x 的 happy path (no tracker, no concurrency-
-    /// checks, no tombstone-list) 目前直接 inline 在 <see cref="Put"/> 的
-    /// tracked-update <c>else</c> 分支裡;這個 method 是 Phase 2+ 真接
-    /// 時的歸宿 + 兩個待補行為的明確落腳點。
+    /// (<c>cppcache/src/MapSegment.cpp:601-690</c>) — MapSegment collapse
+    /// 後落腳在這。三條 path 都已翻譯(Path A delta / non-delta、Path B
+    /// 計數對齊、Path C race-loser);深處仍仰賴 NIE
+    /// (<c>MapEntry.UpdateCount</c> getter、<see cref="RemoveTrackerForEntry"/>、
+    /// <see cref="IncrementUpdateCount"/>、<see cref="VersionStamp.SetVersions(VersionStamp)"/>),
+    /// 走進對應路徑時會炸。同等 delta 邏輯目前也 inline 在 <see cref="Put"/>
+    /// 的 <c>else if (delta is not null)</c> 分支,之後 reconcile 收成單一處。
     /// </summary>
-    /// <remarks>
-    /// Phase 2+ 要補的行為:
-    /// <list type="number">
-    /// <item><description>
-    /// <b>destroyTracker / updateCount race detection</b> — cppcache
-    /// L606 對 <c>updateCount &lt; 0 || m_concurrencyChecksEnabled</c>
-    /// 切「非 tracked put」vs「tracked put」兩條 path。Tracked put 比對
-    /// caller (在 <c>AddTrackerForEntry</c> 記下) 的 <c>updateCount</c>
-    /// 跟 entry 現在的 counter,不一致 → throw
-    /// <see cref="GfErrTypeException"/>(<see cref="GfErrType.CacheEntryUpdated"/>);
-    /// <c>UpdateNoThrowAsync</c> 的 catch switch 已在等這個訊號。
-    /// </description></item>
-    /// <item><description>
-    /// <b>m_tombstoneList-&gt;erase(key, true)</b> — cppcache L673-674
-    /// 在 concurrency-checks 開啟且寫成功時,把 tombstone list 裡同 key
-    /// 的殘留掃掉。需 <c>LocalRegion.TombstoneList</c> 真實型別(目前
-    /// 是 <see langword="object"/>?placeholder)。
-    /// </description></item>
-    /// </list>
-    /// </remarks>
     private void PutForTrackedEntry(
         MapEntry existing,
         object key,
         object newValue,
         int updateCount,
-        DataInput? delta) =>
+        DataInput? delta,
+        VersionStamp? versionStamp = null)
+    {
+        // cppcache MapSegment::putForTrackedEntry (MapSegment.cpp:601-690).
+        // Three-way branch on (updateCount, concurrencyChecksEnabled):
+        //   Path A: updateCount < 0 || concurrencyChecksEnabled — non-tracked
+        //           put OR concurrency-checks active
+        //   Path B: updateCount == entry.UpdateCount — tracker hit
+        //   Path C: counter mismatch — race-loser
+
+        if (updateCount < 0 || region.Attributes.ConcurrencyChecksEnabled)
+        {
+            // ── cppcache L609-614 — hoist pool DM resolve once ──────────
+            //   auto* thinClientRegion = dynamic_cast<ThinClientRegion*>(m_region);
+            //   ThinClientPoolDM* m_poolDM = nullptr;
+            //   if (thinClientRegion) {
+            //     m_poolDM = dynamic_cast<ThinClientPoolDM*>(thinClientRegion->getDistMgr());
+            //   }
+            var poolDM = region.Pool as ThinClientPoolDM;
+
+            // ── cppcache L616-668 — delta path / L670 — plain setValueI ──
+            // 同等 delta 邏輯目前也 inline 在 Put 的 else-if branch;
+            // 之後 reconcile 統一。delta 分支自己 setValue,所以跟下方
+            // plain setValue 是互斥(cppcache `if (delta != nullptr) { ... } else { setValueI(newValue) }`)。
+            if (delta is not null)
+            {
+                var oldValue = existing.Value;
+
+                // 沒可套 delta 的值(空 / destroyed / invalid / tombstone)→
+                //   退回 full object 抓回(caller 接 InvalidDelta fallback)。
+                if (oldValue is null
+                    || CacheableToken.IsDestroyed(oldValue)
+                    || CacheableToken.IsInvalid(oldValue)
+                    || CacheableToken.IsTombstone(oldValue))
+                {
+                    poolDM?.UpdateNotificationStats(false, TimeSpan.Zero);
+                    throw new GfErrTypeException(GfErrType.InvalidDelta);
+                }
+
+                // overflow 到磁碟 → 回讀,撈不回視為 InvalidDelta。
+                if (CacheableToken.IsOverflowed(oldValue))
+                {
+                    oldValue = GetFromDisk(key, existing);
+                    if (oldValue is null)
+                    {
+                        poolDM?.UpdateNotificationStats(false, TimeSpan.Zero);
+                        throw new GfErrTypeException(GfErrType.InvalidDelta);
+                    }
+                }
+
+                // 既有 value 沒 implement IDelta → 沒法套。
+                if (oldValue is not IDelta valueWithDelta)
+                {
+                    throw new GfErrTypeException(GfErrType.InvalidDelta);
+                }
+
+                // cppcache try { fromDelta } catch (InvalidDeltaException) →
+                //   GF_INVALID_DELTA pipeline 訊號。
+                try
+                {
+                    if (region.Attributes.CloningEnabled)
+                    {
+                        // clone path:不動原物,套 delta 到 clone 後寫回。
+                        var tempVal = (IDelta)valueWithDelta.Clone();
+                        // cppcache: auto currTimeBefore = clock::now();
+                        //   fromDelta(); updateNotificationStats(true, clock::now()-currTimeBefore);
+                        var start = Stopwatch.GetTimestamp();
+                        tempVal.FromDelta(delta);
+                        poolDM?.UpdateNotificationStats(true, Stopwatch.GetElapsedTime(start));
+                        existing.Value = tempVal;
+                    }
+                    else
+                    {
+                        // in-place path:直接 mutate 原物。
+                        var start = Stopwatch.GetTimestamp();
+                        valueWithDelta.FromDelta(delta);
+                        poolDM?.UpdateNotificationStats(true, Stopwatch.GetElapsedTime(start));
+                        existing.Value = valueWithDelta;
+                    }
+                }
+                catch (InvalidDeltaException)
+                {
+                    throw new GfErrTypeException(GfErrType.InvalidDelta);
+                }
+            }
+            else
+            {
+                // cppcache L670 — entryImpl->setValueI(newValue)
+                existing.Value = newValue;
+            }
+
+            // ── cppcache L672-676 — concurrency-checks 後置 ──────────────
+            // tombstone-list erase + setVersions 寫回。預設 caller 透過
+            // existing.VersionStamp(reference type)mutate 完成;若 caller
+            // 走 cppcache value-copy 模式傳獨立 stamp 進來,額外寫回一次。
+            if (region.Attributes.ConcurrencyChecksEnabled)
+            {
+                region.TombstoneList?.Erase(key, cancelTask: true);
+                // cppcache L675 — entryImpl->getVersionStamp().setVersions(versionStamp);
+                if (versionStamp is not null)
+                {
+                    existing.VersionStamp.SetVersions(versionStamp);
+                }
+            }
+
+            // ── cppcache L677 — (void)incrementUpdateCount(key, entry) ──
+            IncrementUpdateCount(key, existing);
+            return;
+        }
+
+        // ── cppcache Paths B & C — tracker counter compare ──────────────
+        // cppcache 兩條都 call removeTrackerForEntry(key, entry, entryImpl);
+        // C# 收成單一 RemoveTrackerForEntry(key) 簽章。
+        if (updateCount == existing.UpdateCount)
+        {
+            // Path B (cppcache L679-683):counter 相符,正常寫入後 drop tracker。
+            existing.Value = newValue;
+            RemoveTrackerForEntry(key);
+            return;
+        }
+
+        // Path C (cppcache L684-689):entry 在 tracking 期間被改過,
+        //   放棄寫入,不動 oldValue / MapEntry,只 drop tracker,
+        //   並以 CacheEntryUpdated 訊號往上 — UpdateNoThrowAsync catch
+        //   switch 接這個訊號。
+        RemoveTrackerForEntry(key);
+        throw new GfErrTypeException(GfErrType.CacheEntryUpdated);
+    }
+
+    /// <summary>
+    /// Bumps the tracker counter on <paramref name="entry"/> (or rebinds it
+    /// when destroy-tracking forces a fresh MapEntry under
+    /// <paramref name="key"/>). Mirrors cppcache
+    /// <c>MapSegment::incrementUpdateCount</c>
+    /// (<c>cppcache/src/MapSegment.hpp:82-96</c>) — disabled when
+    /// concurrency-checks are on (versioning takes over).
+    /// </summary>
+    private void IncrementUpdateCount(object key, MapEntry entry) =>
         throw new NotImplementedException(
-            "ConcurrentEntriesMap.PutForTrackedEntry: Phase 2+ extraction target (updateCount race detection + tombstone-list erase).");
+            "ConcurrentEntriesMap.IncrementUpdateCount: pending tracker subsystem (mirror of MapSegment::incrementUpdateCount + MapEntry::incrementUpdateCount).");
 }

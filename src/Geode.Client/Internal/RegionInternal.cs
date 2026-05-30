@@ -42,9 +42,10 @@ internal abstract class RegionInternal(RegionAttributes attributes)
     public abstract Task ClearAsync(object? callback = null, CancellationToken ct = default);
 
     /// <inheritdoc />
-    public virtual bool ContainsKey(object key) =>
-        throw new NotImplementedException("Local entry map not yet implemented.");
     public abstract Task<bool> ContainsKeyAsync(object key, CancellationToken ct = default);
+
+    /// <inheritdoc />
+    public abstract Task<bool> ContainsKeyOnServerAsync(object key, CancellationToken ct = default);
 
     /// <inheritdoc />
     public virtual bool ContainsValueForKey(object key) =>

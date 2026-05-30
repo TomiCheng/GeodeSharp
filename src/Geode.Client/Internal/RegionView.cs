@@ -90,6 +90,9 @@ internal sealed class RegionView<TKey, TValue>(IRegion inner, TypedResultAdapter
     public Task<bool> ContainsKeyAsync(TKey key, CancellationToken ct = default)
         => inner.ContainsKeyAsync(key!, ct);
 
+    public Task<bool> ContainsKeyOnServerAsync(TKey key, CancellationToken ct = default)
+        => inner.ContainsKeyOnServerAsync(key!, ct);
+
     public Task ClearAsync(object? callback = null, CancellationToken ct = default)
         => inner.ClearAsync(callback, ct);
 
@@ -220,6 +223,9 @@ internal sealed class RegionView<TKey, TValue>(IRegion inner, TypedResultAdapter
     Task<bool> IRegion.ContainsKeyAsync(object key, CancellationToken ct)
         => inner.ContainsKeyAsync(key, ct);
 
+    Task<bool> IRegion.ContainsKeyOnServerAsync(object key, CancellationToken ct)
+        => inner.ContainsKeyOnServerAsync(key, ct);
+
     Task IRegion.InvalidateAsync(object key, object? callback, CancellationToken ct)
         => inner.InvalidateAsync(key, callback, ct);
 
@@ -252,7 +258,6 @@ internal sealed class RegionView<TKey, TValue>(IRegion inner, TypedResultAdapter
 
     public IRegionEntry? GetEntry(TKey key) => inner.GetEntry(key!);
 
-    public bool ContainsKey(TKey key) => inner.ContainsKey(key!);
     public bool ContainsValueForKey(TKey key) => inner.ContainsValueForKey(key!);
 
     public IReadOnlyList<TKey> Keys()
@@ -295,7 +300,6 @@ internal sealed class RegionView<TKey, TValue>(IRegion inner, TypedResultAdapter
     bool IRegion.IsDestroyed => inner.IsDestroyed;
     RegionAttributes IRegion.Attributes => inner.Attributes;
     IAttributesMutator IRegion.GetAttributesMutator() => inner.GetAttributesMutator();
-    bool IRegion.ContainsKey(object key) => inner.ContainsKey(key);
     bool IRegion.ContainsValueForKey(object key) => inner.ContainsValueForKey(key);
     IRegionService IRegion.RegionService => inner.RegionService;
 }

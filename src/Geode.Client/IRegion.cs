@@ -15,12 +15,12 @@ public interface IRegion
     /// <summary>
     /// Local containment check — does the local cache hold <paramref name="key"/>?
     /// </summary>
-    bool ContainsKey(object key);
+    Task<bool> ContainsKeyAsync(object key, CancellationToken ct = default);
 
     /// <summary>
     /// Check whether <paramref name="key"/> exists on the server.
     /// </summary>
-    Task<bool> ContainsKeyAsync(object key, CancellationToken ct = default);
+    Task<bool> ContainsKeyOnServerAsync(object key, CancellationToken ct = default);
 
     /// <summary>
     /// Local containment check for a non-invalidated value under <paramref name="key"/>.
@@ -310,11 +310,11 @@ public interface IRegion<TKey, TValue> : IRegion
     where TKey : IEquatable<TKey>
 {
 
-    /// <inheritdoc cref="IRegion.ContainsKey(object)" />
-    bool ContainsKey(TKey key);
-
     /// <inheritdoc cref="IRegion.ContainsKeyAsync(object, CancellationToken)" />
     Task<bool> ContainsKeyAsync(TKey key, CancellationToken ct = default);
+
+    /// <inheritdoc cref="IRegion.ContainsKeyOnServerAsync(object, CancellationToken)" />
+    Task<bool> ContainsKeyOnServerAsync(TKey key, CancellationToken ct = default);
 
     /// <inheritdoc cref="IRegion.ContainsValueForKey(object)" />
     bool ContainsValueForKey(TKey key);

@@ -17,7 +17,7 @@ namespace Geode.Client.Internal;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Phase 1.2 status: <see cref="ContainsKeyAsync"/>,
+/// status: <see cref="ContainsKeyOnServerAsync"/>,
 /// <see cref="PutAsync"/>, <see cref="GetAsync"/>, and
 /// <see cref="RemoveAsync"/> are all end-to-end on the wire.
 /// </para>
@@ -184,10 +184,10 @@ internal partial class ThinClientRegion(
         }
     }
 
-    public override async Task<bool> ContainsKeyAsync(object key, CancellationToken ct = default)
+    public override async Task<bool> ContainsKeyOnServerAsync(object key, CancellationToken ct = default)
     {
         using var _ = _dmContextAccessor.BeginScope(_dm!);
-        _logger.LogTrace("ContainsKeyAsync: region={RegionPath}, key={Key}", FullPath, key);
+        _logger.LogTrace("ContainsKeyOnServerAsync: region={RegionPath}, key={Key}", FullPath, key);
 
         var request = await TcrMessageBuilder
             .Create(_serviceProvider, MessageType.ContainsKey)
@@ -209,18 +209,18 @@ internal partial class ThinClientRegion(
                         return b;
                     }
                     throw new GeodeException(
-                        $"ContainsKey on '{FullPath}': expected bool reply, " +
+                        $"ContainsKeyOnServer on '{FullPath}': expected bool reply, " +
                         $"got {value?.GetType().Name ?? "null"}.");
                 }
 
             case MessageType.Exception:
                 throw new GeodeException(
-                    $"Server exception on ContainsKey '{FullPath}': " +
+                    $"Server exception on ContainsKeyOnServer '{FullPath}': " +
                     TcrMessageHelper.DecodeExceptionPreview(reply));
 
             default:
                 throw new GeodeException(
-                    $"Unexpected reply type {reply.MessageType} for ContainsKey on '{FullPath}'.");
+                    $"Unexpected reply type {reply.MessageType} for ContainsKeyOnServer on '{FullPath}'.");
         }
     }
 

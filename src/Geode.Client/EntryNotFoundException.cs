@@ -1,12 +1,7 @@
 namespace Geode.Client;
 
 /// <summary>
-/// Thrown by strict-delete ops (<see cref="IRegion.DestroyAsync"/>) when
-/// no entry with the requested key is present in the region. Mirrors
-/// cppcache <c>EntryNotFoundException</c>
-/// (<c>cppcache/include/geode/ExceptionTypes.hpp</c>).
-/// Non-strict siblings (<see cref="IRegion.RemoveExAsync"/>) return
-/// <see langword="false"/> instead.
+/// Thrown by strict-delete ops when the requested key is absent.
 /// </summary>
 public class EntryNotFoundException : GeodeException
 {

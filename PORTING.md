@@ -103,9 +103,12 @@ C# 公開介面:`Geode.Client.IRegion` + `Geode.Client.IRegion<TKey,TValue>`(typ
 - 🔨 `Get` 經 caching-proxy 命中 local 不發 wire
 - 🔨 `Remove` 不存在的 key 不拋
 - 🔨 `Remove`(strict)值不符回 false
+- ✅ `DestroyAsync` 移除已存在 entry(LocalCount 1→0)
+- ✅ `DestroyAsync` 對 missing key lenient 靜默成功(對映 cppcache `destroy()` NORMAL flag,afterRemote 容忍 not-found)
 - 🔨 `Invalidate` 命中 server
 - 🔨 `Clear` 清空 region
-- 🔨 `ContainsKey` 查 server
+- ✅ `ContainsKeyAsync` 本地查(5 種 RegionShortcut;Proxy 永遠 false,caching 走 local map,tombstone 算 false)
+- 🔨 `ContainsKeyOnServerAsync` 查 server(LocalRegion 拋 `NotSupportedException`;ThinClientRegion 走 wire)
 - 🔨 `ExistsValue` 跑 OQL predicate
 - 🔨 `SelectValue` 跑 OQL predicate
 
@@ -116,7 +119,8 @@ C# 公開介面:`Geode.Client.IRegion` + `Geode.Client.IRegion<TKey,TValue>`(typ
 
 ## 嚴格語意(throw on miss/exists)
 - 🔨 `Create` 重複拋 `EntryExistsException`
-- 🔨 `Destroy` 缺漏拋 `EntryNotFoundException`
+- 🔨 `LocalDestroyAsync` 缺漏拋 `EntryNotFoundException`(對映 cppcache `localDestroy()` LOCAL flag 的 strict 語意 — API 未實作)
+- ✅ `DestroyAsync` 對 missing 不拋(lenient,跟 cppcache `destroy()` NORMAL flag 一致;見 CRUD 段) 
 
 ## Local(本地快取操作)
 - 🔨 `LocalPut` 只寫本地不發 wire
@@ -202,6 +206,8 @@ cppcache `ExceptionTypes.hpp` 58 個 exception。原則二能 BCL 取代的就�
 - ✅ `NotAuthorizedException` — auth pass 但無權限
 - ✅ `NotConnectedException` — wire 斷
 - ✅ `AllConnectionsInUseException` — pool 滿
+- 🔨 `EntryNotFoundException` — class 已建,尚無 consumer 拋(等 `LocalDestroyAsync` strict path 上線觸發)
+- 🔨 `EntryExistsException` — class 已建,尚無 consumer 拋(等 `Create` strict path 上線觸發)
 - 🔨 `RegionDestroyedException` — region 已銷毀(目前走 text-coded `CacheServerException`)
 
 ## BCL 取代(不開子類)
@@ -229,8 +235,6 @@ cppcache `ExceptionTypes.hpp` 58 個 exception。原則二能 BCL 取代的就�
 ## 待開(測試踩到才加)
 - ⏳ `CacheClosedException`
 - ⏳ `RegionExistsException`
-- ⏳ `EntryNotFoundException`
-- ⏳ `EntryExistsException`
 - ⏳ `CqException` 系列
 - ⏳ `FunctionException`
 - ⏳ `TransactionException` / `RollbackException`

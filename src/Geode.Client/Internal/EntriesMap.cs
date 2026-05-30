@@ -40,6 +40,14 @@ internal abstract class EntriesMap
     public abstract (MapEntry? Entry, object? Value) GetEntry(object key);
 
     /// <summary>
+    /// Pure-local containment check on <paramref name="key"/>. Mirrors
+    /// cppcache <c>EntriesMap::containsKey</c>
+    /// (<c>cppcache/src/EntriesMap.hpp</c>, pure virtual) — body lives on
+    /// <see cref="ConcurrentEntriesMap.ContainsKey"/>.
+    /// </summary>
+    public abstract bool ContainsKey(object key);
+
+    /// <summary>
     /// Inserts <paramref name="newValue"/> for <paramref name="key"/>
     /// only when the key is absent; returns the freshly-created
     /// <see cref="MapEntry"/> handle and the prior value (the latter is

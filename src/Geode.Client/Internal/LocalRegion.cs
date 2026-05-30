@@ -79,8 +79,6 @@ internal partial class LocalRegion : RegionInternal
     /// <summary>cppcache <c>m_entries</c> (<c>EntriesMap*</c>): local entry map (Phase 2+ caching-enabled). Renamed from cppcache's <c>m_entries</c> to (a) avoid clash with <see cref="IRegion.Entries(bool)"/> and (b) separate from the <see cref="EntriesMap"/> type name.</summary>
     protected Lazy<EntriesMap?> LocalEntriesMap;
 
-    internal EntriesMap InternalEntriesMap => LocalEntriesMap.Value!;
-
     /// <summary>
     /// cppcache <c>mutex_</c>: region-wide reader-writer lock
     /// (cppcache 用 <c>boost::shared_mutex</c>;C# 港用
@@ -112,14 +110,14 @@ internal partial class LocalRegion : RegionInternal
     /// <summary>cppcache <c>m_subRegions</c>: synchronized_map name → sub-region.</summary>
     protected object? SubRegions;
 
-    /// <summary>cppcache <c>m_tombstoneList</c>: CRDT tombstone tracking. Phase 2+ concurrency-checks 落地時 allocate。</summary>
-    internal TombstoneList? TombstoneList;
-
     /// <summary>cppcache <c>m_transactionEnabled</c>: TX support flag.</summary>
     protected bool TransactionEnabled;
 
     /// <summary>cppcache <c>m_writer</c>: CacheWriter (Phase 2+).</summary>
     protected object? Writer;
+
+    /// <summary>cppcache <c>m_tombstoneList</c>: CRDT tombstone tracking. Phase 2+ concurrency-checks 落地時 allocate。</summary>
+    internal TombstoneList? TombstoneList;
 
     public LocalRegion(
         IServiceProvider serviceProvider,
@@ -662,6 +660,13 @@ internal partial class LocalRegion : RegionInternal
 
     protected bool EntryExpiryEnabled => Attributes.EntryExpiryEnabled;
 
+
+    /// <summary>
+    /// Parent region in the sub-region tree, or <see langword="null"/> for a
+    /// root region. Mirrors cppcache <c>LocalRegion::m_parentRegion</c>.
+    /// </summary>
+    protected RegionInternal? Parent { get; }
+
     /// <summary>
     /// Whether the region's region-level expiry policy is configured (TTL
     /// or idle-timeout &gt; 0). Mirrors cppcache
@@ -672,13 +677,6 @@ internal partial class LocalRegion : RegionInternal
     /// <see cref="EntryExpiryEnabled"/>.
     /// </summary>
     protected bool RegionExpiryEnabled => Attributes.RegionExpiryEnabled;
-      
-
-    /// <summary>
-    /// Parent region in the sub-region tree, or <see langword="null"/> for a
-    /// root region. Mirrors cppcache <c>LocalRegion::m_parentRegion</c>.
-    /// </summary>
-    protected RegionInternal? Parent { get; }
 
     internal static LocalRegion Create(
         IServiceProvider serviceProvider,
@@ -687,6 +685,63 @@ internal partial class LocalRegion : RegionInternal
         RegionAttributes attributes)
     {
         return _objectFactory(serviceProvider, [name, parent, attributes]);
+    }
+
+    /// <summary>
+    /// Destroys <paramref name="key"/> locally (and, when
+    /// <paramref name="eventFlags"/> distributes, on the server). Mirrors
+    /// cppcache <c>LocalRegion::destroyNoThrow</c>
+    /// (<c>cppcache/src/LocalRegion.hpp:298-302</c>) — sibling of
+    /// <see cref="PutNoThrowAsync"/>; the body will delegate to
+    /// <c>UpdateNoThrowAsync&lt;DestroyActions&gt;</c> once the destroy
+    /// strategy lands. Caller today is the LRU evict path
+    /// (<see cref="LRULocalDestroyAction"/>) with
+    /// <c>EVICTION | LOCAL</c> flags. <paramref name="versionTag"/> is a
+    /// by-value input here (cppcache passes it by value, not by-ref like
+    /// <see cref="PutNoThrowRemoteAsync"/>); <see cref="Protocol.GfErrType"/>
+    /// collapses to throw/void per the codebase err-code → exception
+    /// convention.
+    /// </summary>
+    internal async Task DestroyNoThrowAsync(
+        object key,
+        object? callbackArgument,
+        int updateCount,
+        CacheEventFlags eventFlags,
+        VersionTag? versionTag = null,
+        CancellationToken ct = default)
+    {
+        var action = DestroyActions.Create(_serviceProvider, this, key, callbackArgument, updateCount, eventFlags, versionTag);
+        await UpdateNoThrowAsync(action, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Propagates the destroy to the remote server, if any. Mirrors cppcache
+    /// <c>LocalRegion::destroyNoThrow_remote</c>
+    /// (<c>cppcache/src/LocalRegion.cpp:3070-3074</c>) — the base impl is a
+    /// no-op success (<c>return GF_NOERR</c>; a pure local region has no server
+    /// backing); <c>ThinClientRegion</c> overrides with the
+    /// <c>TcrMessageDestroy</c> wire round-trip. Target of
+    /// <see cref="DestroyActions.RemoteUpdateAsync"/>; sibling of
+    /// <see cref="PutNoThrowRemoteAsync"/> (no <c>value</c> arg — destroy).
+    /// </summary>
+    /// <remarks>
+    /// cppcache out-param <c>versionTag</c> → return value (C# async can't take
+    /// <c>ref</c>/<c>out</c>); <see cref="DestroyActions.RemoteUpdateAsync"/>
+    /// writes the result back to its <c>VersionTag</c> field. NIE for now:
+    /// translate the base no-op (<c>return Task.FromResult((VersionTag?)null)</c>,
+    /// like <see cref="PutNoThrowRemoteAsync"/>) once the destroy pipeline is
+    /// wired end-to-end — until then it stays an explicit stub so the gap is
+    /// visible.
+    /// </remarks>
+    internal virtual Task<VersionTag?> DestroyNoThrowRemoteAsync(
+        object key,
+        object? aCallbackArgument,
+        CancellationToken ct = default)
+    {
+        // cppcache LocalRegion::destroyNoThrow_remote (LocalRegion.cpp:3070-3074):
+        //   base no-op success (`return GF_NOERR`) — pure local region, no server;
+        //   versionTag never set. ThinClientRegion overrides with the wire round-trip.
+        return Task.FromResult((VersionTag?)null);
     }
 
     /// <summary>
@@ -840,33 +895,6 @@ internal partial class LocalRegion : RegionInternal
     }
 
     /// <summary>
-    /// Destroys <paramref name="key"/> locally (and, when
-    /// <paramref name="eventFlags"/> distributes, on the server). Mirrors
-    /// cppcache <c>LocalRegion::destroyNoThrow</c>
-    /// (<c>cppcache/src/LocalRegion.hpp:298-302</c>) — sibling of
-    /// <see cref="PutNoThrowAsync"/>; the body will delegate to
-    /// <c>UpdateNoThrowAsync&lt;DestroyActions&gt;</c> once the destroy
-    /// strategy lands. Caller today is the LRU evict path
-    /// (<see cref="LRULocalDestroyAction"/>) with
-    /// <c>EVICTION | LOCAL</c> flags. <paramref name="versionTag"/> is a
-    /// by-value input here (cppcache passes it by value, not by-ref like
-    /// <see cref="PutNoThrowRemoteAsync"/>); <see cref="Protocol.GfErrType"/>
-    /// collapses to throw/void per the codebase err-code → exception
-    /// convention.
-    /// </summary>
-    internal async Task DestroyNoThrowAsync(
-        object key,
-        object? callbackArgument,
-        int updateCount,
-        CacheEventFlags eventFlags,
-        VersionTag? versionTag = null,
-        CancellationToken ct = default)
-    {
-        var action = DestroyActions.Create(_serviceProvider, this, key, callbackArgument, updateCount, eventFlags, versionTag);
-        await UpdateNoThrowAsync(action, ct).ConfigureAwait(false); 
-    }
-
-    /// <summary>
     /// Propagates the put to the remote server, if any. Mirrors cppcache
     /// <c>LocalRegion::putNoThrow_remote</c>
     /// (<c>cppcache/src/LocalRegion.cpp:3043-3048</c>) — the base impl is
@@ -903,36 +931,6 @@ internal partial class LocalRegion : RegionInternal
     }
 
     /// <summary>
-    /// Propagates the destroy to the remote server, if any. Mirrors cppcache
-    /// <c>LocalRegion::destroyNoThrow_remote</c>
-    /// (<c>cppcache/src/LocalRegion.cpp:3070-3074</c>) — the base impl is a
-    /// no-op success (<c>return GF_NOERR</c>; a pure local region has no server
-    /// backing); <c>ThinClientRegion</c> overrides with the
-    /// <c>TcrMessageDestroy</c> wire round-trip. Target of
-    /// <see cref="DestroyActions.RemoteUpdateAsync"/>; sibling of
-    /// <see cref="PutNoThrowRemoteAsync"/> (no <c>value</c> arg — destroy).
-    /// </summary>
-    /// <remarks>
-    /// cppcache out-param <c>versionTag</c> → return value (C# async can't take
-    /// <c>ref</c>/<c>out</c>); <see cref="DestroyActions.RemoteUpdateAsync"/>
-    /// writes the result back to its <c>VersionTag</c> field. NIE for now:
-    /// translate the base no-op (<c>return Task.FromResult((VersionTag?)null)</c>,
-    /// like <see cref="PutNoThrowRemoteAsync"/>) once the destroy pipeline is
-    /// wired end-to-end — until then it stays an explicit stub so the gap is
-    /// visible.
-    /// </remarks>
-    internal virtual Task<VersionTag?> DestroyNoThrowRemoteAsync(
-        object key,
-        object? aCallbackArgument,
-        CancellationToken ct = default)
-    {
-        // cppcache LocalRegion::destroyNoThrow_remote (LocalRegion.cpp:3070-3074):
-        //   base no-op success (`return GF_NOERR`) — pure local region, no server;
-        //   versionTag never set. ThinClientRegion overrides with the wire round-trip.
-        return Task.FromResult((VersionTag?)null);
-    }
-
-    /// <summary>
     /// Virtual hook used by <see cref="LocalCount"/>'s in-tx branch. Default
     /// body matches the non-virtual <see cref="LocalSizeRemote"/> —
     /// <see cref="ThinClientRegion"/> overrides (Phase 1.5+) to round-trip
@@ -942,15 +940,57 @@ internal partial class LocalRegion : RegionInternal
     /// </summary>
     internal virtual int SizeRemote() => LocalSizeRemote();
 
+    internal EntriesMap InternalEntriesMap => LocalEntriesMap.Value!;
+
 
 
     /// <inheritdoc />
     public override Task ClearAsync(object? callback = null, CancellationToken ct = default) =>
         throw new NotImplementedException("LocalRegion.ClearAsync: pending local entry map.");
 
+    /// <summary>
+    /// Inner helper for <see cref="ContainsKeyAsync"/>. Mirrors cppcache
+    /// <c>LocalRegion::containsKey_internal</c>
+    /// (<c>cppcache/src/LocalRegion.cpp:817-826</c>) — private code-org
+    /// split, one caller (<c>containsKey</c>). Gates on
+    /// <see cref="RegionAttributes.CachingEnabled"/> and delegates to the
+    /// local entry map.
+    /// </summary>
+    private bool ContainsKeyInternal(object key)
+    {
+        ArgumentNullException.ThrowIfNull(key, nameof(key));
+        if (!Attributes.CachingEnabled)
+        {
+            return  false;
+        }
+        return InternalEntriesMap.ContainsKey(key);
+    }
+
     /// <inheritdoc />
-    public override Task<bool> ContainsKeyAsync(object key, CancellationToken ct = default) =>
-        throw new NotImplementedException("LocalRegion.ContainsKeyAsync: pending local entry map.");
+    public override async Task<bool> ContainsKeyAsync(object key, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(key, nameof(key));
+        await CheckDestroyPendingAsync(ct).ConfigureAwait(false);
+        return ContainsKeyInternal(key);
+    }
+
+    /// <inheritdoc />
+    public override Task<bool> ContainsKeyOnServerAsync(object key, CancellationToken ct = default) =>
+        // cppcache LocalRegion::containsKeyOnServer (LocalRegion.cpp:671-675) throws
+        //   UnsupportedOperationException; BCL substitution per use-bcl-exceptions
+        //   memory rule. ThinClientRegion overrides with the real wire call.
+        throw new NotSupportedException("LocalRegion.ContainsKeyOnServerAsync: not supported on a server-less region.");
+
+    /// <inheritdoc />
+    public override async Task DestroyAsync(object key, object? callbackArgument = null, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        await DestroyNoThrowAsync(
+            key, callbackArgument,
+            updateCount: -1,
+            eventFlags: CacheEventFlags.Normal,
+            ct: ct).ConfigureAwait(false);
+    }
 
     /// <inheritdoc />
     public override Task<bool> ExistsValueAsync(string predicate, CancellationToken ct = default) =>
@@ -992,17 +1032,6 @@ internal partial class LocalRegion : RegionInternal
             // both outcomes.
             RegionStats.Put(Stopwatch.GetElapsedTime(sampleStartTimestamp));
         }
-    }
-
-    /// <inheritdoc />
-    public override async Task DestroyAsync(object key, object? callbackArgument = null, CancellationToken ct = default)
-    {
-        ct.ThrowIfCancellationRequested();
-        await DestroyNoThrowAsync(
-            key, callbackArgument,
-            updateCount: -1,
-            eventFlags: CacheEventFlags.Normal,
-            ct: ct).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -1088,4 +1117,5 @@ internal partial class LocalRegion : RegionInternal
 
     /// <inheritdoc />
     public override IPool? Pool => null;
+
 }

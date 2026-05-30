@@ -78,17 +78,27 @@ internal abstract class MapEntry
     /// (<c>cppcache/src/MapEntry.hpp:111</c>, pure virtual). Storage lands
     /// on <see cref="MapEntryImpl"/> when the tracker subsystem is wired.
     /// </summary>
-    public virtual int UpdateCount => throw new NotImplementedException(
-        "MapEntry.UpdateCount: pending tracker subsystem.");
+    public abstract int UpdateCount { get; }
+
+    /// <summary>
+    /// Bumps this entry's tracker counter (<see cref="UpdateCount"/>) by one.
+    /// Mirrors cppcache <c>MapEntry::incrementUpdateCount</c>
+    /// (<c>cppcache/src/MapEntry.hpp:99</c>, pure virtual). cppcache 用 placement
+    /// new 改 vptr 把 entry 「morph」 到 <c>MapEntryT&lt;..., UPDATE_COUNT+1&gt;</c>
+    /// 新型別,並透過 <c>newEntry</c> out-param 在 MAX boundary 時回傳重新分配
+    /// 的 <c>TrackedMapEntry</c>;C# 沒這把戲(也沒 boundary morph),純粹是
+    /// 一個 <see cref="UpdateCount"/>++,所以 cppcache 的 <c>shared_ptr&amp;</c>
+    /// out-param + <c>int</c> 回傳值在 C# 都收掉。
+    /// </summary>
+    public abstract void IncrementUpdateCount();
 
     /// <summary>
     /// Any cleanup required for this entry (e.g. removing from the LRU list).
     /// Mirrors cppcache <c>MapEntry::cleanup</c>
     /// (<c>cppcache/src/MapEntry.hpp:116</c>, pure virtual). No-op for
-    /// non-LRU entries; LRU-variant entries override to unlink from
-    /// the LRU queue.
+    /// non-LRU entries(<see cref="MapEntryImpl"/> override 空 body 對映
+    /// cppcache <c>MapEntryImpl::cleanup() override {}</c>);LRU-variant
+    /// entries override to unlink from the LRU queue.
     /// </summary>
-    public virtual void Cleanup(CacheEventFlags eventFlags) =>
-        throw new NotImplementedException(
-            "MapEntry.Cleanup: pending LRU-variant entry override.");
+    public abstract void Cleanup(CacheEventFlags eventFlags);
 }

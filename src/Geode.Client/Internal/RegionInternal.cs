@@ -230,7 +230,7 @@ internal abstract class RegionInternal(RegionAttributes attributes)
         throw new NotImplementedException("Sub-regions are not yet implemented.");
 
     /// <inheritdoc />
-    public abstract IPool Pool { get; }
+    public abstract IPool? Pool { get; }
 
     /// <summary>
     /// Mirrors cppcache <c>RegionAttributes::getPoolName()</c>; resolved

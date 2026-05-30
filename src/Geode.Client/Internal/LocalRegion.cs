@@ -1087,9 +1087,5 @@ internal partial class LocalRegion : RegionInternal
     // network leg.
 
     /// <inheritdoc />
-    public override IPool Pool =>
-        throw new NotImplementedException("LocalRegion has no attached pool; ThinClientRegion override carries it.");
-
-    
-
+    public override IPool? Pool => null;
 }

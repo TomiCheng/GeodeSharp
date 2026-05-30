@@ -55,6 +55,5 @@ internal static class CacheEventFlagsExtensions
     /// (<c>cppcache/src/RegionInternal.hpp:111-113</c>).
     /// </summary>
     public static bool IsEvictOrExpire(this CacheEventFlags flags) =>
-        throw new NotImplementedException(
-            "CacheEventFlagsExtensions.IsEvictOrExpire: pending LRU / expiry plumbing.");
+        (flags & (CacheEventFlags.Eviction | CacheEventFlags.Expiration)) != 0;
 }

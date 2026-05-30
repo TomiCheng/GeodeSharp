@@ -27,4 +27,25 @@ internal class MapEntryImpl : MapEntry
     public override VersionStamp VersionStamp =>
         throw new InvalidOperationException(
             "VersionStamp called for non-versioned MapEntry.");
+
+    /// <summary>
+    /// Tracker counter backing field. cppcache 用 <c>MapEntryT&lt;TBase, N, U&gt;</c>
+    /// 模板 + placement-new 改 vptr 來「攜帶」<c>UPDATE_COUNT</c>;C# 攤平
+    /// 成一個普通 int field,所有 non-versioned / versioned entries 都用它。
+    /// </summary>
+    private int _updateCount;
+
+    /// <inheritdoc />
+    public override int UpdateCount => _updateCount;
+
+    /// <inheritdoc />
+    public override void IncrementUpdateCount() => _updateCount++;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// 非 LRU entry 沒事做。對映 cppcache
+    /// <c>MapEntryImpl::cleanup(CacheEventFlags) override {}</c>(空 body)。
+    /// LRU-variant entry 才會 override 去從 LRU queue 解開。
+    /// </remarks>
+    public override void Cleanup(CacheEventFlags eventFlags) { }
 }

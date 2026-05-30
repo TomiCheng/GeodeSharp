@@ -54,11 +54,20 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
     private readonly ConcurrentDictionary<object, MapEntry> _map = new();
 
     /// <summary>
-    /// Mirrors cppcache <c>ConcurrentEntriesMap::size()</c>
-    /// (<c>cppcache/src/ConcurrentEntriesMap.cpp</c>) — sums per-segment
-    /// counts. Here it's a direct read of the dictionary count.
+    /// Logical entry count, tracked separately from <see cref="_map"/>.Count
+    /// so tombstone entries don't inflate it. Mirrors cppcache atomic
+    /// <c>m_size</c> (<c>ConcurrentEntriesMap.hpp:46</c>) — Put / Create /
+    /// Invalidate ++ on fresh insert, Remove -- on real entry removal.
     /// </summary>
-    internal override int Count => _map.Count;
+    private int _size;
+
+    /// <summary>
+    /// Mirrors cppcache <c>ConcurrentEntriesMap::size()</c>
+    /// (<c>ConcurrentEntriesMap.cpp:182</c>) — returns the tracked
+    /// <see cref="_size"/> counter (NOT <see cref="_map"/>.Count, because
+    /// tombstones live in the map but don't count as live entries).
+    /// </summary>
+    internal override int Count => _size;
 
     /// <inheritdoc />
     public override object? GetFromDisk(object key, MapEntry entry) => throw new NotImplementedException();
@@ -205,6 +214,16 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
         {
             oldValue = null;
         }
+
+        // cppcache ConcurrentEntriesMap::remove L142-148 — isEntryFound 為 true
+        //   (找到 + 真有 live value) → --m_size。tombstone-as-old 的情況 cppcache
+        //   會在 segment 層回 GF_CACHE_ENTRY_NOT_FOUND,不走 -- 分支;對應 C# 的
+        //   `oldValue != null` 判斷。
+        if (oldValue is not null)
+        {
+            Interlocked.Decrement(ref _size);
+        }
+
         // cppcache: `if (oldValue) me = entryImpl;` — entry 只在 value 非 null 時帶出。
         return (oldValue is null ? null : entry, oldValue);
     }
@@ -260,9 +279,13 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
                 //   否則 GF_CACHE_ENTRY_NOT_FOUND。兩條路在 C# 都收成 (null, null)
                 //   —— DestroyActions.LocalUpdateAsync 用 oldValue==null 判定不需要
                 //   cleanup,等同 cppcache localUpdate 跳過 success-path 的效果。
+                //   m_size 不動(tombstone 本來就沒算進 live count)。
                 return (null, null);
             }
 
+            // cppcache ConcurrentEntriesMap::remove L142-148 — live entry 被 tombstone
+            //   覆蓋掉,m_size --(雖然 _map 物理上還在,logical entry 數少一個)。
+            Interlocked.Decrement(ref _size);
             return (oldValue is null ? null : entry, oldValue);
         }
 
@@ -457,9 +480,13 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
             }
         }
 
+        // cppcache ConcurrentEntriesMap::put L116-118 — fresh insert / tombstone
+        //   resurrection 才 ++m_size;純更新不算。
+        if (!isUpdate)
+        {
+            Interlocked.Increment(ref _size);
+        }
         return (entry, oldValue, isUpdate);
-        // ── cppcache `if (!isUpdate) ++m_size;` 收掉 ───────────────────
-        // _map.Count 自帶,不用手動 bookkeeping。
     }
 
     /// <summary>
@@ -615,7 +642,18 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
     /// (<c>cppcache/src/MapSegment.hpp:82-96</c>) — disabled when
     /// concurrency-checks are on (versioning takes over).
     /// </summary>
-    private void IncrementUpdateCount(object key, MapEntry entry) =>
-        throw new NotImplementedException(
-            "ConcurrentEntriesMap.IncrementUpdateCount: pending tracker subsystem (mirror of MapSegment::incrementUpdateCount + MapEntry::incrementUpdateCount).");
+    private void IncrementUpdateCount(object key, MapEntry entry)
+    {
+        // cppcache MapSegment::incrementUpdateCount (MapSegment.hpp:82-96):
+        //   "This function is disabled if concurrency checks are enabled.
+        //    The versioning changes takes care of the version and no need
+        //    for tracking the entry"
+        if (region.Attributes.ConcurrencyChecksEnabled) return;
+
+        // cppcache: entry->incrementUpdateCount(newEntry);
+        //   if (newEntry != nullptr) { m_map.emplace(key, newEntry); entry = newEntry; }
+        //   rebind path 在 C# 是 dead code(沒 placement-new boundary morph),
+        //   回傳 bool「is rebound?」也跟著收掉,直接 void。
+        entry.IncrementUpdateCount();
+    }
 }

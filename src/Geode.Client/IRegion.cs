@@ -279,7 +279,7 @@ public interface IRegion
     /// <summary>
     /// Live <see cref="IPool"/> this region dispatches through.
     /// </summary>
-    IPool Pool { get; }
+    IPool? Pool { get; }
 
     /// <summary>Name of the <see cref="IPool"/>
     /// this region was created on; empty when the cache's default pool is used.

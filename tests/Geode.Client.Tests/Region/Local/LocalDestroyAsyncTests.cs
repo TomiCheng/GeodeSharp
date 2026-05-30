@@ -63,4 +63,34 @@ public class LocalDestroyAsyncTests(IGeodeCacheFactory factory)
             await factory.DisposeCacheAsync(cacheName);
         }
     }
+
+    // DestroyAsync on a missing key is lenient — mirrors cppcache
+    // Region::destroy (NORMAL flag): the remote stage no-ops on a pure-local
+    // region, sets afterRemote=true, and the local not-found is then tolerated
+    // (cppcache MapSegment::removeWhenConcurrencyEnabled afterRemote branch
+    // returns GF_NOERR). The strict-throw variant lives on cppcache
+    // localDestroy() (LOCAL flag) — that's a separate API surface and is
+    // not yet ported.
+    [Fact]
+    public async Task DestroyAsync_MissingKey_SilentlySucceeds()
+    {
+        const string cacheName = nameof(LocalDestroyAsyncTests) + "_destroy_missing";
+        try
+        {
+            var cache = await NewCacheAsync(cacheName);
+            var region = await cache
+                .CreateRegionFactory(RegionShortcut.Local)
+                .CreateAsync<string, string>("orders", TestContext.Current.CancellationToken);
+
+            // No put — destroy on a key that was never inserted.
+            await region.DestroyAsync("never-put", ct: TestContext.Current.CancellationToken);
+
+            // Map stays empty; the lenient path is a no-op against missing keys.
+            Assert.Equal(0, region.LocalCount);
+        }
+        finally
+        {
+            await factory.DisposeCacheAsync(cacheName);
+        }
+    }
 }

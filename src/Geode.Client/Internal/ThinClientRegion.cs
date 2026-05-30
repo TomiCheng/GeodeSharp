@@ -292,10 +292,26 @@ internal partial class ThinClientRegion(
     }
 
 
+    // Transitional: while LocalRegion.GetNoThrowAsync is still a stub, this
+    // override keeps the pool-mode get working by delegating straight to the
+    // wire fetch. Once GetNoThrowAsync lands (local-hit / loader / store-back),
+    // remove this override — base LocalRegion.GetAsync (wrapper) →
+    // GetNoThrowAsync → GetNoThrowRemoteAsync (overridden below) takes over.
     public override async Task<object?> GetAsync(object key, object? callback = null, CancellationToken ct = default)
     {
+        var (value, _) = await GetNoThrowRemoteAsync(key, callback, ct).ConfigureAwait(false);
+        return value;
+    }
+
+    internal override async Task<(object? Value, VersionTag? VersionTag)>
+        GetNoThrowRemoteAsync(object key, object? aCallbackArgument, CancellationToken ct = default)
+    {
         using var _ = _dmContextAccessor.BeginScope(_dm!);
-        _logger.LogTrace("GetAsync: region={RegionPath}, key={Key}", FullPath, key);
+        // Mirrors cppcache ThinClientRegion::getNoThrow_remote
+        // (ThinClientRegion.cpp:810-850) + TcrMessageRequest ctor. Wire: 2 parts
+        // (Region + Key); the optional callback-arg slot is skipped (pending the
+        // callback-arg plumbing, same gap as the other wire ops).
+        _logger.LogTrace("GetNoThrowRemoteAsync: region={RegionPath}, key={Key}", FullPath, key);
         var request = await TcrMessageBuilder
           .Create(_serviceProvider, MessageType.Request)
           .AddRegionNamePart(FullPath)
@@ -313,11 +329,14 @@ internal partial class ThinClientRegion(
                 {
                     throw new GeodeException($"Get on '{FullPath}': Response with zero parts.");
                 }
-                return await DecodeValuePartAsync(reply.Parts[0], ct);
+                return (await DecodeValuePartAsync(reply.Parts[0], ct), reply.VersionTag);
 
             case MessageType.Exception:
                 throw new GeodeException($"Server exception on Get '{FullPath}': " +
                     TcrMessageHelper.DecodeExceptionPreview(reply));
+
+            case MessageType.RequestDataError:
+                throw new GeodeException($"Server returned RequestDataError on Get '{FullPath}'.");
 
             default:
                 throw new GeodeException($"Unexpected reply type {reply.MessageType} for Get on '{FullPath}'.");

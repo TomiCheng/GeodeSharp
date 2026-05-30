@@ -15,11 +15,10 @@ namespace Geode.Client.Internal;
 /// <see langword="internal"/> until a real consumer surfaces.
 /// </para>
 /// <para>
-/// Phase 1.x setters mirror the ones exposed through
-/// <see cref="RegionFactory"/>; expiration / listener / persistence /
-/// partition-resolver / cacheLoader / cacheWriter / diskPolicy land in
-/// Phase 2+ together with their backing fields on
-/// <see cref="RegionAttributes"/>.
+/// Setters mirror the ones exposed through <see cref="RegionFactory"/>;
+/// expiration / listener / persistence / partition-resolver / cacheWriter
+/// / diskPolicy land when a consumer needs them, together with their
+/// backing fields on <see cref="RegionAttributes"/>.
 /// </para>
 /// </remarks>
 internal sealed class RegionAttributesFactory
@@ -84,6 +83,24 @@ internal sealed class RegionAttributesFactory
     public RegionAttributesFactory SetConcurrencyChecksEnabled(bool concurrencyChecksEnabled)
     {
         _attrs.ConcurrencyChecksEnabled = concurrencyChecksEnabled;
+        return this;
+    }
+
+    public RegionAttributesFactory SetCacheLoader(ICacheLoader cacheLoader)
+    {
+        _attrs.CacheLoader = cacheLoader;
+        return this;
+    }
+
+    public RegionAttributesFactory SetCacheWriter(ICacheWriter cacheWriter)
+    {
+        _attrs.CacheWriter = cacheWriter;
+        return this;
+    }
+
+    public RegionAttributesFactory SetCacheListener(ICacheListener cacheListener)
+    {
+        _attrs.CacheListener = cacheListener;
         return this;
     }
 

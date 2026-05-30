@@ -41,6 +41,10 @@ internal sealed class TrackedMapEntry(
         set => _entry.Value = value;
     }
 
+    /// <inheritdoc />
+    /// <remarks>cppcache <c>TrackedMapEntry::getExpProperties</c> delegates to the inner entry.</remarks>
+    public override ExpEntryProperties ExpProperties => _entry.ExpProperties;
+
     /// <summary>
     /// cppcache <c>TrackedMapEntry::addTracker</c>: <c>++m_trackingNumber;
     /// return m_updateCount;</c>. cppcache 的 <c>shared_ptr&amp;</c>

@@ -10,8 +10,10 @@ namespace Geode.Client;
 /// Setters are fluent (return <c>this</c>);
 /// <see cref="CreateAsync{TKey, TValue}(string, CancellationToken)"/>
 /// snapshots the attributes so further factory mutations don't affect
-/// already-built regions. Listener / persistence / expiration /
-/// cacheLoader / cacheWriter setters are deferred to Phase 2+.
+/// already-built regions. Persistence / expiration setters are deferred
+/// until a consumer needs them; cacheLoader / cacheWriter / cacheListener
+/// setters exist but only the loader is wired into behaviour so far (see
+/// each setter's remark).
 /// </remarks>
 public interface IRegionFactory
 {
@@ -38,6 +40,25 @@ public interface IRegionFactory
 
     /// <summary>Whether to run version checks on region entries (default <see langword="true"/>).</summary>
     IRegionFactory SetConcurrencyChecksEnabled(bool concurrencyChecksEnabled);
+
+    /// <summary>Read-through loader invoked on a <see cref="IRegion.GetAsync"/> miss; unset (default) means no loader.</summary>
+    IRegionFactory SetCacheLoader(ICacheLoader cacheLoader);
+
+    /// <summary>
+    /// Veto hook invoked before a create / update / destroy; unset
+    /// (default) means no writer. <b>Stored but not yet invoked</b> — the
+    /// write-path wiring is pending, so attaching one currently has no
+    /// runtime effect.
+    /// </summary>
+    IRegionFactory SetCacheWriter(ICacheWriter cacheWriter);
+
+    /// <summary>
+    /// After-event callback for create / update / destroy / invalidate;
+    /// unset (default) means no listener. <b>Stored but not yet invoked</b>
+    /// — the event-dispatch / subscription wiring is pending, so attaching
+    /// one currently has no runtime effect.
+    /// </summary>
+    IRegionFactory SetCacheListener(ICacheListener cacheListener);
 
     /// <summary>Build the client-side region under <paramref name="name"/> and register it on the cache.</summary>
     /// <exception cref="RegionExistsException">A region with <paramref name="name"/> is already registered.</exception>

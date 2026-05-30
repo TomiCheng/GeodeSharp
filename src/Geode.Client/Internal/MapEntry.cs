@@ -26,6 +26,17 @@ internal abstract class MapEntry
         "MapEntry.IsExpiryTaskScheduled: pending expiry plumbing.");
 
     /// <summary>
+    /// Expiration bookkeeping for this entry (last-accessed / last-modified
+    /// timestamps + expiry-task handle). Mirrors cppcache
+    /// <c>MapEntry::getExpProperties</c>
+    /// (<c>cppcache/src/MapEntry.hpp:58</c>, pure virtual) — concrete storage
+    /// on <see cref="MapEntryImpl"/> (every entry carries one, like cppcache's
+    /// <c>m_expProp</c> member), so this is <see langword="abstract"/> rather
+    /// than the base-throws pattern used by <see cref="LRUProperties"/>.
+    /// </summary>
+    public abstract ExpEntryProperties ExpProperties { get; }
+
+    /// <summary>
     /// Per-entry concurrency-check version stamp. Mirrors cppcache
     /// <c>MapEntry::getVersionStamp</c>
     /// (<c>cppcache/src/MapEntry.hpp:59</c>, pure virtual,

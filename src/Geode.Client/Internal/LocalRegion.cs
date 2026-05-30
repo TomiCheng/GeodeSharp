@@ -654,9 +654,40 @@ internal partial class LocalRegion : RegionInternal
     /// until <c>MapEntry</c>'s expiry-properties surface + the scheduler
     /// land.
     /// </remarks>
-    protected virtual void UpdateAccessAndModifiedTimeForEntry(MapEntry entry, bool modified) =>
-        throw new NotImplementedException(
-            "LocalRegion.UpdateAccessAndModifiedTimeForEntry: pending Phase 2+ expiry plumbing.");
+    protected virtual void UpdateAccessAndModifiedTimeForEntry(MapEntry? entry, bool modified)
+    {
+
+        // cppcache LocalRegion::updateAccessAndModifiedTimeForEntry (LocalRegion.cpp:2836-2859):
+        //
+        //   void LocalRegion::updateAccessAndModifiedTimeForEntry(
+        //       std::shared_ptr<MapEntryImpl>& ptr, bool modified) {
+        //     // locking is not required since setters use atomic operations
+        if (entry is not null && EntryExpiryEnabled)
+        {
+
+            //       ExpEntryProperties& expProps = ptr->getExpProperties();
+            //       auto now = std::chrono::steady_clock::now();
+            //       std::string keyStr;
+            //       if (Log::enabled(LogLevel::Debug)) {
+            //         std::shared_ptr<CacheableKey> key;
+            //         ptr->getKeyI(key);
+            //         keyStr = Utils::nullSafeToString(key);
+            //       }
+            //       LOGDEBUG("Setting last accessed time for key [%s] in region %s to %s",
+            //                keyStr.c_str(), getFullPath().c_str(),
+            //                to_string(now.time_since_epoch()).c_str());
+            //       expProps.last_accessed(now);
+            //       if (modified) {
+            //         LOGDEBUG("Setting last modified time for key [%s] in region %s to %s",
+            //                  keyStr.c_str(), getFullPath().c_str(),
+            //                  to_string(now.time_since_epoch()).c_str());
+            //         expProps.last_modified(now);
+            //       }
+            throw new NotImplementedException(
+                "LocalRegion.UpdateAccessAndModifiedTimeForEntry: pending Phase 2+ expiry plumbing.");
+        }
+        //   }
+    }
 
     protected bool EntryExpiryEnabled => Attributes.EntryExpiryEnabled;
 
@@ -931,6 +962,27 @@ internal partial class LocalRegion : RegionInternal
     }
 
     /// <summary>
+    /// Propagate the get to the remote server, if any. Mirrors cppcache
+    /// <c>LocalRegion::getNoThrow_remote</c>
+    /// (<c>cppcache/src/LocalRegion.cpp:3036-3041</c>) — base impl is a
+    /// no-op success: a pure local region has no server backing, so it
+    /// yields <c>(null, null)</c> (no value, no version tag).
+    /// <see cref="ThinClientRegion"/> overrides
+    /// (<c>cppcache/src/ThinClientRegion.cpp:810-850</c>) with the
+    /// <c>TcrMessageRequest</c> wire round-trip. Remote-fetch step of
+    /// <see cref="GetNoThrowAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// cppcache out-params <c>value</c> + <c>versionTag</c>
+    /// (<c>std::shared_ptr&lt;T&gt;&amp;</c>) → return tuple; C# async
+    /// can't take <c>ref</c>/<c>out</c>. Same shape as
+    /// <see cref="GetNoThrowFullObjectAsync"/>.
+    /// </remarks>
+    internal virtual Task<(object? Value, VersionTag? VersionTag)>
+        GetNoThrowRemoteAsync(object key, object? aCallbackArgument, CancellationToken ct = default)
+        => Task.FromResult<(object?, VersionTag?)>((null, null));
+
+    /// <summary>
     /// Virtual hook used by <see cref="LocalCount"/>'s in-tx branch. Default
     /// body matches the non-virtual <see cref="LocalSizeRemote"/> —
     /// <see cref="ThinClientRegion"/> overrides (Phase 1.5+) to round-trip
@@ -961,7 +1013,7 @@ internal partial class LocalRegion : RegionInternal
         ArgumentNullException.ThrowIfNull(key, nameof(key));
         if (!Attributes.CachingEnabled)
         {
-            return  false;
+            return false;
         }
         return InternalEntriesMap.ContainsKey(key);
     }
@@ -1001,9 +1053,195 @@ internal partial class LocalRegion : RegionInternal
         IReadOnlyCollection<object> keys, object? callback = null, CancellationToken ct = default) =>
         throw new NotImplementedException("LocalRegion.GetAllAsync: pending local entry map.");
 
-    /// <inheritdoc />
-    public override Task<object?> GetAsync(object key, object? callback = null, CancellationToken ct = default) =>
-        throw new NotImplementedException("LocalRegion.GetAsync: pending local entry map.");
+    /// <summary>
+    /// Thin stat-timed wrapper. Mirrors cppcache <c>LocalRegion::get</c>
+    /// (<c>cppcache/src/LocalRegion.cpp:340-354</c>) — times the op and
+    /// delegates to <see cref="GetNoThrowAsync"/>. cppcache's
+    /// <c>throwExceptionIfError</c> collapses: <see cref="GetNoThrowAsync"/>
+    /// throws directly rather than returning a <c>GfErrType</c>.
+    /// </summary>
+    /// <remarks>
+    ///   std::shared_ptr&lt;Cacheable&gt; LocalRegion::get(
+    ///       const std::shared_ptr&lt;CacheableKey&gt;&amp; key,
+    ///       const std::shared_ptr&lt;Serializable&gt;&amp; aCallbackArgument) {
+    ///     std::shared_ptr&lt;Cacheable&gt; rptr;
+    ///     int64_t sampleStartNanos = startStatOpTime();
+    ///     GfErrType err = getNoThrow(key, rptr, aCallbackArgument);
+    ///     updateStatOpTime(m_regionStats-&gt;getStat(), m_regionStats-&gt;getGetTimeId(),
+    ///                      sampleStartNanos);
+    ///     throwExceptionIfError("Region::get", err);
+    ///     return rptr;
+    ///   }
+    /// </remarks>
+    public override async Task<object?> GetAsync(object key, object? callback = null, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        var sampleStartTimestamp = Stopwatch.GetTimestamp();
+        try
+        {
+            return await GetNoThrowAsync(key, callback, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            // cppcache updateStatOpTime (LocalRegion.cpp:346) — record
+            // regardless of success / failure, matching PutAsync.
+            RegionStats.Get(Stopwatch.GetElapsedTime(sampleStartTimestamp));
+        }
+    }
+
+    /// <summary>
+    /// Core get logic: tx dispatch, local-cache hit, remote fetch,
+    /// cache-loader fallback, <c>putLocal</c> store-back, listener
+    /// dispatch. Mirrors cppcache <c>LocalRegion::getNoThrow</c>
+    /// (<c>cppcache/src/LocalRegion.cpp:851-1026</c>). Non-virtual like
+    /// cppcache — the per-mode override point is
+    /// <c>GetNoThrowRemoteAsync</c> (base no-op here; ThinClientRegion
+    /// fetches over the wire), not this method.
+    /// </summary>
+    internal async Task<object?> GetNoThrowAsync(object key, object? callbackArgument, CancellationToken ct = default)
+    {
+        await CheckDestroyPendingAsync(ct).ConfigureAwait(false);
+        ArgumentNullException.ThrowIfNull(key, nameof(key));
+
+        var txState = GetTXState();
+        if (txState is not null)
+        {
+            if (IsLocalOp())
+            {
+                throw new NotSupportedException(
+                    "GetNoThrowAsync: local-op get inside a transaction is not supported.");
+            }
+            var (txValue, _) = await GetNoThrowRemoteAsync(key, callbackArgument, ct).ConfigureAwait(false);
+            txState.SetDirty();
+            if (txValue is not null && (CacheableToken.IsInvalid(txValue) || CacheableToken.IsTombstone(txValue)))
+            {
+                txValue = null;
+            }
+            return txValue;
+        }
+
+        CachePerfStats.Get();
+
+        // TODO:  CacheableToken::isInvalid should be completely hidden
+        // inside MapSegment; this should be done both for the value obtained
+        // from local cache as well as oldValue in every instance
+        var updateCount = -1;
+        var isLoaderInvoked = false;
+        bool isLocal;
+        var cachingEnabled = Attributes.CachingEnabled;
+        object? value;
+        object? localValue = null;
+        if (cachingEnabled)
+        {
+            var (me, localGet) = InternalEntriesMap.GetEntry(key);
+            value = localGet;
+            isLocal = me is not null;
+            if (isLocal && value is not null && !CacheableToken.IsInvalid(value))
+            {
+                RegionStats.Hit();
+                CachePerfStats.Hit();
+
+                UpdateAccessAndModifiedTimeForEntry(me, false);
+                UpdateAccessAndModifiedTime(false);
+                return value;
+            }
+            localValue = value;
+            value = null;
+
+            if (!Attributes.ConcurrencyChecksEnabled)
+            {
+                updateCount = InternalEntriesMap.AddTrackerForEntry(
+                    key, value, addIfAbsent: true, failIfPresent: false, value: false);
+                _logger.LogDebug("Region::get: added tracking with update counter {UpdateCount} for key {Key} with value {Value}",
+                    updateCount, key, value);
+            }
+        }
+        try
+        {
+            UpdateAccessAndModifiedTime(false);
+
+            RegionStats.Miss();
+            CachePerfStats.Miss();
+
+            var (remoteValue, versionTag) = await GetNoThrowRemoteAsync(key, callbackArgument, ct).ConfigureAwait(false);
+            value = remoteValue;
+
+            var loader = Attributes.CacheLoader;
+            if ((value is null || CacheableToken.IsInvalid(value) || CacheableToken.IsTombstone(value))
+                && loader is not null)
+            {
+                isLoaderInvoked = true;
+                var loaderStart = Stopwatch.GetTimestamp();
+                try
+                {
+                    value = await loader.LoadAsync(this, key, callbackArgument, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error in CacheLoader.LoadAsync for key {Key} in region {RegionPath}", key, FullPath);
+                    throw new CacheLoaderException(
+                        $"CacheLoader.LoadAsync failed for key on region '{FullPath}'.", ex);
+                }
+                finally
+                {
+                    RegionStats.LoaderCall(Stopwatch.GetElapsedTime(loaderStart));
+                }
+            }
+
+            object? oldValue = null;
+            if (value is not null && cachingEnabled
+                && !(CacheableToken.IsTombstone(value)
+                     && (localValue is null || CacheableToken.IsInvalid(localValue))))
+            {
+                _logger.LogDebug(
+                    "Region::get: creating entry with tracking update counter {UpdateCount} for key {Key}",
+                    updateCount, key);
+                try
+                {
+                    oldValue = await PutLocalAsync(
+                        "Region::get", isCreate: false, key, value, cachingEnabled,
+                        updateCount, destroyTracker: 0, versionTag, ct: ct).ConfigureAwait(false);
+                }
+                catch (GfErrTypeException ex)
+                {
+                    if (ex.Code == GfErrType.CacheConcurrentModificationException)
+                    {
+                        _logger.LogDebug("Region::get: putLocal for key {Key} failed; cache already holds a higher-version entry.",
+                            key);
+                        if (value is not null && (CacheableToken.IsInvalid(value) || CacheableToken.IsTombstone(value)))
+                        {
+                            value = null;
+                        }
+                        return value;
+                    }
+
+                    _logger.LogDebug("Region::get: putLocal for key {Key} failed with {GfErrType}; keeping fetched value.",
+                        key, ex.Code);
+                }
+            }
+
+            if (value is not null && (CacheableToken.IsInvalid(value) || CacheableToken.IsTombstone(value)))
+            {
+                value = null;
+            }
+
+            if (!isLoaderInvoked && value is not null)
+            {
+                await InvokeCacheListenerForEntryEvent(
+                    key, oldValue, value, callbackArgument, CacheEventFlags.Normal,
+                    EntryEventType.AfterUpdate, ct).ConfigureAwait(false);
+            }
+
+            return value;
+        }
+        finally
+        {
+            if (updateCount >= 0 && !Attributes.ConcurrencyChecksEnabled)
+            {
+                InternalEntriesMap.RemoveTrackerForEntry(key);
+            }
+        }
+    }
 
     /// <inheritdoc />
     public override Task InvalidateAsync(object key, object? callback = null, CancellationToken ct = default) =>

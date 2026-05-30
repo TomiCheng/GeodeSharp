@@ -133,6 +133,30 @@ internal class RegionFactory(IServiceProvider serviceProvider, RegionShortcut sh
     }
 
     /// <inheritdoc />
+    public IRegionFactory SetCacheLoader(ICacheLoader cacheLoader)
+    {
+        ArgumentNullException.ThrowIfNull(cacheLoader);
+        _attrsFactory.SetCacheLoader(cacheLoader);
+        return this;
+    }
+
+    /// <inheritdoc />
+    public IRegionFactory SetCacheWriter(ICacheWriter cacheWriter)
+    {
+        ArgumentNullException.ThrowIfNull(cacheWriter);
+        _attrsFactory.SetCacheWriter(cacheWriter);
+        return this;
+    }
+
+    /// <inheritdoc />
+    public IRegionFactory SetCacheListener(ICacheListener cacheListener)
+    {
+        ArgumentNullException.ThrowIfNull(cacheListener);
+        _attrsFactory.SetCacheListener(cacheListener);
+        return this;
+    }
+
+    /// <inheritdoc />
     public async Task<IRegion<TKey, TValue>> CreateAsync<TKey, TValue>(string name, CancellationToken ct = default)
         where TKey : IEquatable<TKey>
     {

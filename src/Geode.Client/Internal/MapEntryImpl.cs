@@ -18,6 +18,17 @@ internal class MapEntryImpl : MapEntry
     public override object? Value { get; set; }
 
     /// <summary>
+    /// Per-entry expiration bookkeeping. Mirrors cppcache <c>MapEntryImpl</c>'s
+    /// <c>m_expProp</c> member returned by <c>getExpProperties()</c> — every
+    /// entry carries one (cheap; the expiry-task slot stays unscheduled until
+    /// the scheduler lands).
+    /// </summary>
+    private readonly ExpEntryProperties _expProperties = new();
+
+    /// <inheritdoc />
+    public override ExpEntryProperties ExpProperties => _expProperties;
+
+    /// <summary>
     /// Non-versioned entry has no stamp. Mirrors cppcache
     /// <c>MapEntryImpl::getVersionStamp</c>
     /// (<c>cppcache/src/MapEntryImpl.hpp</c>) which throws

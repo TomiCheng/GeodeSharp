@@ -11,11 +11,11 @@ namespace Geode.Client.Internal;
 /// (<c>cppcache/src/EvictionController.hpp:63</c>).
 /// </summary>
 /// <remarks>
-/// Internal machinery (not a user extension point). Phase 4 heap-LRU only —
-/// entry-count LRU never touches it; no consumer until heap LRU lands (see
-/// PROGRESS2.md heap-LRU sizing note). Skeleton: all methods NIE, fields
-/// mirror cppcache 1:1 (std::thread → <see cref="Task"/>, condition_variable
-/// / shared_mutex park as placeholders).
+/// Internal machinery (not a user extension point). Heap-LRU only —
+/// entry-count LRU never touches it; no consumer until heap LRU lands
+/// (see NOTE.md "Heap-LRU entry sizing"). Skeleton: all methods NIE,
+/// fields mirror cppcache 1:1 (std::thread → <see cref="Task"/>,
+/// condition_variable / shared_mutex park as placeholders).
 /// </remarks>
 internal sealed class EvictionController(long maxHeapSize, int heapLruDelta)
 {

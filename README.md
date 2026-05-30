@@ -54,15 +54,6 @@ public class OrderService(IGeodeCache cache)
 }
 ```
 
-## Roadmap
-
-See [`CLAUDE.md`](./CLAUDE.md) for the full 12-phase plan. Highlights:
-
-- **MVP (Phase 1–5)**: Put / Get / Remove with primitive types + DI wiring
-- **Production (Phase 6–10)**: Connection pool, locator discovery, TLS, auth, OQL
-- **Interop (Phase 11)**: PDX serialization (compatibility with Java clients)
-- **Advanced (Phase 12+)**: CQ, function execution, transactions, HA
-
 ## Development
 
 ```bash

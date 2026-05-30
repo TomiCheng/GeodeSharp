@@ -666,8 +666,8 @@ internal class ThinClientPoolDM(
     {
         // Stamp last-access (under lock) so CleanStaleConnectionsAsync
         // sees the same order as the enqueue. destroyed-guard test is
-        // deferred — see PROGRESS.md Phase 1.5 "PutInQueueAsync tests".
-        // Phase 6 (sticky-tx isTransaction overload, cppcache
+        // deferred — see NOTE.md "PutInQueueAsync destroyed-guard 測試".
+        // sticky-tx isTransaction overload (cppcache
         // ThinClientPoolDM.cpp:2293-2300) is the other still-open branch.
         ct.ThrowIfCancellationRequested();
         bool destroyed;

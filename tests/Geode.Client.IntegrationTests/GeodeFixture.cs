@@ -163,8 +163,7 @@ public sealed class GeodeFixture : IAsyncLifetime
     /// was deserialized by the server into the expected Java type — a
     /// guarantee that a pure round-trip Put/Get assertion cannot make,
     /// because a symmetric encoder/decoder bug would still round-trip
-    /// successfully while leaving the server with garbage bytes. See
-    /// also: discussion in PROGRESS.md Phase 1.3.0.
+    /// successfully while leaving the server with garbage bytes.
     /// </para>
     /// <para>
     /// Output format is gfsh's tabular text (e.g. <c>Value Class :

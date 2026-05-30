@@ -28,7 +28,7 @@ public interface IRegion
     bool ContainsValueForKey(object key);
 
     /// <summary>
-    /// Strict insert; throws when <paramref name="key"/> already exists (cppcache <c>Region::create</c>).
+    /// Strict insert; throws when <paramref name="key"/> already exists.
     /// </summary>
     Task CreateAsync(object key, object value, object? callback = null, CancellationToken ct = default);
 
@@ -38,12 +38,12 @@ public interface IRegion
     IRegion CreateSubregion(string name, RegionAttributes attributes);
 
     /// <summary>
-    /// Strict remove; throws when <paramref name="key"/> is absent (cppcache <c>Region::destroy</c>).
+    /// Strict remove; throws when <paramref name="key"/> is absent.
     /// </summary>
     Task DestroyAsync(object key, object? callback = null, CancellationToken ct = default);
 
     /// <summary>
-    /// Destroys the whole region on the server (mirrors cppcache <c>Region::destroyRegion</c>).
+    /// Destroys the whole region on the server.
     /// </summary>
     Task DestroyRegionAsync(object? callback = null, CancellationToken ct = default);
 

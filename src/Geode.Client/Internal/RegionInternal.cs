@@ -67,8 +67,7 @@ internal abstract class RegionInternal(RegionAttributes attributes)
         throw new NotImplementedException("Sub-regions are not yet implemented.");
 
     /// <inheritdoc />
-    public virtual Task DestroyAsync(object key, object? callback = null, CancellationToken ct = default) =>
-        throw new NotImplementedException("Strict DestroyAsync is not yet wired (Phase 2+).");
+    public abstract Task DestroyAsync(object key, object? callback = null, CancellationToken ct = default);
 
     /// <inheritdoc />
     public virtual Task DestroyRegionAsync(object? callback = null, CancellationToken ct = default) =>

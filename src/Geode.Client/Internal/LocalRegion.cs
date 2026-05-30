@@ -79,6 +79,8 @@ internal partial class LocalRegion : RegionInternal
     /// <summary>cppcache <c>m_entries</c> (<c>EntriesMap*</c>): local entry map (Phase 2+ caching-enabled). Renamed from cppcache's <c>m_entries</c> to (a) avoid clash with <see cref="IRegion.Entries(bool)"/> and (b) separate from the <see cref="EntriesMap"/> type name.</summary>
     protected Lazy<EntriesMap?> LocalEntriesMap;
 
+    internal EntriesMap InternalEntriesMap => LocalEntriesMap.Value!;
+
     /// <summary>
     /// cppcache <c>mutex_</c>: region-wide reader-writer lock
     /// (cppcache 用 <c>boost::shared_mutex</c>;C# 港用
@@ -852,15 +854,17 @@ internal partial class LocalRegion : RegionInternal
     /// collapses to throw/void per the codebase err-code → exception
     /// convention.
     /// </summary>
-    internal Task DestroyNoThrowAsync(
+    internal async Task DestroyNoThrowAsync(
         object key,
-        object? aCallbackArgument,
+        object? callbackArgument,
         int updateCount,
         CacheEventFlags eventFlags,
         VersionTag? versionTag = null,
-        CancellationToken ct = default) =>
-        throw new NotImplementedException(
-            "LocalRegion.DestroyNoThrowAsync: pending DestroyActions + UpdateNoThrowAsync<DestroyActions> pipeline.");
+        CancellationToken ct = default)
+    {
+        var action = DestroyActions.Create(_serviceProvider, this, key, callbackArgument, updateCount, eventFlags, versionTag);
+        await UpdateNoThrowAsync(action, ct).ConfigureAwait(false); 
+    }
 
     /// <summary>
     /// Propagates the put to the remote server, if any. Mirrors cppcache
@@ -895,6 +899,36 @@ internal partial class LocalRegion : RegionInternal
         bool checkDelta = true,
         CancellationToken ct = default)
     {
+        return Task.FromResult((VersionTag?)null);
+    }
+
+    /// <summary>
+    /// Propagates the destroy to the remote server, if any. Mirrors cppcache
+    /// <c>LocalRegion::destroyNoThrow_remote</c>
+    /// (<c>cppcache/src/LocalRegion.cpp:3070-3074</c>) — the base impl is a
+    /// no-op success (<c>return GF_NOERR</c>; a pure local region has no server
+    /// backing); <c>ThinClientRegion</c> overrides with the
+    /// <c>TcrMessageDestroy</c> wire round-trip. Target of
+    /// <see cref="DestroyActions.RemoteUpdateAsync"/>; sibling of
+    /// <see cref="PutNoThrowRemoteAsync"/> (no <c>value</c> arg — destroy).
+    /// </summary>
+    /// <remarks>
+    /// cppcache out-param <c>versionTag</c> → return value (C# async can't take
+    /// <c>ref</c>/<c>out</c>); <see cref="DestroyActions.RemoteUpdateAsync"/>
+    /// writes the result back to its <c>VersionTag</c> field. NIE for now:
+    /// translate the base no-op (<c>return Task.FromResult((VersionTag?)null)</c>,
+    /// like <see cref="PutNoThrowRemoteAsync"/>) once the destroy pipeline is
+    /// wired end-to-end — until then it stays an explicit stub so the gap is
+    /// visible.
+    /// </remarks>
+    internal virtual Task<VersionTag?> DestroyNoThrowRemoteAsync(
+        object key,
+        object? aCallbackArgument,
+        CancellationToken ct = default)
+    {
+        // cppcache LocalRegion::destroyNoThrow_remote (LocalRegion.cpp:3070-3074):
+        //   base no-op success (`return GF_NOERR`) — pure local region, no server;
+        //   versionTag never set. ThinClientRegion overrides with the wire round-trip.
         return Task.FromResult((VersionTag?)null);
     }
 
@@ -958,6 +992,17 @@ internal partial class LocalRegion : RegionInternal
             // both outcomes.
             RegionStats.Put(Stopwatch.GetElapsedTime(sampleStartTimestamp));
         }
+    }
+
+    /// <inheritdoc />
+    public override async Task DestroyAsync(object key, object? callbackArgument = null, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        await DestroyNoThrowAsync(
+            key, callbackArgument,
+            updateCount: -1,
+            eventFlags: CacheEventFlags.Normal,
+            ct: ct).ConfigureAwait(false);
     }
 
     /// <inheritdoc />

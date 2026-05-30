@@ -1,5 +1,3 @@
-using Microsoft.Extensions.Options;
-
 namespace Geode.Client;
 
 /// <summary>
@@ -89,7 +87,8 @@ public interface IPoolFactory
     IPoolFactory AddServer(string host, int port);
 
     /// <summary>Validate, snapshot, register, and connect a new pool under <paramref name="poolName"/>.</summary>
-    /// <exception cref="OptionsValidationException">Current attributes failed validation.</exception>
-    /// <exception cref="InvalidOperationException">A pool is already registered under <paramref name="poolName"/>.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// Current attributes failed validation, or a pool is already registered under <paramref name="poolName"/>.
+    /// </exception>
     Task<IPool> BuildAsync(string poolName, CancellationToken ct = default);
 }

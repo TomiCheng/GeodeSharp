@@ -7,7 +7,6 @@ using Geode.Client.Protocol.Serialization;
 using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace Geode.Client.Internal;
 

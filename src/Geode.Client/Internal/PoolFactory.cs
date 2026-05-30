@@ -1,6 +1,5 @@
 using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
 
 namespace Geode.Client.Internal;
 
@@ -176,8 +175,8 @@ internal sealed class PoolFactory : IPoolFactory
         var errors = _attrs.Validate(nameof(PoolAttributes)).ToList();
         if (errors.Count > 0)
         {
-            throw new OptionsValidationException(
-                nameof(PoolAttributes), typeof(PoolAttributes), errors);
+            throw new InvalidOperationException(
+                $"{nameof(PoolAttributes)} validation failed: {string.Join("; ", errors)}");
         }
 
         var snapshot = _attrs.Clone();

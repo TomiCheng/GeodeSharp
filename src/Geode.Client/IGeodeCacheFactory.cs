@@ -1,5 +1,4 @@
 using System.Diagnostics.CodeAnalysis;
-using Geode.Client.Options;
 
 namespace Geode.Client;
 
@@ -31,7 +30,7 @@ public interface IGeodeCacheFactory : IAsyncDisposable
     /// </exception>
     Task<IGeodeCache> CreateAsync(
         string cacheName,
-        Action<GeodeClientOptions, IServiceProvider>? configure = null,
+        Action<SystemProperties, IServiceProvider>? configure = null,
         CancellationToken ct = default);
 
     /// <summary>

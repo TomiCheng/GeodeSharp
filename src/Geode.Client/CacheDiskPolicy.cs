@@ -1,4 +1,4 @@
-namespace Geode.Client.Options;
+namespace Geode.Client;
 
 /// <summary>
 /// <c>region-attributes/disk-policy</c> enumeration.

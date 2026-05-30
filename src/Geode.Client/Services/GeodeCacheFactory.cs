@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
-using Geode.Client.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -23,13 +22,11 @@ internal sealed class GeodeCacheFactory(
     /// <inheritdoc />
     public async Task<IGeodeCache> CreateAsync(
         string cacheName,
-        Action<GeodeClientOptions, IServiceProvider>? configure = null,
+        Action<SystemProperties, IServiceProvider>? configure = null,
         CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
-        var options = new GeodeClientOptions();
-        configure?.Invoke(options, rootServiceProvider);
 
         var lazy = new Lazy<AsyncServiceScope>(
             () =>
@@ -37,7 +34,8 @@ internal sealed class GeodeCacheFactory(
                 var scope = rootServiceProvider.CreateAsyncScope();
                 var sp = scope.ServiceProvider;
                 var sysProps = sp.GetRequiredService<SystemProperties>();
-                SystemProperties.MergeSystemProperties(sysProps, cacheName, options);
+                configure?.Invoke(sysProps, sp);
+
                 return scope;
             },
             LazyThreadSafetyMode.ExecutionAndPublication);

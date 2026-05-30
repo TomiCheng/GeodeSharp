@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
+using Geode.Client;
 using Geode.Client.Internal;
-using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 

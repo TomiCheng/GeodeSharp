@@ -1,5 +1,4 @@
 using System.Diagnostics.Metrics;
-using Geode.Client.Services;
 
 namespace Geode.Client.Internal;
 

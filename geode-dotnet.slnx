@@ -15,6 +15,7 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Geode.Client/Geode.Client.csproj" />
+    <Project Path="src/Geode.Client.Extensions.Hosting/Geode.Client.Extensions.Hosting.csproj" />
   </Folder>
   <Folder Name="/test/">
     <Project Path="tests/Geode.Client.IntegrationTests/Geode.Client.IntegrationTests.csproj" />

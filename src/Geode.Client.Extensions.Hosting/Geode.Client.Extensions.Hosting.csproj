@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Geode.Client.Extensions.Hosting</RootNamespace>
+    <AssemblyName>Geode.Client.Extensions.Hosting</AssemblyName>
+    <PackageId>Geode.Client.Extensions.Hosting</PackageId>
+
+    <!-- 跟 Geode.Client 一起發佈 -->
+    <IsPackable>true</IsPackable>
+
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+    <MinVerDefaultPreReleaseIdentifiers>alpha.0</MinVerDefaultPreReleaseIdentifiers>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <NoWarn>1701;1702;CA1873</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Geode.Client\Geode.Client.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Options + IConfiguration binding; the abstractions live here, not in core. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+
+    <PackageReference Include="MinVer" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

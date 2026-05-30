@@ -1,7 +1,6 @@
 using System.Buffers.Binary;
 using Geode.Client.Pdx;
 using Microsoft.Extensions.DependencyInjection;
-using Geode.Client.Services;
 
 namespace Geode.Client.Protocol.Serialization;
 

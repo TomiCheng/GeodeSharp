@@ -105,7 +105,7 @@ internal sealed partial class TcrMessageBuilder(IServiceProvider serviceProvider
     /// Mirrors cppcache <c>writeObjectPart(value, isDelta)</c> minus
     /// delta support (Phase 4+).
     /// </summary>
-    public TcrMessageBuilder AddValuePart(object value)
+    public TcrMessageBuilder AddValuePart(object? value)
     {
         return AddPart(async ct =>
         {

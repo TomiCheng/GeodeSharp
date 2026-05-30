@@ -122,6 +122,34 @@ internal abstract class ThinClientBaseDM : IAsyncDisposable
     public virtual bool IsSecurityOn => false;        // TODO: ConnManager.HasAuthInitialize when wired
     public virtual bool IsMultiUserMode => false;
 
+    /// <summary>
+    /// Whether the cluster this DM is talking to supports delta propagation.
+    /// Set during the handshake reply (cppcache <c>setDeltaEnabledOnServer</c>);
+    /// read by send-side delta gates (e.g.
+    /// <c>ThinClientRegion::putNoThrow_remote</c>). Mirrors cppcache
+    /// <c>ThinClientBaseDM::isDeltaEnabledOnServer</c>
+    /// (<c>cppcache/src/ThinClientBaseDM.hpp:127</c>).
+    /// </summary>
+    /// <remarks>
+    /// cppcache uses a process-wide <c>static volatile</c>; we deliberately
+    /// scope per-DM instance (virtual property) so multi-cluster scenarios
+    /// — multiple <c>IGeodeCache</c> instances talking to different clusters
+    /// in the same process — track each cluster's capability independently.
+    /// Aligns with CLAUDE.md "DI-first; no static singletons".
+    /// </remarks>
+    public virtual bool IsDeltaEnabledOnServer
+    {
+        get
+        {
+
+            // TODO:
+            // ThinClientBaseDM.IsDeltaEnabledOnServer: handshake-time delta-bit
+            // negotiation not yet wired; see cppcache ThinClientBaseDM.hpp:127 
+            // .cpp:33,385.
+            return false;
+        }
+    }
+
     ///// <summary>
     ///// True when <paramref name="exceptionMsg"/> is an
     ///// <c>AuthenticationRequiredException</c> reply text from the server,

@@ -1,9 +1,10 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using Geode.Client;
 using Geode.Client.Protocol;
 
 internal sealed class DataOutput
-    : IDisposable, IBufferWriter<byte>
+    : IDisposable, IBufferWriter<byte>, IDataOutput
 {
 
     private const int InitialSize = 8192;

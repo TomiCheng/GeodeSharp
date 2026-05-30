@@ -27,9 +27,12 @@ public class CachingProxyEntryLruContainsKeyAsyncTests(IGeodeCacheFactory factor
                 .SetPoolName("pool")
                 .CreateAsync<string, string>("orders", TestContext.Current.CancellationToken);
 
-            await region.PutAsync("k", "v", ct: TestContext.Current.CancellationToken);
+            await ServerOptional.RunAsync(async () =>
+            {
+                await region.PutAsync("k", "v", ct: TestContext.Current.CancellationToken);
 
-            Assert.True(await region.ContainsKeyAsync("k", ct: TestContext.Current.CancellationToken));
+                Assert.True(await region.ContainsKeyAsync("k", ct: TestContext.Current.CancellationToken));
+            });
         }
         finally
         {

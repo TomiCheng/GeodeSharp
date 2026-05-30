@@ -64,6 +64,14 @@ internal class ThinClientPoolDM(
     /// </summary>
     private int _connectedEndpoints = 0;
     /// <summary>
+    /// Number of regions currently attached to this pool. Mirrors cppcache
+    /// <c>m_numRegions</c> (<c>ThinClientPoolDM.cpp:2220-2234</c>). Bumped
+    /// by <see cref="IncRegionCount"/> on region attach, decremented on
+    /// detach; <c>CheckRegions</c> (Phase 1.5+) blocks pool teardown until
+    /// it returns to zero.
+    /// </summary>
+    private int _numRegions = 0;
+    /// <summary>
     /// Threads currently inside the pool-wide <see cref="_capSlots"/> wait
     /// in <see cref="CreatePoolConnectionAsync"/> /
     /// <see cref="CreatePoolConnectionToAEndPointAsync"/>. Mirrors cppcache
@@ -404,7 +412,11 @@ internal class ThinClientPoolDM(
         if (conn is null)
         {
             endpoint.SetConnected(false);
-            throw new GeodeException($"ThinClientPoolDM: could not obtain a connection to {endpoint.Name}.");
+            // Mirrors cppcache ThinClientPoolDM.cpp:627 — GF_NOTCON path
+            // surfaces as NotConnectedException once it bubbles through
+            // throwExceptionIfError; we throw it directly here.
+            throw new NotConnectedException(
+                $"ThinClientPoolDM: could not obtain a connection to {endpoint.Name}.");
         }
 
         //// Phase 3 — auth / multi-user creds. cppcache ThinClientPoolDM.cpp:1912.
@@ -1887,6 +1899,25 @@ internal class ThinClientPoolDM(
         //   cppcache ThinClientPoolDM.cpp:2065-2067.
     }
     public void UpdateNotificationStats(bool received, TimeSpan elapsed) => throw new NotImplementedException();
+
+    /// <summary>
+    /// Bump the region-attach refcount. Called by
+    /// <see cref="ThinClientPoolRegion.InitTcrAsync"/> when a region
+    /// resolves and attaches to this pool. Mirrors cppcache
+    /// <c>ThinClientPoolDM::incRegionCount</c>
+    /// (<c>ThinClientPoolDM.cpp:2220-2228</c>) — collapsed the cppcache
+    /// two-flag check (<c>m_isDestroyed || m_destroyPending</c>) to just
+    /// <see cref="_isDestroyed"/>; the two-phase destroy-pending state
+    /// lands when teardown coordination grows.
+    /// </summary>
+    public void IncRegionCount()
+    {
+        if (Volatile.Read(ref _isDestroyed) != 0)
+        {
+            throw new InvalidOperationException("Pool has been destroyed.");
+        }
+        Interlocked.Increment(ref _numRegions);
+    }
 }
 
 /*

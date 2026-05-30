@@ -1,4 +1,7 @@
+using System.Runtime.Intrinsics.Arm;
+using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Geode.Client.Internal;
 
@@ -48,4 +51,25 @@ internal sealed class ThinClientPoolRegion(
         => _objectFactory(serviceProvider, [ name, parent, attributes ]);
     // No fields beyond the base — cppcache ThinClientPoolRegion has no
     // private state of its own either. Override surface above.
+
+    readonly ILogger<ThinClientPoolRegion> _logger = serviceProvider.GetRequiredService<ILogger<ThinClientPoolRegion>>();
+    readonly PoolManager _poolManager = serviceProvider.GetRequiredService<PoolManager>();
+
+    public override Task InitTcrAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var poolDM = _poolManager.Find(Attributes.PoolName) as ThinClientPoolDM;
+            _dm = poolDM ?? throw new InvalidOperationException(
+                    $"pool not found: '{Attributes.PoolName}' (region '{FullPath}').");
+            poolDM.IncRegionCount();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to initialize region {RegionName}", Name);
+            throw;
+        }
+
+        return Task.CompletedTask;
+    }
 }

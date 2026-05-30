@@ -36,12 +36,13 @@ internal partial class ThinClientRegion(
     : LocalRegion(serviceProvider, name, parent, attributes)
 {
 
-    ThinClientBaseDM? _dm;
+    protected ThinClientBaseDM? _dm;
 
     readonly DmContextAccessor _dmContextAccessor = serviceProvider.GetRequiredService<DmContextAccessor>();
     readonly EventIdGenerator _eventIdGenerator = serviceProvider.GetRequiredService<EventIdGenerator>();
     readonly ILogger<ThinClientRegion> _logger = serviceProvider.GetRequiredService<ILogger<ThinClientRegion>>();
     readonly SerializationRegistry _serializationRegistry = serviceProvider.GetRequiredService<SerializationRegistry>();
+    readonly SystemProperties _systemProperties = serviceProvider.GetRequiredService<SystemProperties>();
     readonly IServiceProvider _serviceProvider = serviceProvider;
     readonly TcrMessageHelper _tcrMessageHelper = ActivatorUtilities.CreateInstance<TcrMessageHelper>(serviceProvider);
 
@@ -323,7 +324,7 @@ internal partial class ThinClientRegion(
         }
     }
 
-    public async Task InitTcrAsync(CancellationToken ct = default)
+    public virtual async Task InitTcrAsync(CancellationToken ct = default)
     {
         try
         {
@@ -491,6 +492,84 @@ internal partial class ThinClientRegion(
     //                $"Unexpected reply type {reply.MessageType} for Put on '{FullPath}'.");
     //    }
     //}
+
+    /// <summary>
+    /// Overrides the local-only no-op base to actually propagate the put
+    /// to the server. Mirrors cppcache
+    /// <c>ThinClientRegion::putNoThrow_remote</c>
+    /// (<c>cppcache/src/ThinClientRegion.cpp:888</c>) — builds
+    /// <c>TcrMessagePut</c> and dispatches through <see cref="_dm"/>.
+    /// NIE stub first so the silent base no-op no longer sits behind
+    /// every pool-mode <c>PutAsync</c>; translation lands when wire
+    /// pipeline is filled in line-by-line.
+    /// </summary>
+    internal override async Task<VersionTag?> PutNoThrowRemoteAsync(
+        object key,
+        object? value,
+        object? callbackArgument,
+        bool checkDelta = true,
+        CancellationToken ct = default)
+    {
+        using var _ = _dmContextAccessor.BeginScope(_dm!);
+        _logger.LogTrace("PutNoThrowRemoteAsync: region={RegionPath}, key={Key}", FullPath, key);
+
+        var delta = false;
+        var conflateEvents = _systemProperties.ConflateEvents;
+        if (checkDelta && value is not null && conflateEvents != "true" && _dm!.IsDeltaEnabledOnServer)
+        {
+            delta = value is IDelta d && d.HasDelta();
+        }
+
+        var (threadId, sequenceId) = _eventIdGenerator.Next();
+        var request = await TcrMessageBuilder
+             .Create(_serviceProvider, MessageType.Put)  
+             .AddRegionNamePart(FullPath)
+             .AddNullObjectPart()
+             .AddInt32Part(0)
+             .AddKeyPart(key)
+             .AddCacheableBooleanPart(delta)  
+             .AddValuePart(value)
+             .AddEventIdPart(threadId, sequenceId)
+             .AddCallbackArgument(callbackArgument)
+             .BuildAsync(ct);
+
+        var reply = await _dm!
+            .SendSyncRequestAsync(request, ct: ct)
+            .ConfigureAwait(false);
+        if (delta)
+        {
+            // Does not check whether success of failure..
+            CachePerfStats.DeltaPut();
+
+            if (reply.MessageType == MessageType.PutDeltaError)
+            {
+                request = await TcrMessageBuilder
+                    .Create(_serviceProvider, MessageType.Put)
+                    .AddRegionNamePart(FullPath)
+                    .AddNullObjectPart()
+                    .AddInt32Part(0)
+                    .AddKeyPart(key)
+                    .AddCacheableBooleanPart(false)
+                    .AddValuePart(value)
+                    .AddEventIdPart(threadId, sequenceId)
+                    .AddCallbackArgument(callbackArgument)
+                    .BuildAsync(ct);
+                reply = await _dm!
+                    .SendSyncRequestAsync(request, ct: ct)
+                    .ConfigureAwait(false);
+            }
+        }
+        return reply.MessageType switch
+        {
+            MessageType.Reply => reply.VersionTag,
+            MessageType.Exception => throw new GeodeException($"Server exception on Put '{FullPath}': " +
+                                TcrMessageHelper.DecodeExceptionPreview(reply)),
+            MessageType.PutDataError => throw new GeodeException(
+                                $"Server returned PutDataError on '{FullPath}'."),
+            _ => throw new GeodeException(
+                                $"Unexpected reply type {reply.MessageType} for Put on '{FullPath}'."),
+        };
+    }
 
     /// <summary>
     /// Shared OQL routing for region convenience methods

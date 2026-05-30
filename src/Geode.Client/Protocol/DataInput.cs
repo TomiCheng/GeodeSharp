@@ -20,7 +20,7 @@ namespace Geode.Client.Protocol;
 /// Methods marked "prototype" throw <see cref="NotImplementedException"/>
 /// and will be filled in as later phases need them.
 /// </remarks>
-internal sealed class DataInput(ReadOnlyMemory<byte> buffer)
+internal sealed class DataInput(ReadOnlyMemory<byte> buffer) : IDataInput
 {
     private int _position;
 

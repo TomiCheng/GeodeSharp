@@ -1,6 +1,4 @@
-using Geode.Client.Protocol;
-
-namespace Geode.Client.Internal;
+namespace Geode.Client;
 
 /// <summary>
 /// Contract implemented by user value classes that wish to participate
@@ -10,13 +8,12 @@ namespace Geode.Client.Internal;
 /// (<c>cppcache/include/geode/Delta.hpp:42-83</c>).
 /// </summary>
 /// <remarks>
-/// Internal for now per CLAUDE.md 預設 internal 慣例 — no consumer
-/// exists Phase 1.x. Promote to <c>public</c> in <c>Geode.Client</c>
-/// (alongside making <see cref="DataInput"/> / <see cref="DataOutput"/>
-/// public) when Phase 4+ subscription + delta propagation lands and user
-/// value classes need to implement this.
+/// Public surface; <see cref="IDataInput"/> / <see cref="IDataOutput"/>
+/// placeholder interfaces back the codec params so the contract stays
+/// usable from user code even before the full Phase 4+ delta-propagation
+/// pipeline lands.
 /// </remarks>
-internal interface IDelta: ICloneable
+public interface IDelta : ICloneable
 {
     /// <summary>
     /// Whether this object carries an applicable delta. cppcache
@@ -31,7 +28,7 @@ internal interface IDelta: ICloneable
     /// cppcache <c>Delta::toDelta</c> (<c>Delta.hpp:70</c>) — invoked
     /// when <see cref="HasDelta"/> returns <see langword="true"/>.
     /// </summary>
-    void ToDelta(DataOutput output);
+    void ToDelta(IDataOutput output);
 
     /// <summary>
     /// Apply a delta read from <paramref name="input"/> to this object
@@ -42,5 +39,5 @@ internal interface IDelta: ICloneable
     /// <c>GfErrTypeException(InvalidDelta)</c> (C# port) signals the
     /// receiver to fall back to a full-object fetch.
     /// </summary>
-    void FromDelta(DataInput input);
+    void FromDelta(IDataInput input);
 }

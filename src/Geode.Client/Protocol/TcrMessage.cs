@@ -61,6 +61,20 @@ internal sealed record TcrMessage(
     public TcrMessage UpdateHeaderForRetry() =>
         this with { EarlyAck = (byte)(EarlyAck | IsRetryBit) };
 
+    /// <summary>
+    /// Server-supplied version tag attached to a Reply. Collapses cppcache's
+    /// <c>m_versionTag</c> member + <c>getVersionTag</c> / <c>setVersionTag</c>
+    /// (<c>cppcache/src/TcrMessage.cpp:303-308</c>, <c>.hpp:412</c>) into one
+    /// C# auto-property. Default <see langword="null"/> mirrors cppcache's
+    /// default-constructed member (<c>TcrMessage.cpp:147</c>); the reply-decode
+    /// version-tag read path (cppcache <c>readVersionTag</c>,
+    /// <c>TcrMessage.cpp:407-416</c>) sets it once wired. Phase 1.x doesn't
+    /// drive concurrency checks, so it stays <see langword="null"/> — a reply
+    /// that carried no tag — and consumers (e.g.
+    /// <c>ThinClientRegion.PutNoThrowRemoteAsync</c>) propagate that null.
+    /// </summary>
+    public VersionTag? VersionTag { get; set; }
+
     /// <summary>Encode this message to a freshly-allocated byte array.</summary>
     public byte[] Encode()
     {

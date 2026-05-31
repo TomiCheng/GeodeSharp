@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using Geode.Client.Protocol;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -140,6 +141,31 @@ internal partial class LocalRegion : RegionInternal
         _logger = serviceProvider.GetRequiredService<ILogger<LocalRegion>>();
         CachePerfStats = serviceProvider.GetRequiredService<CachePerfStatistics>();
         _serviceProvider = serviceProvider;
+
+        // cppcache LocalRegion ctor (LocalRegion.cpp:86-95) initializes the
+        // callbacks from attributes (m_listener / m_writer / m_loader). Wire the
+        // listener here so InvokeCacheListenerForEntryEvent actually fires. (The
+        // loader is read directly from Attributes in the get path, so it needs no
+        // field; Writer has the same unwired-field gap — see field decl.)
+        Listener = attributes.CacheListener;
+    }
+
+    /// <summary>
+    /// Inner helper for <see cref="ContainsKeyAsync"/>. Mirrors cppcache
+    /// <c>LocalRegion::containsKey_internal</c>
+    /// (<c>cppcache/src/LocalRegion.cpp:817-826</c>) — private code-org
+    /// split, one caller (<c>containsKey</c>). Gates on
+    /// <see cref="RegionAttributes.CachingEnabled"/> and delegates to the
+    /// local entry map.
+    /// </summary>
+    private bool ContainsKeyInternal(object key)
+    {
+        ArgumentNullException.ThrowIfNull(key, nameof(key));
+        if (!Attributes.CachingEnabled)
+        {
+            return false;
+        }
+        return InternalEntriesMap.ContainsKey(key);
     }
 
     /// <summary>
@@ -329,7 +355,7 @@ internal partial class LocalRegion : RegionInternal
         if (!action.EventFlags.IsNoCallbacks())
         {
             await InvokeCacheListenerForEntryEvent(action.Key, action.OldValue, action.Value,
-                action.CallbackArgument, action.EventFlags, action.AfterEventType, ct);
+                action.CallbackArgument, action.EventFlags, action.AfterEventType, ct: ct);
         }
     }
 
@@ -432,122 +458,77 @@ internal partial class LocalRegion : RegionInternal
     /// 擋住的話會走到這 — 之後 body 內部要先看 <c>Listener is null</c>
     /// 直接 return。NIE stub 純占位讓翻譯行對得起來。
     /// </remarks>
-    protected ValueTask InvokeCacheListenerForEntryEvent(
+    protected async ValueTask InvokeCacheListenerForEntryEvent(
         object key,
         object? oldValue,
         object? newValue,
-        object? aCallbackArgument,
+        object? callbackArgument,
         CacheEventFlags eventFlags,
         EntryEventType type,
-        CancellationToken ct)
+        bool isLocal = false,
+        CancellationToken ct = default)
     {
-        // cppcache 整個 body 包在 `if (m_listener != nullptr)` — 沒 listener 就
-        //   no-op return GF_NOERR。Phase 1.x Listener 永遠 null,這行就讓 put
-        //   走通;非 null 的 dispatch (Phase 2+ 真接 listener) 維持 NIE。
-        if (Listener is null)
+        if (Listener is not null)
         {
-            return default;
-        }
+            if (oldValue is not null && CacheableToken.IsInvalid(oldValue))
+            {
+                oldValue = null;
+            }
 
-        throw new NotImplementedException(
-            "LocalRegion.InvokeCacheListenerForEntryEvent: pending Phase 2+ CacheListener feature.");
-        // cppcache LocalRegion::invokeCacheListenerForEntryEvent (LocalRegion.cpp:2693-2770):
-        //
-        //   GfErrType LocalRegion::invokeCacheListenerForEntryEvent(
-        //       const std::shared_ptr<CacheableKey>& key,
-        //       std::shared_ptr<Cacheable>& oldValue,
-        //       const std::shared_ptr<Cacheable>& newValue,
-        //       const std::shared_ptr<Serializable>& aCallbackArgument,
-        //       CacheEventFlags eventFlags, EntryEventType type, bool isLocal) {
-        //     GfErrType err = GF_NOERR;
-        //
-        //     // Check if we have a local cache listener. If so, invoke and return.
-        //     if (m_listener != nullptr) {
-        //       if (oldValue != nullptr && CacheableToken::isInvalid(oldValue)) {
-        //         oldValue = nullptr;
-        //       }
-        //       EntryEvent event(shared_from_this(), key, oldValue, newValue,
-        //                        aCallbackArgument, eventFlags.isNotification());
-        //       const char* eventStr = "unknown";
-        //       try {
-        //         bool updateStats = true;
-        //         /*Update the CacheWriter Stats*/
-        //         int64_t sampleStartNanos = startStatOpTime();
-        //         switch (type) {
-        //           case AFTER_UPDATE: {
-        //             //  when CREATE is received from server for notification
-        //             // then force an afterUpdate even if key is not present in cache.
-        //             if (oldValue != nullptr || eventFlags.isNotificationUpdate() ||
-        //                 isLocal) {
-        //               eventStr = "afterUpdate";
-        //               m_listener->afterUpdate(event);
-        //               break;
-        //             }
-        //             // if oldValue is nullptr then fall to AFTER_CREATE case
-        //             eventStr = "afterCreate";
-        //             m_listener->afterCreate(event);
-        //             break;
-        //           }
-        //           case AFTER_CREATE: {
-        //             eventStr = "afterCreate";
-        //             m_listener->afterCreate(event);
-        //             break;
-        //           }
-        //           case AFTER_DESTROY: {
-        //             eventStr = "afterDestroy";
-        //             m_listener->afterDestroy(event);
-        //             break;
-        //           }
-        //           case AFTER_INVALIDATE: {
-        //             eventStr = "afterInvalidate";
-        //             m_listener->afterInvalidate(event);
-        //             break;
-        //           }
-        //           case BEFORE_CREATE:
-        //           case BEFORE_UPDATE:
-        //           case BEFORE_INVALIDATE:
-        //           case BEFORE_DESTROY: {
-        //             updateStats = false;
-        //             break;
-        //           }
-        //         }
-        //         if (updateStats) {
-        //           m_cacheImpl->getCachePerfStats().incListenerCalls();
-        //           updateStatOpTime(m_regionStats->getStat(),
-        //                            m_regionStats->getListenerCallTimeId(),
-        //                            sampleStartNanos);
-        //           m_regionStats->incListenerCallsCompleted();
-        //         }
-        //       } catch (const Exception& ex) {
-        //         LOGERROR("Exception in CacheListener for key[%s]::%s: %s: %s",
-        //                  Utils::nullSafeToString(key).c_str(), eventStr,
-        //                  ex.getName().c_str(), ex.what());
-        //         err = GF_CACHE_LISTENER_EXCEPTION;
-        //       } catch (...) {
-        //         LOGERROR("Unknown exception in CacheListener for key[%s]::%s",
-        //                  Utils::nullSafeToString(key).c_str(), eventStr);
-        //         err = GF_CACHE_LISTENER_EXCEPTION;
-        //       }
-        //     }
-        //     return err;
-        //   }
-        //
-        // 翻譯備忘:
-        // - `if (m_listener == nullptr)` 整段 skip → Phase 1.x Listener 永遠 null,
-        //   `if (Listener is null) return Task.CompletedTask;` 一行就讓 put 走通。
-        //   下面的 dispatch 是 Phase 2+ CacheListener 真接才填。
-        // - cppcache `isLocal` 是第 7 個 arg,C# 簽章沒帶 — 翻 AFTER_UPDATE 的
-        //   fall-to-create 判斷時要補進來 (或從 eventFlags 推)。
-        // - oldValue invalid-token → null 正規化:CacheableToken.IsInvalid。
-        // - EntryEvent 型別還沒建 (Phase 2+ listener/writer 一起)。
-        // - AFTER_UPDATE 在 oldValue==null 且非 notification/local 時 fall through
-        //   到 afterCreate — switch fall-through,C# 要顯式處理 (沒有隱式貫穿)。
-        // - listener throw → cppcache 收成 GF_CACHE_LISTENER_EXCEPTION err code;
-        //   C# 港大概 catch 後拋 GeodeException 子類 (CacheListenerException?),
-        //   LOGERROR → _logger.LogError。
-        // - incListenerCalls / ListenerCallTime / incListenerCallsCompleted →
-        //   CachePerfStats + RegionStats 對應 (RegionStatistics 已有
-        //   CacheListenerCallCompleted)。
+            var ev = new EntryEvent(this, key, oldValue, newValue, callbackArgument, eventFlags.IsNotification());
+            var eventStr = "unknown";
+            try
+            {
+                var updateStats = true;
+                var listenerStart = Stopwatch.GetTimestamp();
+                switch (type)
+                {
+                    case EntryEventType.AfterUpdate:
+                        if (oldValue is not null || eventFlags.IsNotificationUpdate() || isLocal)
+                        {
+                            eventStr = "afterUpdate";
+                            await Listener.AfterUpdateAsync(ev, ct).ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            eventStr = "afterCreate";
+                            await Listener.AfterCreateAsync(ev, ct).ConfigureAwait(false);
+                        }
+                        break;
+                    case EntryEventType.AfterCreate:
+                        eventStr = "afterCreate";
+                        await Listener.AfterCreateAsync(ev, ct).ConfigureAwait(false);
+                        break;
+                    case EntryEventType.AfterDestroy:
+                        eventStr = "afterDestroy";
+                        await Listener.AfterDestroyAsync(ev, ct).ConfigureAwait(false);
+                        break;
+                    case EntryEventType.AfterInvalidate:
+                        eventStr = "afterInvalidate";
+                        await Listener.AfterInvalidateAsync(ev, ct).ConfigureAwait(false);
+                        break;
+                    case EntryEventType.BeforeCreate:
+                    case EntryEventType.BeforeUpdate:
+                    case EntryEventType.BeforeInvalidate:
+                    case EntryEventType.BeforeDestroy:
+                        updateStats = false;
+                        break;
+                }
+                if (updateStats)
+                {
+                    CachePerfStats.CacheListenerCallCompleted();
+                    RegionStats.ListenerCall(Stopwatch.GetElapsedTime(listenerStart));
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(
+                    ex, "Exception in CacheListener for key {Key} ({EventStr}) on region {RegionPath}",
+                    key, eventStr, FullPath);
+                throw new CacheListenerException(
+                    $"CacheListener.{eventStr} failed for key on region '{FullPath}'.", ex);
+            }
+        }
     }
 
     /// <summary>
@@ -776,6 +757,181 @@ internal partial class LocalRegion : RegionInternal
     }
 
     /// <summary>
+    /// Core get logic: tx dispatch, local-cache hit, remote fetch,
+    /// cache-loader fallback, <c>putLocal</c> store-back, listener
+    /// dispatch. Mirrors cppcache <c>LocalRegion::getNoThrow</c>
+    /// (<c>cppcache/src/LocalRegion.cpp:851-1026</c>). Non-virtual like
+    /// cppcache — the per-mode override point is
+    /// <c>GetNoThrowRemoteAsync</c> (base no-op here; ThinClientRegion
+    /// fetches over the wire), not this method.
+    /// </summary>
+    internal async Task<object?> GetNoThrowAsync(object key, object? callbackArgument, CancellationToken ct = default)
+    {
+        await CheckDestroyPendingAsync(ct).ConfigureAwait(false);
+        ArgumentNullException.ThrowIfNull(key, nameof(key));
+
+        var txState = GetTXState();
+        if (txState is not null)
+        {
+            if (IsLocalOp())
+            {
+                throw new NotSupportedException(
+                    "GetNoThrowAsync: local-op get inside a transaction is not supported.");
+            }
+            var (txValue, _) = await GetNoThrowRemoteAsync(key, callbackArgument, ct).ConfigureAwait(false);
+            txState.SetDirty();
+            if (txValue is not null && (CacheableToken.IsInvalid(txValue) || CacheableToken.IsTombstone(txValue)))
+            {
+                txValue = null;
+            }
+            return txValue;
+        }
+
+        CachePerfStats.Get();
+
+        // TODO:  CacheableToken::isInvalid should be completely hidden
+        // inside MapSegment; this should be done both for the value obtained
+        // from local cache as well as oldValue in every instance
+        var updateCount = -1;
+        var isLoaderInvoked = false;
+        var isLocal = false;   // cppcache LocalRegion.cpp:888
+        var cachingEnabled = Attributes.CachingEnabled;
+        object? value;
+        object? localValue = null;
+        if (cachingEnabled)
+        {
+            var (me, localGet) = InternalEntriesMap.GetEntry(key);
+            value = localGet;
+            isLocal = me is not null;
+            if (isLocal && value is not null && !CacheableToken.IsInvalid(value))
+            {
+                RegionStats.Hit();
+                CachePerfStats.Hit();
+
+                UpdateAccessAndModifiedTimeForEntry(me, false);
+                UpdateAccessAndModifiedTime(false);
+                return value;
+            }
+            localValue = value;
+            value = null;
+
+            if (!Attributes.ConcurrencyChecksEnabled)
+            {
+                updateCount = InternalEntriesMap.AddTrackerForEntry(
+                    key, value, addIfAbsent: true, failIfPresent: false, value: false);
+                _logger.LogDebug("Region::get: added tracking with update counter {UpdateCount} for key {Key} with value {Value}",
+                    updateCount, key, value);
+            }
+        }
+        try
+        {
+            UpdateAccessAndModifiedTime(false);
+
+            RegionStats.Miss();
+            CachePerfStats.Miss();
+
+            var (remoteValue, versionTag) = await GetNoThrowRemoteAsync(key, callbackArgument, ct).ConfigureAwait(false);
+            value = remoteValue;
+
+            var loader = Attributes.CacheLoader;
+            if ((value is null || CacheableToken.IsInvalid(value) || CacheableToken.IsTombstone(value))
+                && loader is not null)
+            {
+                isLoaderInvoked = true;
+                var loaderStart = Stopwatch.GetTimestamp();
+                try
+                {
+                    value = await loader.LoadAsync(this, key, callbackArgument, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error in CacheLoader.LoadAsync for key {Key} in region {RegionPath}", key, FullPath);
+                    throw new CacheLoaderException(
+                        $"CacheLoader.LoadAsync failed for key on region '{FullPath}'.", ex);
+                }
+                finally
+                {
+                    RegionStats.LoaderCall(Stopwatch.GetElapsedTime(loaderStart));
+                }
+            }
+
+            object? oldValue = null;
+            if (value is not null && cachingEnabled
+                && !(CacheableToken.IsTombstone(value)
+                     && (localValue is null || CacheableToken.IsInvalid(localValue))))
+            {
+                _logger.LogDebug(
+                    "Region::get: creating entry with tracking update counter {UpdateCount} for key {Key}",
+                    updateCount, key);
+                try
+                {
+                    oldValue = await PutLocalAsync(
+                        "Region::get", isCreate: false, key, value, cachingEnabled,
+                        updateCount, destroyTracker: 0, versionTag, ct: ct).ConfigureAwait(false);
+                }
+                catch (GfErrTypeException ex)
+                {
+                    if (ex.Code == GfErrType.CacheConcurrentModificationException)
+                    {
+                        _logger.LogDebug("Region::get: putLocal for key {Key} failed; cache already holds a higher-version entry.",
+                            key);
+                        if (value is not null && (CacheableToken.IsInvalid(value) || CacheableToken.IsTombstone(value)))
+                        {
+                            value = null;
+                        }
+                        return value;
+                    }
+
+                    _logger.LogDebug("Region::get: putLocal for key {Key} failed with {GfErrType}; keeping fetched value.",
+                        key, ex.Code);
+                }
+            }
+
+            if (value is not null && (CacheableToken.IsInvalid(value) || CacheableToken.IsTombstone(value)))
+            {
+                value = null;
+            }
+
+            if (!isLoaderInvoked && value is not null)
+            {
+                await InvokeCacheListenerForEntryEvent(
+                    key, oldValue, value, callbackArgument, CacheEventFlags.Normal,
+                    EntryEventType.AfterUpdate, isLocal, ct).ConfigureAwait(false);
+            }
+
+            return value;
+        }
+        finally
+        {
+            if (updateCount >= 0 && !Attributes.ConcurrencyChecksEnabled)
+            {
+                InternalEntriesMap.RemoveTrackerForEntry(key);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Propagate the get to the remote server, if any. Mirrors cppcache
+    /// <c>LocalRegion::getNoThrow_remote</c>
+    /// (<c>cppcache/src/LocalRegion.cpp:3036-3041</c>) — base impl is a
+    /// no-op success: a pure local region has no server backing, so it
+    /// yields <c>(null, null)</c> (no value, no version tag).
+    /// <see cref="ThinClientRegion"/> overrides
+    /// (<c>cppcache/src/ThinClientRegion.cpp:810-850</c>) with the
+    /// <c>TcrMessageRequest</c> wire round-trip. Remote-fetch step of
+    /// <see cref="GetNoThrowAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// cppcache out-params <c>value</c> + <c>versionTag</c>
+    /// (<c>std::shared_ptr&lt;T&gt;&amp;</c>) → return tuple; C# async
+    /// can't take <c>ref</c>/<c>out</c>. Same shape as
+    /// <see cref="GetNoThrowFullObjectAsync"/>.
+    /// </remarks>
+    internal virtual Task<(object? Value, VersionTag? VersionTag)>
+        GetNoThrowRemoteAsync(object key, object? aCallbackArgument, CancellationToken ct = default)
+        => Task.FromResult<(object?, VersionTag?)>((null, null));
+
+    /// <summary>
     /// Current thread / async-flow's ambient transaction, or
     /// <see langword="null"/> when no tx is open. Mirrors cppcache
     /// <c>LocalRegion::getTXState()</c>
@@ -962,27 +1118,6 @@ internal partial class LocalRegion : RegionInternal
     }
 
     /// <summary>
-    /// Propagate the get to the remote server, if any. Mirrors cppcache
-    /// <c>LocalRegion::getNoThrow_remote</c>
-    /// (<c>cppcache/src/LocalRegion.cpp:3036-3041</c>) — base impl is a
-    /// no-op success: a pure local region has no server backing, so it
-    /// yields <c>(null, null)</c> (no value, no version tag).
-    /// <see cref="ThinClientRegion"/> overrides
-    /// (<c>cppcache/src/ThinClientRegion.cpp:810-850</c>) with the
-    /// <c>TcrMessageRequest</c> wire round-trip. Remote-fetch step of
-    /// <see cref="GetNoThrowAsync"/>.
-    /// </summary>
-    /// <remarks>
-    /// cppcache out-params <c>value</c> + <c>versionTag</c>
-    /// (<c>std::shared_ptr&lt;T&gt;&amp;</c>) → return tuple; C# async
-    /// can't take <c>ref</c>/<c>out</c>. Same shape as
-    /// <see cref="GetNoThrowFullObjectAsync"/>.
-    /// </remarks>
-    internal virtual Task<(object? Value, VersionTag? VersionTag)>
-        GetNoThrowRemoteAsync(object key, object? aCallbackArgument, CancellationToken ct = default)
-        => Task.FromResult<(object?, VersionTag?)>((null, null));
-
-    /// <summary>
     /// Virtual hook used by <see cref="LocalCount"/>'s in-tx branch. Default
     /// body matches the non-virtual <see cref="LocalSizeRemote"/> —
     /// <see cref="ThinClientRegion"/> overrides (Phase 1.5+) to round-trip
@@ -999,24 +1134,6 @@ internal partial class LocalRegion : RegionInternal
     /// <inheritdoc />
     public override Task ClearAsync(object? callback = null, CancellationToken ct = default) =>
         throw new NotImplementedException("LocalRegion.ClearAsync: pending local entry map.");
-
-    /// <summary>
-    /// Inner helper for <see cref="ContainsKeyAsync"/>. Mirrors cppcache
-    /// <c>LocalRegion::containsKey_internal</c>
-    /// (<c>cppcache/src/LocalRegion.cpp:817-826</c>) — private code-org
-    /// split, one caller (<c>containsKey</c>). Gates on
-    /// <see cref="RegionAttributes.CachingEnabled"/> and delegates to the
-    /// local entry map.
-    /// </summary>
-    private bool ContainsKeyInternal(object key)
-    {
-        ArgumentNullException.ThrowIfNull(key, nameof(key));
-        if (!Attributes.CachingEnabled)
-        {
-            return false;
-        }
-        return InternalEntriesMap.ContainsKey(key);
-    }
 
     /// <inheritdoc />
     public override async Task<bool> ContainsKeyAsync(object key, CancellationToken ct = default)
@@ -1086,160 +1203,6 @@ internal partial class LocalRegion : RegionInternal
             // cppcache updateStatOpTime (LocalRegion.cpp:346) — record
             // regardless of success / failure, matching PutAsync.
             RegionStats.Get(Stopwatch.GetElapsedTime(sampleStartTimestamp));
-        }
-    }
-
-    /// <summary>
-    /// Core get logic: tx dispatch, local-cache hit, remote fetch,
-    /// cache-loader fallback, <c>putLocal</c> store-back, listener
-    /// dispatch. Mirrors cppcache <c>LocalRegion::getNoThrow</c>
-    /// (<c>cppcache/src/LocalRegion.cpp:851-1026</c>). Non-virtual like
-    /// cppcache — the per-mode override point is
-    /// <c>GetNoThrowRemoteAsync</c> (base no-op here; ThinClientRegion
-    /// fetches over the wire), not this method.
-    /// </summary>
-    internal async Task<object?> GetNoThrowAsync(object key, object? callbackArgument, CancellationToken ct = default)
-    {
-        await CheckDestroyPendingAsync(ct).ConfigureAwait(false);
-        ArgumentNullException.ThrowIfNull(key, nameof(key));
-
-        var txState = GetTXState();
-        if (txState is not null)
-        {
-            if (IsLocalOp())
-            {
-                throw new NotSupportedException(
-                    "GetNoThrowAsync: local-op get inside a transaction is not supported.");
-            }
-            var (txValue, _) = await GetNoThrowRemoteAsync(key, callbackArgument, ct).ConfigureAwait(false);
-            txState.SetDirty();
-            if (txValue is not null && (CacheableToken.IsInvalid(txValue) || CacheableToken.IsTombstone(txValue)))
-            {
-                txValue = null;
-            }
-            return txValue;
-        }
-
-        CachePerfStats.Get();
-
-        // TODO:  CacheableToken::isInvalid should be completely hidden
-        // inside MapSegment; this should be done both for the value obtained
-        // from local cache as well as oldValue in every instance
-        var updateCount = -1;
-        var isLoaderInvoked = false;
-        bool isLocal;
-        var cachingEnabled = Attributes.CachingEnabled;
-        object? value;
-        object? localValue = null;
-        if (cachingEnabled)
-        {
-            var (me, localGet) = InternalEntriesMap.GetEntry(key);
-            value = localGet;
-            isLocal = me is not null;
-            if (isLocal && value is not null && !CacheableToken.IsInvalid(value))
-            {
-                RegionStats.Hit();
-                CachePerfStats.Hit();
-
-                UpdateAccessAndModifiedTimeForEntry(me, false);
-                UpdateAccessAndModifiedTime(false);
-                return value;
-            }
-            localValue = value;
-            value = null;
-
-            if (!Attributes.ConcurrencyChecksEnabled)
-            {
-                updateCount = InternalEntriesMap.AddTrackerForEntry(
-                    key, value, addIfAbsent: true, failIfPresent: false, value: false);
-                _logger.LogDebug("Region::get: added tracking with update counter {UpdateCount} for key {Key} with value {Value}",
-                    updateCount, key, value);
-            }
-        }
-        try
-        {
-            UpdateAccessAndModifiedTime(false);
-
-            RegionStats.Miss();
-            CachePerfStats.Miss();
-
-            var (remoteValue, versionTag) = await GetNoThrowRemoteAsync(key, callbackArgument, ct).ConfigureAwait(false);
-            value = remoteValue;
-
-            var loader = Attributes.CacheLoader;
-            if ((value is null || CacheableToken.IsInvalid(value) || CacheableToken.IsTombstone(value))
-                && loader is not null)
-            {
-                isLoaderInvoked = true;
-                var loaderStart = Stopwatch.GetTimestamp();
-                try
-                {
-                    value = await loader.LoadAsync(this, key, callbackArgument, ct).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error in CacheLoader.LoadAsync for key {Key} in region {RegionPath}", key, FullPath);
-                    throw new CacheLoaderException(
-                        $"CacheLoader.LoadAsync failed for key on region '{FullPath}'.", ex);
-                }
-                finally
-                {
-                    RegionStats.LoaderCall(Stopwatch.GetElapsedTime(loaderStart));
-                }
-            }
-
-            object? oldValue = null;
-            if (value is not null && cachingEnabled
-                && !(CacheableToken.IsTombstone(value)
-                     && (localValue is null || CacheableToken.IsInvalid(localValue))))
-            {
-                _logger.LogDebug(
-                    "Region::get: creating entry with tracking update counter {UpdateCount} for key {Key}",
-                    updateCount, key);
-                try
-                {
-                    oldValue = await PutLocalAsync(
-                        "Region::get", isCreate: false, key, value, cachingEnabled,
-                        updateCount, destroyTracker: 0, versionTag, ct: ct).ConfigureAwait(false);
-                }
-                catch (GfErrTypeException ex)
-                {
-                    if (ex.Code == GfErrType.CacheConcurrentModificationException)
-                    {
-                        _logger.LogDebug("Region::get: putLocal for key {Key} failed; cache already holds a higher-version entry.",
-                            key);
-                        if (value is not null && (CacheableToken.IsInvalid(value) || CacheableToken.IsTombstone(value)))
-                        {
-                            value = null;
-                        }
-                        return value;
-                    }
-
-                    _logger.LogDebug("Region::get: putLocal for key {Key} failed with {GfErrType}; keeping fetched value.",
-                        key, ex.Code);
-                }
-            }
-
-            if (value is not null && (CacheableToken.IsInvalid(value) || CacheableToken.IsTombstone(value)))
-            {
-                value = null;
-            }
-
-            if (!isLoaderInvoked && value is not null)
-            {
-                await InvokeCacheListenerForEntryEvent(
-                    key, oldValue, value, callbackArgument, CacheEventFlags.Normal,
-                    EntryEventType.AfterUpdate, ct).ConfigureAwait(false);
-            }
-
-            return value;
-        }
-        finally
-        {
-            if (updateCount >= 0 && !Attributes.ConcurrencyChecksEnabled)
-            {
-                InternalEntriesMap.RemoveTrackerForEntry(key);
-            }
         }
     }
 

@@ -41,6 +41,18 @@ internal static class CacheEventFlagsExtensions
         (flags & CacheEventFlags.Notification) != 0;
 
     /// <summary>
+    /// True when the op is a server-pushed notification that updated an
+    /// already-present entry. Mirrors cppcache
+    /// <c>CacheEventFlags::isNotificationUpdate</c>
+    /// (<c>cppcache/src/RegionInternal.hpp</c>) — distinct from
+    /// <see cref="IsNotification"/>: the listener-dispatch AFTER_UPDATE
+    /// branch keys off this flag to force <c>afterUpdate</c> even when the
+    /// local entry has no prior value.
+    /// </summary>
+    public static bool IsNotificationUpdate(this CacheEventFlags flags) =>
+        (flags & CacheEventFlags.NotificationUpdate) != 0;
+
+    /// <summary>
     /// True when both <c>CacheWriter</c> and <c>CacheListener</c>
     /// callbacks are explicitly suppressed for this op. Mirrors cppcache
     /// <c>CacheEventFlags::isNoCallbacks</c>

@@ -12,7 +12,11 @@
 - **`cache.xml`** — 改用 `appsettings.json` + `IOptions<T>`。
 - **Sub-regions** — Geode 自己也勸退。
 - **Sync API** — async only。
-- **Cache listener / loader / writer** — 利基用途,server-side(Java)更好寫。
+- ~~**Cache listener / loader / writer**~~ — **已從 scope 移回(2026-05)**:純
+  managed user hook,無 wire / subscription 相依即可運作。`ICacheLoader`
+  read-through 與 `ICacheListener` after-event dispatch 已實作 + 測試;
+  `ICacheWriter` interface / setter 在但 dispatch 未接。覆蓋狀態見
+  PORTING.md「Cache callbacks」段。
 - **Region expiration / eviction** — server-side 管,client 不碰。
 - **Non-pool 路徑** — `ThinClientDistributionManager` /
   `TcrDistributionManager` / `TcrHADistributionManager` 整個 sub-tree
@@ -91,7 +95,20 @@ cppcache `cppcache/src/TcrMessage.hpp`)。
   個獨立欄位(`IntCounter` 次數 + `LongCounter` ns 累計時間),我們
   合成單一 `Histogram<double>`(秒)。`.Count` = 原次數、`.Sum` = 原
   累計時間。已套用:`LocatorListRequestTime` /
-  `ClientConnectionRequestTime` / `ConnectionWaitTime` / `ClientOpTime`。
+  `ClientConnectionRequestTime` / `ConnectionWaitTime` / `ClientOpTime` /
+  `LoaderCallTime` / `ListenerCallTime`。
+- **`IsDeltaEnabledOnServer` instance 而非 static** — cppcache 用
+  process-wide `static volatile s_isDeltaEnabledOnServer`;我們改 per-DM
+  `virtual` instance property。理由:多 `IGeodeCache` 連不同 cluster 時
+  各自追自己的 delta capability,且對齊 DI-first / no static singleton。
+  目前回 `false`(handshake 還沒寫入),delta send path 因此不啟動。
+- **`getNoThrow` 的 putLocal-failure oldValue fallback 收不回** —
+  cppcache `putLocal` 用 out-param 即使回 error code 也帶 `oldValue`;
+  我們的 `PutLocalAsync` 是「回 oldValue **或** 丟 `GfErrTypeException`」
+  二選一,拋了就拿不到。所以 cppcache 「other error → `value = oldValue`」
+  那條(`LocalRegion.cpp:999-1007`)無法忠實複製,只能 keep fetched
+  value。Phase 1.x 不可達(concurrency checks 未驅動);等 entries map
+  能回 race-loser value 再修。
 
 ---
 

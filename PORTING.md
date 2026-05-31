@@ -10,12 +10,20 @@
 
 ## 狀態符號
 
+實作生命週期由淺到深(每一階都涵蓋前一階):
+
 | 符號 | 意思 |
 | --- | --- |
-| ✅ | 有 test 跑過、過 |
-| 🔨 | 主張寫了,test 還沒過(或還沒寫) |
-| ⏳ | 連主張都還沒擺出來 |
+| ⏳ | 連主張都還沒擺出來(連 public 宣告都沒) |
+| 🧩 | API 建立、無實作(public 殼在,還沒 body) |
+| 🔨 | API 實作為 NIE stub(body 丟 `NotImplementedException`) |
+| 🚧 | API 部分實作,仍有 TODO / dormant NIE(主線通,邊角未填) |
+| ✅ | API 已單元測試通過 |
+| 🌐 | API 已整合測試通過(Testcontainers 真 server) |
 | ❌ | 不做(out of scope) |
+
+> 舊 bullet 多半還停在粗粒度的 ✅/🔨 — living document,逐條 audit
+> 時才細分到上面的生命週期。本次新標的條目用細粒度。
 
 ---
 
@@ -96,11 +104,12 @@ C# 目前 internal-only(沒 MVP consumer 用例);這節列「未來升 public �
 C# 公開介面:`Geode.Client.IRegion` + `Geode.Client.IRegion<TKey,TValue>`(typed sugar)。
 
 ## CRUD(server-side)
-- 🔨 `Put` 在 5 種 RegionShortcut 都通過
+- 🌐 `PutAsync` pool-mode 走 wire(`ThinClientRegion.PutNoThrowRemoteAsync` 翻 cppcache `putNoThrow_remote`:delta gate + `PUT_DELTA_ERROR` retry + reply switch)。Local 走 base no-op + local map。整合測試:pool-mode `AfterPut` 真寫 server;單元:`ServerOptional` 包
 - 🔨 `Put` null key 拋例外
 - 🔨 `Put` 在 closed cache 拋例外
-- 🔨 `Get` miss 回 null
-- 🔨 `Get` 經 caching-proxy 命中 local 不發 wire
+- ✅ `GetAsync` miss 回 null(Local/LocalEntryLru never-put → null;pool-mode `ServerOptional` 包)
+- ✅ `GetAsync` 命中回值(Local/LocalEntryLru `Put`→`Get` 走 local entry map;`GetNoThrowAsync` 翻 cppcache `getNoThrow` 全鏈)
+- 🚧 `Get` 經 caching-proxy 命中 local 不發 wire(local-hit 短路:單元 `ServerOptional` 軟過,尚未硬驗)
 - 🔨 `Remove` 不存在的 key 不拋
 - 🔨 `Remove`(strict)值不符回 false
 - ✅ `DestroyAsync` 移除已存在 entry(LocalCount 1→0)
@@ -108,7 +117,7 @@ C# 公開介面:`Geode.Client.IRegion` + `Geode.Client.IRegion<TKey,TValue>`(typ
 - 🔨 `Invalidate` 命中 server
 - 🔨 `Clear` 清空 region
 - ✅ `ContainsKeyAsync` 本地查(5 種 RegionShortcut;Proxy 永遠 false,caching 走 local map,tombstone 算 false)
-- 🔨 `ContainsKeyOnServerAsync` 查 server(LocalRegion 拋 `NotSupportedException`;ThinClientRegion 走 wire)
+- 🌐 `ContainsKeyOnServerAsync` 查 server:LocalRegion 拋 `NotSupportedException`,ThinClientRegion 走 wire。10 單元(5 shortcut × true/false,wire-going 用 `ServerOptional`)+ 6 整合(真 server:`AfterPut`→true / `NeverPut`→false)
 - 🔨 `ExistsValue` 跑 OQL predicate
 - 🔨 `SelectValue` 跑 OQL predicate
 
@@ -155,6 +164,20 @@ C# 公開介面:`Geode.Client.IRegion` + `Geode.Client.IRegion<TKey,TValue>`(typ
 ## Attributes
 - 🔨 `Attributes` 回快照
 - 🔨 `GetAttributesMutator` 可改動態欄位
+- ✅ `IRegionFactory.SetCacheLoader` / `SetCacheWriter` / `SetCacheListener` fluent 入口(塞進 `RegionAttributes`;loader 已接 get 路徑,writer/listener 見下)
+
+## Cache callbacks(loader / listener / writer)
+
+> NOTE.md 原列為 out-of-scope;本次重新納入(純 managed user hook,無
+> wire / subscription 相依即可運作)。`ICacheLoader` / `ICacheListener` /
+> `ICacheWriter` interface + `IDataInput` / `IDataOutput` 占位介面已 public。
+
+- ✅ `ICacheLoader` read-through:get **全 miss**(local + remote 都空)時呼叫 `LoadAsync` 回填(`LocalCacheLoaderTests`:`Get(5, callback:3)` → `5+3=8`)。對映 cppcache `getNoThrow` loader fallback
+- ✅ `ICacheListener` after-event dispatch:`InvokeCacheListenerForEntryEvent` 依 `EntryEventType` 派 `AfterCreate`/`AfterUpdate`/`AfterDestroy`/`AfterInvalidate`,`Listener` 從 `Attributes.CacheListener` 接線(ctor)。AFTER_UPDATE 判別式忠實(`oldValue \|\| isNotificationUpdate \|\| isLocal`)。`LocalCacheListenerTests`:新 key→afterCreate、既有 key→afterUpdate、無 listener no-op
+- ✅ `ICacheListener` stat:`CacheListenerCallCompleted`(cache)+ `ListenerCall`(region time)正確記錄(meter capture 驗)
+- ✅ listener callback 拋例外 → `CacheListenerException`(對映 `GF_CACHE_LISTENER_EXCEPTION`;`OperationCanceledException` 例外放行)
+- 🧩 `ICacheWriter` veto(before create/update/destroy):interface + `RegionAttributes.CacheWriter` + `SetCacheWriter` 在,但 **`Writer` field 未從 attributes 接線、dispatch 未接** → 設了不生效
+- 🔨 `UpdateAccessAndModifiedTimeForEntry` entry-level expiry touch:外層 guard 翻好,但 `EntryExpiryEnabled=true` 時 body NIE(`ExpEntryProperties` surface 已建,寫入未接)
 
 ## Interest list / subscription
 - ⏳ 註冊單 key 接 server 推播
@@ -209,6 +232,9 @@ cppcache `ExceptionTypes.hpp` 58 個 exception。原則二能 BCL 取代的就�
 - 🔨 `EntryNotFoundException` — class 已建,尚無 consumer 拋(等 `LocalDestroyAsync` strict path 上線觸發)
 - 🔨 `EntryExistsException` — class 已建,尚無 consumer 拋(等 `Create` strict path 上線觸發)
 - 🔨 `RegionDestroyedException` — region 已銷毀(目前走 text-coded `CacheServerException`)
+- 🔨 `CacheLoaderException` — class 已建 + consumer 已接(`GetNoThrowAsync` loader catch 包 `LoadAsync` 例外);throw path 未測
+- 🔨 `CacheListenerException` — class 已建 + consumer 已接(`InvokeCacheListenerForEntryEvent` catch 包 listener callback 例外,`OperationCanceledException` 放行);throw path 未測
+- 🔨 `CacheWriterException` — class 已建,consumer 待 writer dispatch 上線(`ICacheWriter` veto 未接)
 
 ## BCL 取代(不開子類)
 | cppcache | BCL |

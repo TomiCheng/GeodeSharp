@@ -22,7 +22,7 @@ internal sealed class CacheableToken
     /// <summary>Transitional delete state (concurrent delete + create handshake).</summary>
     public static readonly CacheableToken Destroyed = new();
 
-    /// <summary>Value spilled to disk via <see cref="LocalRegion.PersistenceManager"/>.</summary>
+    /// <summary>Value spilled to disk via <see cref="LocalRegion._persistenceManager"/>.</summary>
     public static readonly CacheableToken Overflowed = new();
 
     /// <summary>Deleted-but-not-collected — kept for distributed concurrency-checks version history.</summary>

@@ -32,7 +32,7 @@ namespace Geode.Client.Internal;
 internal partial class LocalRegion : RegionInternal
 {
 
-    static ObjectFactory<LocalRegion> _objectFactory
+    static readonly ObjectFactory<LocalRegion> _objectFactory
         = ActivatorUtilities.CreateFactory<LocalRegion>([typeof(string), typeof(RegionInternal), typeof(RegionAttributes)]);
 
     /// <summary>
@@ -51,34 +51,34 @@ internal partial class LocalRegion : RegionInternal
     private readonly IServiceProvider _serviceProvider;
 
     /// <summary>cppcache <c>m_attachedPool</c>: attached pool (we route via dm at <see cref="ThinClientRegion"/>).</summary>
-    protected IPool? AttachedPool;
+    protected IPool? _attachedPool;
 
-    /// <summary>cppcache <c>m_cacheImpl-&gt;getCachePerfStats()</c> (<c>CachePerfStats</c>): cache-wide perf counters (puts / creates / delta). Distinct from the per-region access/modify timestamp <see cref="CacheStatistics"/>.</summary>
-    protected CachePerfStatistics CachePerfStats;
+    /// <summary>cppcache <c>m_cacheImpl-&gt;getCachePerfStats()</c> (<c>CachePerfStats</c>): cache-wide perf counters (puts / creates / delta). Distinct from the per-region access/modify timestamp <see cref="_cacheStatistics"/>.</summary>
+    protected CachePerfStatistics _cachePerfStats;
 
     /// <summary>cppcache <c>m_cacheStatistics</c> (<c>CacheStatistics</c>): per-region last-access / last-modified timestamps for idle / TTL expiry. Returned by <c>getStatistics()</c>; written by <see cref="UpdateAccessAndModifiedTime"/>.</summary>
-    protected readonly CacheStatistics CacheStatistics = new();
+    protected readonly CacheStatistics _cacheStatistics = new();
 
     /// <summary>cppcache <c>m_destroyPending</c>: region teardown in progress.</summary>
-    protected bool DestroyPending;
+    protected bool _destroyPending;
 
     /// <summary>cppcache <c>m_enableTimeStatistics</c>: time-histogram flag (OTel always on; kept for parity).</summary>
-    protected bool EnableTimeStatistics;
+    protected bool _enableTimeStatistics;
 
     /// <summary>cppcache <c>expiry_task_id_</c>: region-level ExpiryTask id.</summary>
-    protected object? ExpiryTaskId;
+    protected object? _expiryTaskId;
 
     /// <summary>cppcache <c>m_isPRSingleHopEnabled</c>: single-hop routing for partitioned regions (Phase 4).</summary>
-    protected bool IsPrSingleHopEnabled;
+    protected bool _isPrSingleHopEnabled;
 
     /// <summary>cppcache <c>m_listener</c>: <see cref="ICacheListener"/> (Phase 2+; null until a listener is attached).</summary>
-    protected ICacheListener? Listener;
+    protected ICacheListener? _listener;
 
     /// <summary>cppcache <c>m_loader</c>: <see cref="ICacheLoader"/> read-through hook (null until attached).</summary>
-    protected ICacheLoader? Loader;
+    protected ICacheLoader? _loader;
 
     /// <summary>cppcache <c>m_entries</c> (<c>EntriesMap*</c>): local entry map (Phase 2+ caching-enabled). Renamed from cppcache's <c>m_entries</c> to (a) avoid clash with <see cref="IRegion.Entries(bool)"/> and (b) separate from the <see cref="EntriesMap"/> type name.</summary>
-    protected Lazy<EntriesMap?> LocalEntriesMap;
+    protected Lazy<EntriesMap?> _localEntriesMap;
 
     /// <summary>
     /// cppcache <c>mutex_</c>: region-wide reader-writer lock
@@ -86,18 +86,18 @@ internal partial class LocalRegion : RegionInternal
     /// <see cref="AsyncReaderWriterLock"/> 的 Phase 1.x 降級實作 —
     /// 排他鎖偽裝成 RW lock,API shape 對齊未來真 RW 實作)。
     /// </summary>
-    protected readonly AsyncReaderWriterLock Mutex = new();
+    protected readonly AsyncReaderWriterLock _mutex = new();
 
     /// <summary>cppcache <c>m_persistenceManager</c>: PersistenceManager (CLAUDE.md «Not implemented»).</summary>
-    protected object? PersistenceManager;
+    protected object? _persistenceManager;
 
     /// <summary>
     /// cppcache <c>m_regionStats</c>: per-region Meter sink.
     /// </summary>
-    protected readonly RegionStatistics RegionStats;
+    protected readonly RegionStatistics _regionStats;
 
     /// <summary>cppcache <c>m_released</c>: dispose path completed.</summary>
-    protected bool Released;
+    protected bool _released;
 
     // ── cppcache LocalRegion fields (LocalRegion.hpp:511-530, 564) ─
     // Mirror every cppcache LocalRegion member here so the surface
@@ -109,16 +109,16 @@ internal partial class LocalRegion : RegionInternal
     // land as body fills against the already-present field set.
 
     /// <summary>cppcache <c>m_subRegions</c>: synchronized_map name → sub-region.</summary>
-    protected object? SubRegions;
+    protected object? _subRegions;
 
     /// <summary>cppcache <c>m_transactionEnabled</c>: TX support flag.</summary>
-    protected bool TransactionEnabled;
+    protected bool _transactionEnabled;
 
     /// <summary>cppcache <c>m_writer</c>: <see cref="ICacheWriter"/> veto hook (null until attached).</summary>
-    protected ICacheWriter? Writer;
+    protected ICacheWriter? _writer;
 
     /// <summary>cppcache <c>m_tombstoneList</c>: CRDT tombstone tracking. Phase 2+ concurrency-checks 落地時 allocate。</summary>
-    internal TombstoneList? TombstoneList;
+    internal TombstoneList? _tombstoneList;
 
     public LocalRegion(
         IServiceProvider serviceProvider,
@@ -129,7 +129,7 @@ internal partial class LocalRegion : RegionInternal
         Parent = parent;
         FullPath = parent is null ? "/" + name : parent.FullPath + "/" + name;
         Name = name;
-        LocalEntriesMap = new Lazy<EntriesMap?>(() =>
+        _localEntriesMap = new Lazy<EntriesMap?>(() =>
         {
             if (attributes.CachingEnabled)
             {
@@ -137,17 +137,17 @@ internal partial class LocalRegion : RegionInternal
             }
             return null;
         }, LazyThreadSafetyMode.ExecutionAndPublication);
-        RegionStats = ActivatorUtilities.CreateInstance<RegionStatistics>(serviceProvider, FullPath);
+        _regionStats = ActivatorUtilities.CreateInstance<RegionStatistics>(serviceProvider, FullPath);
         _logger = serviceProvider.GetRequiredService<ILogger<LocalRegion>>();
-        CachePerfStats = serviceProvider.GetRequiredService<CachePerfStatistics>();
+        _cachePerfStats = serviceProvider.GetRequiredService<CachePerfStatistics>();
         _serviceProvider = serviceProvider;
 
         // cppcache LocalRegion ctor (LocalRegion.cpp:86-95) initializes the
         // callbacks from attributes (m_listener / m_writer / m_loader). All three
         // read their field (not Attributes) on the hot path, like cppcache.
-        Listener = attributes.CacheListener;
-        Writer = attributes.CacheWriter;
-        Loader = attributes.CacheLoader;
+        _listener = attributes.CacheListener;
+        _writer = attributes.CacheWriter;
+        _loader = attributes.CacheLoader;
     }
 
     /// <summary>
@@ -191,7 +191,7 @@ internal partial class LocalRegion : RegionInternal
             // true (Phase 2+); until that wiring lands the field is
             // still null so this dereference NREs before reaching the
             // NIE on EntriesMap.Count.
-            return LocalEntriesMap.Value!.Count;
+            return _localEntriesMap.Value!.Count;
         }
 
         // Proxy / non-caching case — cppcache LocalRegion.cpp:616.
@@ -219,7 +219,7 @@ internal partial class LocalRegion : RegionInternal
         var cachingEnabled = Attributes.CachingEnabled;
 
         //  do not invoke the writer in case of notification/eviction or expiration
-        if (Writer is not null && action.EventFlags.InvokeCacheWriter())
+        if (_writer is not null && action.EventFlags.InvokeCacheWriter())
         {
             action.GetCallbackOldValue();
             // invokeCacheWriterForEntryEvent method has the check that if oldValue
@@ -244,7 +244,7 @@ internal partial class LocalRegion : RegionInternal
             if (cachingEnabled && action.UpdateCount < 0 && !Attributes.ConcurrencyChecksEnabled)
             {
                 // add a tracking for the entry
-                if ((action.UpdateCount = LocalEntriesMap.Value!.AddTrackerForEntry(action.Key, action.OldValue, action.AddIfAbsent, action.FailIfPresent, true)) < 0)
+                if ((action.UpdateCount = _localEntriesMap.Value!.AddTrackerForEntry(action.Key, action.OldValue, action.AddIfAbsent, action.FailIfPresent, true)) < 0)
                 {
                     if (action.OldValue is not null)
                     {
@@ -263,7 +263,7 @@ internal partial class LocalRegion : RegionInternal
             {
                 if (action.UpdateCount >= 0 && !Attributes.ConcurrencyChecksEnabled)
                 {
-                    LocalEntriesMap.Value!.RemoveTrackerForEntry(action.Key);
+                    _localEntriesMap.Value!.RemoveTrackerForEntry(action.Key);
                 }
                 throw;
             }
@@ -296,7 +296,7 @@ internal partial class LocalRegion : RegionInternal
                             _logger.LogDebug(
                                 "Region::localUpdate: updateNoThrow<{ActionName}> for key [{Key}] failed because of invalid delta.",
                                 action.Name, action.Key);
-                            CachePerfStats.DeltaMessageFailure();
+                            _cachePerfStats.DeltaMessageFailure();
 
                             // Get full object from server.
                             var (newValue1, versionTag1) = await GetNoThrowFullObjectAsync(null, ct);
@@ -304,7 +304,7 @@ internal partial class LocalRegion : RegionInternal
                             {
                                 try
                                 {
-                                    (action.Entry, action.OldValue, _) = LocalEntriesMap.Value!.Put(action.Key, newValue1, action.UpdateCount, 0,
+                                    (action.Entry, action.OldValue, _) = _localEntriesMap.Value!.Put(action.Key, newValue1, action.UpdateCount, 0,
                                         versionTag1 ?? action.VersionTag!);
                                 }
                                 catch (GfErrTypeException ex1)
@@ -349,7 +349,7 @@ internal partial class LocalRegion : RegionInternal
             action.GetCallbackOldValue();
             if (action.UpdateCount >= 0 && !Attributes.ConcurrencyChecksEnabled)
             {
-                LocalEntriesMap.Value!.RemoveTrackerForEntry(action.Key);
+                _localEntriesMap.Value!.RemoveTrackerForEntry(action.Key);
             }
         }
         if (!action.EventFlags.IsNoCallbacks())
@@ -361,7 +361,7 @@ internal partial class LocalRegion : RegionInternal
 
     /// <summary>
     /// Throws <see cref="RegionDestroyedException"/> when the region's
-    /// lifecycle flag (<see cref="DestroyPending"/>) is set. Mirrors
+    /// lifecycle flag (<see cref="_destroyPending"/>) is set. Mirrors
     /// cppcache <c>CHECK_DESTROY_PENDING_NOTHROW</c> macro
     /// (<c>cppcache/src/LocalRegion.hpp:66-74</c>) — collapsed into a
     /// method since C# has no macros.
@@ -371,7 +371,7 @@ internal partial class LocalRegion : RegionInternal
     /// cppcache macro does two things: (1) take a region-wide
     /// <c>shared_lock</c> on <c>mutex_</c>, (2) read
     /// <c>m_destroyPending</c> + return <c>GF_CACHE_REGION_DESTROYED_EXCEPTION</c>
-    /// on truth. C# port: (1) <see cref="Mutex"/> read-lock via
+    /// on truth. C# port: (1) <see cref="_mutex"/> read-lock via
     /// <see cref="AsyncReaderWriterLock.EnterReadLockAsync"/> (Phase
     /// 1.x 降級成排他鎖,Phase 2+ 換真 RW 實作不動 call site);
     /// (2) <c>throw</c> 取代 err-code,同
@@ -395,10 +395,10 @@ internal partial class LocalRegion : RegionInternal
         //    }                                                    \
         //  } while (0)
 
-        await Mutex.EnterReadLockAsync(ct).ConfigureAwait(false);
+        await _mutex.EnterReadLockAsync(ct).ConfigureAwait(false);
         try
         {
-            if (DestroyPending)
+            if (_destroyPending)
             {
                 throw new RegionDestroyedException(
                     $"Region {FullPath} has been destroyed.");
@@ -406,7 +406,7 @@ internal partial class LocalRegion : RegionInternal
         }
         finally
         {
-            Mutex.ExitReadLock();
+            _mutex.ExitReadLock();
         }
     }
 
@@ -448,7 +448,7 @@ internal partial class LocalRegion : RegionInternal
         object? callbackArgument, CacheEventFlags eventFlags, EntryEventType type, bool isLocal = false,
         CancellationToken ct = default)
     {
-        if (Listener is not null)
+        if (_listener is not null)
         {
             if (oldValue is not null && CacheableToken.IsInvalid(oldValue))
             {
@@ -467,25 +467,25 @@ internal partial class LocalRegion : RegionInternal
                         if (oldValue is not null || eventFlags.IsNotificationUpdate() || isLocal)
                         {
                             eventStr = "afterUpdate";
-                            await Listener.AfterUpdateAsync(ev, ct).ConfigureAwait(false);
+                            await _listener.AfterUpdateAsync(ev, ct).ConfigureAwait(false);
                         }
                         else
                         {
                             eventStr = "afterCreate";
-                            await Listener.AfterCreateAsync(ev, ct).ConfigureAwait(false);
+                            await _listener.AfterCreateAsync(ev, ct).ConfigureAwait(false);
                         }
                         break;
                     case EntryEventType.AfterCreate:
                         eventStr = "afterCreate";
-                        await Listener.AfterCreateAsync(ev, ct).ConfigureAwait(false);
+                        await _listener.AfterCreateAsync(ev, ct).ConfigureAwait(false);
                         break;
                     case EntryEventType.AfterDestroy:
                         eventStr = "afterDestroy";
-                        await Listener.AfterDestroyAsync(ev, ct).ConfigureAwait(false);
+                        await _listener.AfterDestroyAsync(ev, ct).ConfigureAwait(false);
                         break;
                     case EntryEventType.AfterInvalidate:
                         eventStr = "afterInvalidate";
-                        await Listener.AfterInvalidateAsync(ev, ct).ConfigureAwait(false);
+                        await _listener.AfterInvalidateAsync(ev, ct).ConfigureAwait(false);
                         break;
                     case EntryEventType.BeforeCreate:
                     case EntryEventType.BeforeUpdate:
@@ -496,8 +496,8 @@ internal partial class LocalRegion : RegionInternal
                 }
                 if (updateStats)
                 {
-                    CachePerfStats.CacheListenerCallCompleted();
-                    RegionStats.ListenerCall(Stopwatch.GetElapsedTime(listenerStart));
+                    _cachePerfStats.CacheListenerCallCompleted();
+                    _regionStats.ListenerCall(Stopwatch.GetElapsedTime(listenerStart));
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -515,7 +515,7 @@ internal partial class LocalRegion : RegionInternal
         object? callbackArgument, CacheEventFlags eventFlags, EntryEventType type, CancellationToken ct = default)
     {
         var bCacheWriterReturn = true;
-        if (Writer is not null)
+        if (_writer is not null)
         {
             if (oldValue is not null && CacheableToken.IsInvalid(oldValue))
             {
@@ -533,19 +533,19 @@ internal partial class LocalRegion : RegionInternal
                         if (oldValue is not null)
                         {
                             eventStr = "beforeUpdate";
-                            bCacheWriterReturn = await Writer.BeforeUpdateAsync(ev, ct).ConfigureAwait(false);
+                            bCacheWriterReturn = await _writer.BeforeUpdateAsync(ev, ct).ConfigureAwait(false);
                             break;
                         }
                         eventStr = "beforeCreate";
-                        bCacheWriterReturn = await Writer.BeforeCreateAsync(ev, ct).ConfigureAwait(false);
+                        bCacheWriterReturn = await _writer.BeforeCreateAsync(ev, ct).ConfigureAwait(false);
                         break;
                     case EntryEventType.BeforeCreate:
                         eventStr = "beforeCreate";
-                        bCacheWriterReturn = await Writer.BeforeCreateAsync(ev, ct).ConfigureAwait(false);
+                        bCacheWriterReturn = await _writer.BeforeCreateAsync(ev, ct).ConfigureAwait(false);
                         break;
                     case EntryEventType.BeforeDestroy:
                         eventStr = "beforeDestroy";
-                        bCacheWriterReturn = await Writer.BeforeDestroyAsync(ev, ct).ConfigureAwait(false);
+                        bCacheWriterReturn = await _writer.BeforeDestroyAsync(ev, ct).ConfigureAwait(false);
                         break;
                     case EntryEventType.BeforeInvalidate:
                     case EntryEventType.AfterCreate:
@@ -557,7 +557,7 @@ internal partial class LocalRegion : RegionInternal
                 }
                 if (updateStats)
                 {
-                    RegionStats.WriterCall(Stopwatch.GetElapsedTime(writerStart));
+                    _regionStats.WriterCall(Stopwatch.GetElapsedTime(writerStart));
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -579,7 +579,7 @@ internal partial class LocalRegion : RegionInternal
     /// </summary>
     /// <remarks>
     /// Phase 2+ expiry plumbing: cppcache pushes an <c>ExpiryTask</c>
-    /// onto <see cref="ExpiryTaskId"/>'s scheduler. NIE placeholder
+    /// onto <see cref="_expiryTaskId"/>'s scheduler. NIE placeholder
     /// until the scheduler + per-entry task id surface land.
     /// </remarks>
     protected void RegisterEntryExpiryTask(MapEntry entry) =>
@@ -610,11 +610,11 @@ internal partial class LocalRegion : RegionInternal
         //   響,Phase 1.x 因上面 early-return 不會到。
         var now = Stopwatch.GetTimestamp();
         _logger.LogDebug("Setting last accessed time for region {FullPath} to {Time}", FullPath, now);
-        CacheStatistics.SetLastAccessedTime(now);
+        _cacheStatistics.SetLastAccessedTime(now);
         if (modified)
         {
             _logger.LogDebug("Setting last modified time for region {FullPath} to {Time}", FullPath, now);
-            CacheStatistics.SetLastModifiedTime(now);
+            _cacheStatistics.SetLastModifiedTime(now);
         }
 
         // TODO (cppcache 自己也存疑): should we really touch the parent region??
@@ -795,7 +795,7 @@ internal partial class LocalRegion : RegionInternal
             return txValue;
         }
 
-        CachePerfStats.Get();
+        _cachePerfStats.Get();
 
         // TODO:  CacheableToken::isInvalid should be completely hidden
         // inside MapSegment; this should be done both for the value obtained
@@ -813,8 +813,8 @@ internal partial class LocalRegion : RegionInternal
             isLocal = me is not null;
             if (isLocal && value is not null && !CacheableToken.IsInvalid(value))
             {
-                RegionStats.Hit();
-                CachePerfStats.Hit();
+                _regionStats.Hit();
+                _cachePerfStats.Hit();
 
                 UpdateAccessAndModifiedTimeForEntry(me, false);
                 UpdateAccessAndModifiedTime(false);
@@ -835,15 +835,15 @@ internal partial class LocalRegion : RegionInternal
         {
             UpdateAccessAndModifiedTime(false);
 
-            RegionStats.Miss();
-            CachePerfStats.Miss();
+            _regionStats.Miss();
+            _cachePerfStats.Miss();
 
             var (remoteValue, versionTag) = await GetNoThrowRemoteAsync(key, callbackArgument, ct).ConfigureAwait(false);
             value = remoteValue;
 
             // cppcache reads the m_loader field (LocalRegion.cpp:948), wired
             // from attributes in the ctor — same field model as listener/writer.
-            var loader = Loader;
+            var loader = _loader;
             if ((value is null || CacheableToken.IsInvalid(value) || CacheableToken.IsTombstone(value))
                 && loader is not null)
             {
@@ -861,7 +861,7 @@ internal partial class LocalRegion : RegionInternal
                 }
                 finally
                 {
-                    RegionStats.LoaderCall(Stopwatch.GetElapsedTime(loaderStart));
+                    _regionStats.LoaderCall(Stopwatch.GetElapsedTime(loaderStart));
                 }
             }
 
@@ -994,7 +994,7 @@ internal partial class LocalRegion : RegionInternal
     /// <see cref="GfErrTypeException"/> for the caller to <c>switch</c>.
     /// </para>
     /// <para>
-    /// Phase 2+ caching-enabled: needs <see cref="LocalEntriesMap"/>
+    /// Phase 2+ caching-enabled: needs <see cref="_localEntriesMap"/>
     /// (<c>EntriesMap</c> create / put) + expiry-task plumbing, both
     /// still NIE. The <c>GF_INVALID_DELTA</c> branch round-trips
     /// <see cref="GetNoThrowFullObjectAsync"/> (hence async). NIE
@@ -1023,28 +1023,28 @@ internal partial class LocalRegion : RegionInternal
                 name, FullPath, key, value);
             if (isCreate)
             {
-                (entry, oldValue) = LocalEntriesMap.Value!.Create(key, value!, updateCount, destroyTracker, versionTag);
+                (entry, oldValue) = _localEntriesMap.Value!.Create(key, value!, updateCount, destroyTracker, versionTag);
             }
             else
             {
                 try
                 {
-                    (entry, oldValue, isUpdate) = LocalEntriesMap.Value!.Put(key, value!, updateCount, destroyTracker, versionTag!, delta);
+                    (entry, oldValue, isUpdate) = _localEntriesMap.Value!.Put(key, value!, updateCount, destroyTracker, versionTag!, delta);
                 }
                 catch (GfErrTypeException ex) when (ex.Code == GfErrType.InvalidDelta)
                 {
-                    CachePerfStats.DeltaMessageFailure();
+                    _cachePerfStats.DeltaMessageFailure();
                     var (newValue1, versionTag1) = await GetNoThrowFullObjectAsync(eventId, ct)
                         .ConfigureAwait(false);
                     if (newValue1 is not null)
                     {
-                        (entry, oldValue, isUpdate) = LocalEntriesMap.Value!.Put(key, newValue1, updateCount, destroyTracker, (versionTag1 ?? versionTag)!);
+                        (entry, oldValue, isUpdate) = _localEntriesMap.Value!.Put(key, newValue1, updateCount, destroyTracker, (versionTag1 ?? versionTag)!);
                     }
                 }
                 // Means that delta is on and there is no failure.
                 if (delta is not null)
                 {
-                    CachePerfStats.DeltaReceived();
+                    _cachePerfStats.DeltaReceived();
                 }
             }
 
@@ -1070,12 +1070,12 @@ internal partial class LocalRegion : RegionInternal
         // update the stats
         if (isUpdate)
         {
-            CachePerfStats.Put();
+            _cachePerfStats.Put();
         }
         else
         {
-            RegionStats.Create();
-            CachePerfStats.Create();
+            _regionStats.Create();
+            _cachePerfStats.Create();
         }
         return oldValue;
     }
@@ -1137,7 +1137,7 @@ internal partial class LocalRegion : RegionInternal
     /// </summary>
     internal virtual int SizeRemote() => LocalSizeRemote();
 
-    internal EntriesMap InternalEntriesMap => LocalEntriesMap.Value!;
+    internal EntriesMap InternalEntriesMap => _localEntriesMap.Value!;
 
 
 
@@ -1212,7 +1212,7 @@ internal partial class LocalRegion : RegionInternal
         {
             // cppcache updateStatOpTime (LocalRegion.cpp:346) — record
             // regardless of success / failure, matching PutAsync.
-            RegionStats.Get(Stopwatch.GetElapsedTime(sampleStartTimestamp));
+            _regionStats.Get(Stopwatch.GetElapsedTime(sampleStartTimestamp));
         }
     }
 
@@ -1241,7 +1241,7 @@ internal partial class LocalRegion : RegionInternal
             // cppcache updateStatOpTime (LocalRegion.cpp:364) — record
             // regardless of success / failure so the histogram counts
             // both outcomes.
-            RegionStats.Put(Stopwatch.GetElapsedTime(sampleStartTimestamp));
+            _regionStats.Put(Stopwatch.GetElapsedTime(sampleStartTimestamp));
         }
     }
 

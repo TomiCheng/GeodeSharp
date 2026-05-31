@@ -182,7 +182,7 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
             // 走 cppcache value-copy 模式傳獨立 stamp 進來,額外寫回一次。
             if (region.Attributes.ConcurrencyChecksEnabled)
             {
-                region.TombstoneList?.Erase(key, cancelTask: true);
+                region._tombstoneList?.Erase(key, cancelTask: true);
                 // cppcache L675 — entryImpl->getVersionStamp().setVersions(versionStamp);
                 if (versionStamp is not null)
                 {
@@ -256,7 +256,7 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
             //   list 等 GC。失敗 (race / version conflict) 透過 GfErrTypeException
             //   往上拋,跳過 TombstoneList.Add。
             PutForTrackedEntry(entry, key, CacheableToken.Tombstone, updateCount, delta: null);
-            region.TombstoneList?.Add(entry);
+            region._tombstoneList?.Add(entry);
 
             if (CacheableToken.IsTombstone(oldValue))
             {
@@ -285,7 +285,7 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
             var mapEntry = factory.NewEntry(key, CacheableToken.Tombstone,
                 updateCount: -1, destroyTracker: 0, versionTag);
             _map[key] = mapEntry;
-            region.TombstoneList?.Add(mapEntry);
+            region._tombstoneList?.Add(mapEntry);
         }
 
         // cppcache: afterRemote ? GF_NOERR : GF_CACHE_ENTRY_NOT_FOUND。
@@ -411,7 +411,7 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
                 //   m_tombstoneList->erase(key) + m_map.erase(key) 兩步走;
                 //   C# 對齊。region.TombstoneList 還沒 allocate,
                 //   `?.` 短路,真實落地後才噴。
-                region.TombstoneList?.Erase(key);
+                region._tombstoneList?.Erase(key);
                 // 拔掉 tombstone 並從它身上拿 (已經 ProcessVersionTag /
                 //   SetVersions mutate 過的) stamp 帶到 fresh entry,history 延續。
                 _map.TryRemove(key, out var tombstoned);

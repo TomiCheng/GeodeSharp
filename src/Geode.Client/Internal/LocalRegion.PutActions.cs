@@ -44,7 +44,7 @@ partial class LocalRegion
             var cachingEnabled = localRegion.Attributes.CachingEnabled;
             if (cachingEnabled)
             {
-                (Entry, OldValue) = localRegion.LocalEntriesMap.Value!.GetEntry(Key);
+                (Entry, OldValue) = localRegion._localEntriesMap.Value!.GetEntry(Key);
             }
         }
         public async Task LocalUpdateAsync(int updateCount, bool remoteOpDone, CancellationToken ct)

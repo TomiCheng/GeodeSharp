@@ -99,8 +99,8 @@ partial class LocalRegion
             }
 
             // success-path stats (skipped when remove threw above)
-            region.RegionStats.Destroy();
-            region.CachePerfStats.Destroy();
+            region._regionStats.Destroy();
+            region._cachePerfStats.Destroy();
             return Task.CompletedTask;
         }
         public void LogCacheWriterFailure()

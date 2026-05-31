@@ -558,7 +558,7 @@ internal partial class ThinClientRegion(
         if (delta)
         {
             // Does not check whether success of failure..
-            CachePerfStats.DeltaPut();
+            _cachePerfStats.DeltaPut();
 
             if (reply.MessageType == MessageType.PutDeltaError)
             {

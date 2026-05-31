@@ -1105,6 +1105,38 @@ internal partial class LocalRegion : RegionInternal
 
     internal EntriesMap InternalEntriesMap => _localEntriesMap.Value!;
 
+    /// <inheritdoc />
+    internal override Task EvictAsync(float percentage, CancellationToken ct = default)
+    {
+        throw new NotImplementedException(
+            "LocalRegion.EvictAsync: pending Phase 4 heap-LRU (LRUEntriesMap.ProcessLru(int) overload also pending).");
+        // cppcache LocalRegion::evict (LocalRegion.cpp:3155-3171):
+        //
+        //   void LocalRegion::evict(float percentage) {
+        //     boost::shared_lock<decltype(mutex_)> guard{mutex_};
+        //
+        //     if (m_released || m_destroyPending) {
+        //       return;
+        //     }
+        //
+        //     if (m_entries != nullptr) {
+        //       int32_t size = m_entries->size();
+        //       int32_t entriesToEvict = static_cast<int32_t>(percentage * size);
+        //       // only invoked from EvictionController so static_cast is always safe
+        //       LRUEntriesMap* lruMap = static_cast<LRUEntriesMap*>(m_entries);
+        //       LOGINFO("Evicting %d entries. Current entry count is %d", entriesToEvict,
+        //               size);
+        //       lruMap->processLRU(entriesToEvict);
+        //     }
+        //   }
+        //
+        // Cross-type forward — `lruMap->processLRU(entriesToEvict)` 走的是
+        // cppcache LRUEntriesMap::processLRU(int32_t) overload
+        // (LRUEntriesMap.cpp:187-198),我們目前 C# 只有 zero-arg `ProcessLru()`
+        // (對應 cppcache zero-arg overload),count-arg overload 還沒實作。
+        // 動本 method 之前要先 /cpp-stub 那個 overload。
+    }
+
     /// <summary>
     /// cppcache <c>LocalRegion::release</c> 對應 — mark destroyed,
     /// dispose the local entries map(cascades into

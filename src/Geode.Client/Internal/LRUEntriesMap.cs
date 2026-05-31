@@ -1,3 +1,4 @@
+using System.Threading;
 using Geode.Client.Protocol;
 using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -76,6 +77,14 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
     /// <summary>cppcache <c>m_name</c>: region name (logging / eviction-controller registration).</summary>
     private string _name;
 
+    /// <summary>
+    /// Region back-ref(C# 加的)— cppcache 不需要,因為 EC 存 name 後透過
+    /// <c>cache_-&gt;getRegion(name)</c> 回查;我們 EC 直接存 <see cref="RegionInternal"/>
+    /// ref,所以 LRUEntriesMap 在 Register / DisposeAsync 兩端都要能拿到 region 本身。
+    /// 同步存 <see cref="_name"/> 純為了 logging 對齊 cppcache。
+    /// </summary>
+    private readonly LocalRegion _region;
+
     /// <summary>cppcache <c>m_validEntries</c>: non-token entry count.</summary>
     private int _validEntries;
 
@@ -90,6 +99,7 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
         _logger = serviceProvider.GetRequiredService<ILogger<LRUEntriesMap>>();
         _serializationRegistry = serviceProvider.GetRequiredService<SerializationRegistry>();
         _limit = lruLimit;
+        _region = region;
         _name = region.FullPath;
         _heapLruEnabled = heapLRUEnabled;
         _action = new Lazy<LRUAction>(() => LRUAction.NewLRUAction(serviceProvider, lruEvictionAction, region, this));
@@ -100,7 +110,7 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
             // 等於 `_heapLruEnabled`(EntriesMapFactory.cs:62-64 已把
             // `prop.HeapLRULimitEnabled` 攤平成這個 flag)。
             _evictionController = serviceProvider.GetRequiredService<EvictionController>();
-            _evictionController.RegisterRegion(_name);
+            _evictionController.RegisterRegion(_region);
             _logger.LogInformation(
                 "Heap LRU eviction controller registered region {RegionName}",
                 _name);
@@ -315,12 +325,12 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
     {
         if (_evictionController is not null)
         {
-            // TODO: cppcache 還有 `incrementHeapSize(-m_currentMapSize)` 把
-            //   本 region 累積過的 heap-size 從 EC 總和扣回去。先 skip —
-            //   `EvictionController.IncrementHeapSize` 還是 NIE,且
-            //   `_currentMapSize` 在 `UpdateMapSize` 落地前永遠 0,扣 0 沒實效。
-            //   兩者一起接通時補。
-            _evictionController.UnregisterRegion(_name);
+            // cppcache LRUEntriesMap::close (LRUEntriesMap.cpp:94-100) — 先把
+            // 本 region 累積過的 heap-size 從 EC 總和扣回,再 unregister。
+            // `_currentMapSize` 在 UpdateMapSize 落地前永遠 0,扣 0 functional noop,
+            // 但呼叫順序與 cppcache 一致,UpdateMapSize 接通時 zero-diff 立刻生效。
+            _evictionController.IncrementHeapSize(-_currentMapSize);
+            _evictionController.UnregisterRegion(_region);
         }
         await base.DisposeAsync().ConfigureAwait(false);
     }
@@ -353,27 +363,16 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
 
     private void UpdateMapSize(long size)
     {
-        throw new NotImplementedException(
-            "LRUEntriesMap.UpdateMapSize: pending Phase 4 heap-LRU (_currentMapSize += size; EvictionController.IncrementHeapSize).");
-        // cppcache LRUEntriesMap::updateMapSize (LRUEntriesMap.cpp:476-483):
-        //
-        //   void LRUEntriesMap::updateMapSize(int64_t size) {
-        //     // TODO: check and remove null check since this has already been done
-        //     // by all the callers
-        //     if (m_evictionControllerPtr != nullptr) {
-        //       m_currentMapSize += size;
-        //       m_evictionControllerPtr->incrementHeapSize(size);
-        //     }
-        //   }
-        //
-        // 翻譯備忘:
-        // - `if (m_evictionControllerPtr != nullptr)` → if (_evictionController is not null)。
-        //   cppcache 註解自己也說 caller 都查過了(Put 的 heap 區已包在
-        //   `if (_evictionController is not null)` 內),這層 null check 其實冗餘,
-        //   但留著對齊。
-        // - m_currentMapSize += size → _currentMapSize += size。
-        // - m_evictionControllerPtr->incrementHeapSize(size) → 跨型別 call,落在
-        //   EvictionController.IncrementHeapSize(已 NIE,Phase 4)。這裡只 forward,
-        //   別把它 body 貼進來。
+        // cppcache LRUEntriesMap::updateMapSize (LRUEntriesMap.cpp:476-483).
+        // Caller(Put / Clear / DisposeAsync 的 heap-LRU 分支)都已經
+        //   `if (_evictionController is not null)` 守過,直接 `!` 解 null。
+        //   cppcache 自己的 TODO 也說「caller 已 null-check,內層判斷可移除」。
+        // Interlocked.Add 對應 atomic increment — Put 跨 segment 可能並行,
+        //   `_currentMapSize` 是 region 全域累計,要原子。cppcache 是 plain
+        //   `m_currentMapSize += size`,在 segment 鎖外執行,接受 eventually-
+        //   consistent;我們用 Interlocked 收緊。
+        // 順序對齊 cppcache:先更 local,再 forward 給 EC。
+        Interlocked.Add(ref _currentMapSize, size);
+        _evictionController!.IncrementHeapSize(size);
     }
 }

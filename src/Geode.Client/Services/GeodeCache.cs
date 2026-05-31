@@ -26,6 +26,13 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache
     // (LocalRegion / ThinClientPoolRegion),把不變式抓進 compile-time。
     // 公開 GetRegion 仍 return IRegion?(implicit upcast),public API 不變。
     private readonly ConcurrentDictionary<string, RegionInternal> _regions = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Heap-LRU coordinator,InitializeCoreAsync 內條件解析 + Start;CloseAsync 配對 StopAsync。
+    /// null 表示本 cache 未啟用 heap-LRU(<see cref="SystemProperties.HeapLRULimitEnabled"/> 為 false),
+    /// CloseAsync 用這個欄位判斷要不要 stop,避免無謂解析 DI 把鬼魂建出來。
+    /// </summary>
+    private EvictionController? _evictionController;
     readonly SerializationRegistry _serializationRegistry = serviceProvider.GetRequiredService<SerializationRegistry>();
     readonly SystemProperties _systemProperties = serviceProvider.GetRequiredService<SystemProperties>();
     readonly TcrConnectionManager _tcrConnectionManager = serviceProvider.GetRequiredService<TcrConnectionManager>();
@@ -73,6 +80,22 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache
         //    // CacheImpl::initializeDeclarativeCache(xml).
         //    await InitializeDeclarativeCacheAsync(_options.Cache, ct).ConfigureAwait(false);
         //}
+
+        // ── 6. EvictionController start (heap-LRU only) ────────
+        // cppcache CacheImpl ctor (CacheImpl.cpp:84-88):
+        //   if (prop.heapLRULimitEnabled()) {
+        //     m_evictionController = make_unique<EvictionController>(...);
+        //     m_evictionController->start();
+        //     LOGINFO("Heap LRU eviction controller thread started");
+        //   }
+        // EC 是 DI Scoped — 解析一次後生命週期跟 cache scope 一樣。
+        // 不解析就不會建出來(TryAddScoped 是 lazy),正好對應「heap-LRU 沒開
+        // 就沒這個 service」的語意,避免建出一個 _maxHeapSize=0 的鬼魂。
+        if (_systemProperties.HeapLRULimitEnabled)
+        {
+            _evictionController = serviceProvider.GetRequiredService<EvictionController>();
+            _evictionController.Start();
+        }
 
         // ── 7. PDX / serialization registration (Phase 2+) ──────
         // TODO: if (_options.Cache?.Pdx is { } pdx) apply pdx
@@ -684,6 +707,15 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache
             {
                 // TODO: structured log once ILogger<GeodeCache> is injected.
             }
+        }
+
+        // ── EvictionController stop(heap-LRU only)──────────────
+        // Regions 全 dispose 完才 stop — 確保所有 LRUEntriesMap.DisposeAsync
+        // 已經跑過 UnregisterRegion / IncrementHeapSize(-_currentMapSize),
+        // EC 名單清空後再關 thread。null = 本 cache 沒啟用 heap-LRU,跳過。
+        if (_evictionController is not null)
+        {
+            await _evictionController.StopAsync().ConfigureAwait(false);
         }
 
         // ── Pool drain ───────────────────────────────────────────

@@ -259,6 +259,15 @@ internal abstract class RegionInternal(RegionAttributes attributes)
     /// <inheritdoc />
     public abstract int LocalCount { get; }
 
+    /// <summary>
+    /// Heap-LRU eviction hook — called by <see cref="EvictionController"/>
+    /// 跨 region 派發。Mirrors cppcache
+    /// <c>RegionInternal::evict(float)</c>
+    /// (<c>cppcache/src/RegionInternal.hpp:255</c>, pure virtual);body 落在
+    /// <see cref="LocalRegion"/>。cppcache 是 sync,我們 async-first 改 Task。
+    /// </summary>
+    internal abstract Task EvictAsync(float percentage, CancellationToken ct = default);
+
     // TODO future phases — internal-only API surface that cppcache
     // RegionInternal exposes; add as their respective phases ship:
     //   Phase 2+:  putNoThrow_remote / getNoThrow_remote (EventId-aware)

@@ -49,7 +49,7 @@ public class LocalEntryLruPutAsyncTests(IGeodeCacheFactory factory)
             await cts.CancelAsync();
 
             await Assert.ThrowsAsync<OperationCanceledException>(
-                () => region.PutAsync("k", "v", callback: "cb", ct: cts.Token));
+                () => region.PutAsync("k", "v", callbackArgument: "cb", ct: cts.Token));
         }
         finally
         {
@@ -91,7 +91,7 @@ public class LocalEntryLruPutAsyncTests(IGeodeCacheFactory factory)
                 .CreateRegionFactory(RegionShortcut.LocalEntryLru)
                 .CreateAsync<string, string>("orders", TestContext.Current.CancellationToken);
 
-            await region.PutAsync("k", "v", callback: "cb", ct: TestContext.Current.CancellationToken);
+            await region.PutAsync("k", "v", callbackArgument: "cb", ct: TestContext.Current.CancellationToken);
         }
         finally
         {

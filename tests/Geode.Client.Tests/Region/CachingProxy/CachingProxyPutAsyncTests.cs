@@ -57,7 +57,7 @@ public class CachingProxyPutAsyncTests(IGeodeCacheFactory factory)
             await cts.CancelAsync();
 
             await Assert.ThrowsAsync<OperationCanceledException>(
-                () => region.PutAsync("k", "v", callback: "cb", ct: cts.Token));
+                () => region.PutAsync("k", "v", callbackArgument: "cb", ct: cts.Token));
         }
         finally
         {

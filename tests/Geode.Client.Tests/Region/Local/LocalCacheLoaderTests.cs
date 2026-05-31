@@ -31,7 +31,7 @@ public class LocalCacheLoaderTests(IGeodeCacheFactory factory)
             => ValueTask.FromResult<object?>((int)key + (int)callbackArgument!);
     }
 
-    // Get(5, callback: 3) misses the local map, invokes the loader with
+    // Get(5, callbackArgument: 3) misses the local map, invokes the loader with
     // key=5 + callbackArgument=3, and returns the computed 8.
     [Fact]
     public async Task GetAsync_Miss_InvokesLoader_ReturnsKeyPlusCallback()
@@ -45,7 +45,7 @@ public class LocalCacheLoaderTests(IGeodeCacheFactory factory)
                 .SetCacheLoader(new SumLoader())
                 .CreateAsync<int, int>("orders", TestContext.Current.CancellationToken);
 
-            var value = await region.GetAsync(5, callback: 3, ct: TestContext.Current.CancellationToken);
+            var value = await region.GetAsync(5, callbackArgument: 3, ct: TestContext.Current.CancellationToken);
 
             Assert.Equal(8, value);
         }

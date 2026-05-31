@@ -104,4 +104,13 @@ internal abstract class EntriesMap
     /// <c>InvalidDelta</c> / get-miss。
     /// </summary>
     public abstract object? GetFromDisk(object key, MapEntry entry);
+
+    /// <summary>
+    /// Removes every entry from the map. Mirrors cppcache
+    /// <c>EntriesMap::clear</c> (<c>cppcache/src/EntriesMap.hpp:94</c>, pure
+    /// virtual). Body lives on <see cref="ConcurrentEntriesMap.Clear"/>; the
+    /// LRU subclass overrides to also reset its heap-size accounting
+    /// (<see cref="LRUEntriesMap.Clear"/>).
+    /// </summary>
+    public abstract void Clear();
 }

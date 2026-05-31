@@ -274,6 +274,38 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
     /// so the entry-count path never reaches it. NIE until heap LRU lands
     /// (needs <see cref="EvictionController.IncrementHeapSize"/>, also NIE).
     /// </remarks>
+    /// <inheritdoc />
+    /// <remarks>
+    /// Resets the heap-size accounting then delegates to the base map wipe.
+    /// Mirrors cppcache <c>LRUEntriesMap::clear</c>
+    /// (<c>cppcache/src/LRUEntriesMap.cpp:102-105</c>).
+    /// </remarks>
+    public override void Clear()
+    {
+        // cppcache LRUEntriesMap::clear (LRUEntriesMap.cpp:102-105):
+        //   updateMapSize(-m_currentMapSize);
+        //   ConcurrentEntriesMap::clear();
+        //
+        // cppcache's updateMapSize guards internally on m_evictionControllerPtr
+        // (heap-LRU only); this port guards at the call site to match Put, so the
+        // entry-count LRU path skips it (UpdateMapSize stays Phase-4 NIE because
+        // EvictionController.IncrementHeapSize is NIE) and only base.Clear() runs.
+        if (_evictionController is not null)
+        {
+            UpdateMapSize(-_currentMapSize);
+        }
+
+        // Wipe the backing map + logical size (ConcurrentEntriesMap.Clear).
+        base.Clear();
+
+        // NOTE: faithful to cppcache — clear() deliberately does NOT drain
+        // lru_queue_ nor reset m_validEntries. The queue keeps stale MapEntry
+        // handles (a later eviction pops them; the evict action no-ops on the
+        // now-absent key — and eviction is itself NIE until Phase 2+), and
+        // _validEntries is left as-is. Mirroring rather than "fixing" until
+        // there's evidence the divergence matters (cppcache-scope-parity).
+    }
+
     private void UpdateMapSize(long size)
     {
         throw new NotImplementedException(

@@ -7,8 +7,9 @@ namespace Geode.Client.IntegrationTests;
 
 /// <summary>
 /// xUnit collection fixture that spins up an Apache Geode cluster in a
-/// single container: <b>2 locators + 3 servers</b> with a pre-created
-/// REPLICATE region named "test".
+/// single container: <b>2 locators + 3 servers</b> with two pre-created
+/// regions: a REPLICATE region named "test" and a PARTITION region named
+/// "parttest".
 ///
 /// <para>
 /// The richer topology (vs. 1 locator + 1 server) lets pool / locator /
@@ -122,6 +123,7 @@ public sealed class GeodeFixture : IAsyncLifetime
                     + $"-e 'start server --name=srv2 --server-port={Server2ContainerPort} --hostname-for-clients=localhost --locators={locators}' "
                     + $"-e 'start server --name=srv3 --server-port={Server3ContainerPort} --hostname-for-clients=localhost --locators={locators}' "
                     + "-e 'create region --name=test --type=REPLICATE' "
+                    + "-e 'create region --name=parttest --type=PARTITION' "
                     + "&& tail -F /work/srv1/srv1.log")
             // Wait until every server's client port is listening — proves
             // all 3 JVMs reached the "ready for clients" state. Locator
@@ -146,17 +148,20 @@ public sealed class GeodeFixture : IAsyncLifetime
         ServerPorts = new[] { ServerPort, ServerPort2, ServerPort3 };
 
         // The WithWaitStrategy above only proves the server PORTS are open;
-        // `create region --name=test` runs afterwards in the gfsh chain, so a
-        // client op can arrive before the region exists cluster-wide (server
-        // replies RegionDestroyedException). Poll gfsh until the region is
-        // registered, so tests never race region creation.
+        // `create region` runs afterwards in the gfsh chain, so a client op can
+        // arrive before the region exists cluster-wide (server replies
+        // RegionDestroyedException). Poll gfsh until the regions are registered,
+        // so tests never race region creation.
         using var regionReadyCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         while (true)
         {
             try
             {
                 var regions = await GfshAsync("list regions", regionReadyCts.Token);
-                if (regions.Contains("test", StringComparison.Ordinal))
+                // parttest is created last in the gfsh chain (after test), so its
+                // presence implies both regions are registered. ("parttest" is an
+                // unambiguous check; "test" alone is a substring of "parttest".)
+                if (regions.Contains("parttest", StringComparison.Ordinal))
                 {
                     break;
                 }

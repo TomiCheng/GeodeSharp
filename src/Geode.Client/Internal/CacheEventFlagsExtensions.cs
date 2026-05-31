@@ -33,6 +33,18 @@ internal static class CacheEventFlagsExtensions
         (flags & CacheEventFlags.Local) != 0;
 
     /// <summary>
+    /// True when the op is a "normal" (non-local, non-notification) cache
+    /// operation. Mirrors cppcache <c>CacheEventFlags::isNormal</c>
+    /// (<c>cppcache/src/RegionInternal.hpp:89</c>:
+    /// <c>(m_flags &amp; GF_NORMAL) &gt; 0</c>). The clear worker keys its
+    /// region-event listener gate off this: <c>LOCAL</c> (LocalRegion path)
+    /// fires the listener in-place, <c>NORMAL</c> (ThinClientRegion path)
+    /// defers it to after the wire op.
+    /// </summary>
+    public static bool IsNormal(this CacheEventFlags flags) =>
+        (flags & CacheEventFlags.Normal) != 0;
+
+    /// <summary>
     /// True when the op is a server-pushed notification. Mirrors
     /// cppcache <c>CacheEventFlags::isNotification</c>
     /// (<c>cppcache/src/RegionInternal.hpp:93</c>).
@@ -68,4 +80,15 @@ internal static class CacheEventFlagsExtensions
     /// </summary>
     public static bool IsEvictOrExpire(this CacheEventFlags flags) =>
         (flags & (CacheEventFlags.Eviction | CacheEventFlags.Expiration)) != 0;
+
+    /// <summary>
+    /// True when the op is part of a cache-close teardown. Mirrors cppcache
+    /// <c>CacheEventFlags::isCacheClose</c>
+    /// (<c>cppcache/src/RegionInternal.hpp:103</c>:
+    /// <c>(m_flags &amp; GF_CACHE_CLOSE) &gt; 0</c>). The region-event listener
+    /// dispatch fires the <c>Close</c> hook after <c>afterRegionDestroy</c>
+    /// when this is set.
+    /// </summary>
+    public static bool IsCacheClose(this CacheEventFlags flags) =>
+        (flags & CacheEventFlags.CacheClose) != 0;
 }

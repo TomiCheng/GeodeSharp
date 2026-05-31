@@ -115,7 +115,7 @@ internal abstract class RegionInternal(RegionAttributes attributes)
         throw new NotImplementedException("Local entry map not yet implemented.");
 
     /// <inheritdoc />
-    public virtual void LocalClear(object? callback = null) =>
+    public virtual Task LocalClearAsync(object? callback = null, CancellationToken ct = default) =>
         throw new NotImplementedException("Local entry map not yet implemented.");
 
     /// <inheritdoc />

@@ -146,29 +146,109 @@ internal partial class ThinClientRegion(
     /// </summary>
     internal SerializationRegistry SerializationRegistry => _serializationRegistry;
 
-    public override async Task ClearAsync(object? callback = null, CancellationToken ct = default)
-    {
-        using var _ = _dmContextAccessor.BeginScope(_dm!);
-        // Mirrors cppcache ThinClientRegion::clear (ThinClientRegion.cpp:767-808)
-        // + TcrMessageClearRegion ctor (TcrMessage.cpp:1644-1682). Wire layout
-        // is 2 parts (Region + EventId); callback arg + response-timeout
-        // optional slots are skipped.
-        _logger.LogTrace("ClearAsync: region={RegionPath}", FullPath);
+    //public override async Task ClearAsync(object? callback = null, CancellationToken ct = default)
+    //{
+    //    using var _ = _dmContextAccessor.BeginScope(_dm!);
+    //    // Mirrors cppcache ThinClientRegion::clear (ThinClientRegion.cpp:767-808)
+    //    // + TcrMessageClearRegion ctor (TcrMessage.cpp:1644-1682). Wire layout
+    //    // is 2 parts (Region + EventId); callback arg + response-timeout
+    //    // optional slots are skipped.
+    //    _logger.LogTrace("ClearAsync: region={RegionPath}", FullPath);
 
+    //    var (threadId, sequenceId) = _eventIdGenerator.Next();
+    //    var request = await TcrMessageBuilder
+    //        .Create(_serviceProvider, MessageType.ClearRegion)
+    //        .AddRegionNamePart(FullPath)
+    //        .AddEventIdPart(threadId, sequenceId)
+    //        .BuildAsync(ct);
+
+    //    var reply = await _dm!.SendSyncRequestAsync(request, ct: ct).ConfigureAwait(false);
+
+    //    switch (reply.MessageType)
+    //    {
+    //        case MessageType.Reply:
+    //            _logger.LogDebug("Region {RegionPath} clear sent to server", FullPath);
+    //            return;
+
+    //        case MessageType.Exception:
+    //            throw new GeodeException(
+    //                $"Server exception on Clear '{FullPath}': " +
+    //                TcrMessageHelper.DecodeExceptionPreview(reply));
+
+    //        case MessageType.ClearRegionDataError:
+    //            throw new GeodeException(
+    //                $"Server returned ClearRegionDataError on '{FullPath}'.");
+
+    //        default:
+    //            throw new GeodeException(
+    //                $"Unexpected reply type {reply.MessageType} for Clear on '{FullPath}'.");
+    //    }
+    //}
+
+
+    public override async Task ClearAsync(object? callbackArgument = null, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        using var _ = _dmContextAccessor.BeginScope(_dm!);
+        _logger.LogTrace("ClearAsync: region={RegionPath}", FullPath);
+        // cppcache ThinClientRegion::clear (ThinClientRegion.cpp:767-808):
+        //
+        //   void ThinClientRegion::clear(
+        //       const std::shared_ptr<Serializable>& aCallbackArgument) {
+        //     GfErrType err = GF_NOERR;
+        //     err = localClearNoThrow(aCallbackArgument, CacheEventFlags::NORMAL);
+        await LocalClearNoThrowAsync(callbackArgument, CacheEventFlags.Normal, ct);
+        //     if (err != GF_NOERR) throwExceptionIfError("Region::clear", err);
+        //
+        //     /** @brief Create message and send to bridge server */
+        //
+        //     TcrMessageClearRegion request(new DataOutput(m_cacheImpl->createDataOutput()),
+        //                                   this, aCallbackArgument,
+        //                                   std::chrono::milliseconds(-1), m_tcrdm.get());
         var (threadId, sequenceId) = _eventIdGenerator.Next();
         var request = await TcrMessageBuilder
             .Create(_serviceProvider, MessageType.ClearRegion)
             .AddRegionNamePart(FullPath)
             .AddEventIdPart(threadId, sequenceId)
             .BuildAsync(ct);
-
+        //     TcrMessageReply reply(true, m_tcrdm.get());
+        //     err = m_tcrdm->sendSyncRequest(request, reply);
         var reply = await _dm!.SendSyncRequestAsync(request, ct: ct).ConfigureAwait(false);
+        //     if (err != GF_NOERR) throwExceptionIfError("Region::clear", err);
+        //
+        //     switch (reply.getMessageType()) {
+        //       case TcrMessage::REPLY:
+        //         LOGFINE("Region %s clear message sent to server successfully",
+        //                 m_fullPath.c_str());
+        //         break;
+        //       case TcrMessage::EXCEPTION:
+        //         err = handleServerException("Region::clear:", reply.getException());
+        //         break;
+        //
+        //       case TcrMessage::CLEAR_REGION_DATA_ERROR:
+        //         LOGERROR("Region clear read error occurred on the endpoint %s",
+        //                  m_tcrdm->getActiveEndpoint()->name().c_str());
+        //         err = GF_CACHESERVER_EXCEPTION;
+        //         break;
+        //
+        //       default:
+        //         LOGERROR("Unknown message type %d during region clear",
+        //                  reply.getMessageType());
+        //         err = GF_MSG;
+        //         break;
+        //     }
+        //     if (err == GF_NOERR) {
+        //       err = invokeCacheListenerForRegionEvent(
+        //           aCallbackArgument, CacheEventFlags::NORMAL, AFTER_REGION_CLEAR);
+        //     }
+        //     throwExceptionIfError("Region::clear", err);
+        //   }
 
         switch (reply.MessageType)
         {
             case MessageType.Reply:
                 _logger.LogDebug("Region {RegionPath} clear sent to server", FullPath);
-                return;
+                break;
 
             case MessageType.Exception:
                 throw new GeodeException(
@@ -183,6 +263,10 @@ internal partial class ThinClientRegion(
                 throw new GeodeException(
                     $"Unexpected reply type {reply.MessageType} for Clear on '{FullPath}'.");
         }
+
+        await InvokeCacheListenerForRegionEventAsync(callbackArgument, CacheEventFlags.Normal,
+            RegionEventType.AfterRegionClear, ct);
+
     }
 
     public override async Task<bool> ContainsKeyOnServerAsync(object key, CancellationToken ct = default)

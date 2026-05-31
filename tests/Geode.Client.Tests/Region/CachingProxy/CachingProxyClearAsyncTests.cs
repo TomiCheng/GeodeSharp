@@ -19,7 +19,36 @@ public class CachingProxyClearAsyncTests(IGeodeCacheFactory factory)
     private Task<IGeodeCache> NewCacheAsync(string name) =>
         factory.CreateAsync(name, ct: default);
 
-    [Fact(Skip = "Pending ct entry guard")]
+    // CachingProxy: cppcache ThinClientRegion::clear clears the local map
+    // (localClearNoThrow) BEFORE the wire op, then sends ClearRegion. With
+    // no server up the wire surfaces NotConnectedException; ServerOptional
+    // soft-passes. (The local-clear-before-wire step is not yet ported —
+    // current ClearAsync only does the wire leg; see PORTING.md.)
+    [Fact]
+    public async Task ClearAsync_ReachesWire()
+    {
+        const string cacheName = nameof(CachingProxyClearAsyncTests) + "_wire";
+        try
+        {
+            var cache = await NewCacheAsync(cacheName);
+            await cache.PoolManager.CreateFactory()
+                .AddServer("localhost", 40404)
+                .BuildAsync("pool", TestContext.Current.CancellationToken);
+            var region = await cache
+                .CreateRegionFactory(RegionShortcut.CachingProxy)
+                .SetPoolName("pool")
+                .CreateAsync<string, string>("orders", TestContext.Current.CancellationToken);
+
+            await ServerOptional.RunAsync(
+                () => region.ClearAsync(ct: TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            await factory.DisposeCacheAsync(cacheName);
+        }
+    }
+
+    [Fact]
     public async Task ClearAsync_AlreadyCancelledToken_Throws()
     {
         const string cacheName = nameof(CachingProxyClearAsyncTests);

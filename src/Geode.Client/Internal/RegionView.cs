@@ -49,7 +49,7 @@ internal sealed class RegionView<TKey, TValue>(IRegion inner, TypedResultAdapter
     public void LocalDestroy(object key, object? callback = null) => inner.LocalDestroy(key, callback);
     public bool LocalRemove(object key, object value, object? callback = null) => inner.LocalRemove(key, value, callback);
     public bool LocalRemoveEx(object key, object? callback = null) => inner.LocalRemoveEx(key, callback);
-    public void LocalClear(object? callback = null) => inner.LocalClear(callback);
+    public Task LocalClearAsync(object? callback = null, CancellationToken ct = default) => inner.LocalClearAsync(callback, ct);
     public void LocalInvalidateRegion(object? callback = null) => inner.LocalInvalidateRegion(callback);
     public IReadOnlyList<object> GetInterestList() => inner.GetInterestList();
     public IReadOnlyList<string> GetInterestListRegex() => inner.GetInterestListRegex();

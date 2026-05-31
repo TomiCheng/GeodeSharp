@@ -22,7 +22,34 @@ public class CachingProxyEntryLruClearAsyncTests(IGeodeCacheFactory factory)
     private Task<IGeodeCache> NewCacheAsync(string name) =>
         factory.CreateAsync(name, ct: default);
 
-    [Fact(Skip = "Pending ct entry guard")]
+    // Same wire contract as CachingProxy; the LRU bound doesn't change
+    // clear ("remove everything", not eviction). No server up → wire
+    // surfaces NotConnectedException; ServerOptional soft-passes.
+    [Fact]
+    public async Task ClearAsync_ReachesWire()
+    {
+        const string cacheName = nameof(CachingProxyEntryLruClearAsyncTests) + "_wire";
+        try
+        {
+            var cache = await NewCacheAsync(cacheName);
+            await cache.PoolManager.CreateFactory()
+                .AddServer("localhost", 40404)
+                .BuildAsync("pool", TestContext.Current.CancellationToken);
+            var region = await cache
+                .CreateRegionFactory(RegionShortcut.CachingProxyEntryLru)
+                .SetPoolName("pool")
+                .CreateAsync<string, string>("orders", TestContext.Current.CancellationToken);
+
+            await ServerOptional.RunAsync(
+                () => region.ClearAsync(ct: TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            await factory.DisposeCacheAsync(cacheName);
+        }
+    }
+
+    [Fact]
     public async Task ClearAsync_AlreadyCancelledToken_Throws()
     {
         const string cacheName = nameof(CachingProxyEntryLruClearAsyncTests);

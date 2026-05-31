@@ -351,6 +351,22 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
     public override object? GetFromDisk(object key, MapEntry entry) => throw new NotImplementedException();
 
     /// <inheritdoc />
+    public override void Clear()
+    {
+        // cppcache ConcurrentEntriesMap::clear (ConcurrentEntriesMap.cpp:66-71):
+        //   for (index < m_concurrency) m_segments[index].clear();
+        //   m_size = 0;
+        // The per-segment clear loop collapses onto the single backing store —
+        // ConcurrentDictionary.Clear() does the BCL-side striped wipe.
+        _map.Clear();
+
+        // cppcache m_size = 0. _size is the logical (tombstone-excluding) count,
+        // maintained via Interlocked by Put/Remove; reset it atomically to match.
+        // Clearing drops everything (tombstones included), so a flat 0 is correct.
+        Interlocked.Exchange(ref _size, 0);
+    }
+
+    /// <inheritdoc />
     public override (MapEntry Entry, object? OldValue, bool IsUpdate) Put(
         object key, object newValue, int updateCount, int destroyTracker, VersionTag? versionTag,
         DataInput? delta = null)

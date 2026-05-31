@@ -359,42 +359,8 @@ internal partial class LocalRegion : RegionInternal
         }
     }
 
-    /// <summary>
-    /// Throws <see cref="RegionDestroyedException"/> when the region's
-    /// lifecycle flag (<see cref="_destroyPending"/>) is set. Mirrors
-    /// cppcache <c>CHECK_DESTROY_PENDING_NOTHROW</c> macro
-    /// (<c>cppcache/src/LocalRegion.hpp:66-74</c>) — collapsed into a
-    /// method since C# has no macros.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// cppcache macro does two things: (1) take a region-wide
-    /// <c>shared_lock</c> on <c>mutex_</c>, (2) read
-    /// <c>m_destroyPending</c> + return <c>GF_CACHE_REGION_DESTROYED_EXCEPTION</c>
-    /// on truth. C# port: (1) <see cref="_mutex"/> read-lock via
-    /// <see cref="AsyncReaderWriterLock.EnterReadLockAsync"/> (Phase
-    /// 1.x 降級成排他鎖,Phase 2+ 換真 RW 實作不動 call site);
-    /// (2) <c>throw</c> 取代 err-code,同
-    /// <see cref="IRegionAction.CheckArgs"/> 的 exception-only 策略。
-    /// </para>
-    /// <para>
-    /// cppcache's sibling <c>CHECK_DESTROY_PENDING</c> (throwing
-    /// variant; <c>LocalRegion.hpp:54-64</c>) collapses to the same
-    /// method here — the <c>NoThrow</c> / non-<c>NoThrow</c> split is
-    /// the cppcache err-code-vs-exception divide and disappears under
-    /// our exception-only design.
-    /// </para>
-    /// </remarks>
-    protected async Task CheckDestroyPendingAsync(CancellationToken ct = default)
+      protected async Task CheckDestroyPendingAsync(CancellationToken ct = default)
     {
-        //#define CHECK_DESTROY_PENDING_NOTHROW(lock_type)         \
-        //        boost::lock_type < decltype(mutex_) > checkGuard{ mutex_}; \
-        //  do  {                                                   \
-        //    if (m_destroyPending){    \
-        //      return GF_CACHE_REGION_DESTROYED_EXCEPTION;        \
-        //    }                                                    \
-        //  } while (0)
-
         await _mutex.EnterReadLockAsync(ct).ConfigureAwait(false);
         try
         {
@@ -1139,11 +1105,159 @@ internal partial class LocalRegion : RegionInternal
 
     internal EntriesMap InternalEntriesMap => _localEntriesMap.Value!;
 
+    public override async Task ClearAsync(object? callback = null, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        await LocalClearAsync(callback, ct).ConfigureAwait(false);
+    }
 
+    public override async Task LocalClearAsync(object? callback = null, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        await LocalClearNoThrowAsync(callback, CacheEventFlags.Local, ct);
+    }
+    
+    internal async Task LocalClearNoThrowAsync(
+        object? callbackArgument,
+        CacheEventFlags eventFlags,
+        CancellationToken ct = default)
+    {
+        var cachingEnabled = Attributes.CachingEnabled;
+        _regionStats.Clear();
 
-    /// <inheritdoc />
-    public override Task ClearAsync(object? callback = null, CancellationToken ct = default) =>
-        throw new NotImplementedException("LocalRegion.ClearAsync: pending local entry map.");
+        await _mutex.EnterReadLockAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (_released || _destroyPending)
+            {
+                return;
+            }
+
+            if (!await InvokeCacheWriterForRegionEventAsync(
+                    callbackArgument, eventFlags, RegionEventType.BeforeRegionClear, ct).ConfigureAwait(false))
+            {
+                _logger.LogTrace("Cache writer prevented region clear on {RegionPath}", FullPath);
+                throw new CacheWriterException($"CacheWriter vetoed Clear on '{FullPath}'.");
+            }
+
+            if (cachingEnabled)
+            {
+                InternalEntriesMap.Clear();
+            }
+
+            if (!eventFlags.IsNormal())
+            {
+                await InvokeCacheListenerForRegionEventAsync(
+                    callbackArgument, eventFlags, RegionEventType.AfterRegionClear, ct).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _mutex.ExitReadLock();
+        }
+    }
+
+    protected async ValueTask<bool> InvokeCacheWriterForRegionEventAsync(
+        object? callbackArgument, CacheEventFlags eventFlags, RegionEventType type, CancellationToken ct = default)
+    {
+        var bCacheWriterReturn = true;
+        if (_writer is not null)
+        {
+            var ev = new RegionEvent(this, callbackArgument, eventFlags.IsNotification());
+            var eventStr = "unknown";
+            try
+            {
+                var updateStats = true;
+                var writerStart = Stopwatch.GetTimestamp();
+                switch (type)
+                {
+                    case RegionEventType.BeforeRegionDestroy:
+                        eventStr = "beforeRegionDestroy";
+                        bCacheWriterReturn = await _writer.BeforeRegionDestroyAsync(ev, ct).ConfigureAwait(false);
+                        break;
+                    case RegionEventType.BeforeRegionClear:
+                        eventStr = "beforeRegionClear";
+                        bCacheWriterReturn = await _writer.BeforeRegionClearAsync(ev, ct).ConfigureAwait(false);
+                        break;
+                    case RegionEventType.BeforeRegionInvalidate:
+                    case RegionEventType.AfterRegionInvalidate:
+                    case RegionEventType.AfterRegionDestroy:
+                    case RegionEventType.AfterRegionClear:
+                        updateStats = false;
+                        break;
+                }
+                if (updateStats)
+                {
+                    _regionStats.WriterCall(Stopwatch.GetElapsedTime(writerStart));
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(
+                    ex, "Exception in CacheWriter::{EventStr} on region {RegionPath}",
+                    eventStr, FullPath);
+                bCacheWriterReturn = false;
+            }
+        }
+        return bCacheWriterReturn;
+    }
+
+    protected async ValueTask InvokeCacheListenerForRegionEventAsync(
+        object? callbackArgument, CacheEventFlags eventFlags, RegionEventType type, CancellationToken ct = default)
+    {
+        if (_listener is null)
+        {
+            return;
+        }
+
+        var ev = new RegionEvent(this, callbackArgument, eventFlags.IsNotification());
+        var eventStr = "unknown";
+        try
+        {
+            var updateStats = true;
+            var listenerStart = Stopwatch.GetTimestamp();
+            switch (type)
+            {
+                case RegionEventType.AfterRegionDestroy:
+                    eventStr = "afterRegionDestroy";
+                    await _listener.AfterRegionDestroyAsync(ev, ct).ConfigureAwait(false);
+                    _cachePerfStats.CacheListenerCallCompleted();
+                    if (eventFlags.IsCacheClose())
+                    {
+                        eventStr = "close";
+                        await _listener.CloseAsync(this, ct).ConfigureAwait(false);
+                        _cachePerfStats.CacheListenerCallCompleted();
+                    }
+                    break;
+                case RegionEventType.AfterRegionInvalidate:
+                    eventStr = "afterRegionInvalidate";
+                    await _listener.AfterRegionInvalidateAsync(ev, ct).ConfigureAwait(false);
+                    _cachePerfStats.CacheListenerCallCompleted();
+                    break;
+                case RegionEventType.AfterRegionClear:
+                    eventStr = "afterRegionClear";
+                    await _listener.AfterRegionClearAsync(ev, ct).ConfigureAwait(false);
+                    break;
+                case RegionEventType.BeforeRegionInvalidate:
+                case RegionEventType.BeforeRegionDestroy:
+                case RegionEventType.BeforeRegionClear:
+                    updateStats = false;
+                    break;
+            }
+            if (updateStats)
+            {
+                _regionStats.ListenerCall(Stopwatch.GetElapsedTime(listenerStart));
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(
+                ex, "Exception in CacheListener::{EventStr} on region {RegionPath}",
+                eventStr, FullPath);
+            throw new CacheListenerException(
+                $"CacheListener.{eventStr} failed on region '{FullPath}'.", ex);
+        }
+    }
 
     /// <inheritdoc />
     public override async Task<bool> ContainsKeyAsync(object key, CancellationToken ct = default)

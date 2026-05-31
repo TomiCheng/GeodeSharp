@@ -10,7 +10,7 @@ public interface IRegion
     /// <summary>
     /// Clear every entry from the region on the server (region itself stays).
     /// </summary>
-    Task ClearAsync(object? callback = null, CancellationToken ct = default);
+    Task ClearAsync(object? callbackArgument = null, CancellationToken ct = default);
 
     /// <summary>
     /// Local containment check — does the local cache hold <paramref name="key"/>?
@@ -30,7 +30,7 @@ public interface IRegion
     /// <summary>
     /// Strict insert; throws when <paramref name="key"/> already exists.
     /// </summary>
-    Task CreateAsync(object key, object value, object? callback = null, CancellationToken ct = default);
+    Task CreateAsync(object key, object value, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <summary>
     /// Creates a sub-region named <paramref name="name"/> with <paramref name="attributes"/>.
@@ -40,12 +40,12 @@ public interface IRegion
     /// <summary>
     /// Strict remove; throws when <paramref name="key"/> is absent.
     /// </summary>
-    Task DestroyAsync(object key, object? callback = null, CancellationToken ct = default);
+    Task DestroyAsync(object key, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <summary>
     /// Destroys the whole region on the server.
     /// </summary>
-    Task DestroyRegionAsync(object? callback = null, CancellationToken ct = default);
+    Task DestroyRegionAsync(object? callbackArgument = null, CancellationToken ct = default);
 
     /// <summary>
     /// Snapshot of <see cref="IRegionEntry"/> entries; descends into sub-regions
@@ -64,12 +64,12 @@ public interface IRegion
     /// server-missing keys appear with <see langword="null"/>.
     /// </summary>
     Task<IReadOnlyDictionary<object, object?>> GetAllAsync(
-        IReadOnlyCollection<object> keys, object? callback = null, CancellationToken ct = default);
+        IReadOnlyCollection<object> keys, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <summary>
     /// Get the value under <paramref name="key"/>; <see langword="null"/> when the key is absent.
     /// </summary>
-    Task<object?> GetAsync(object key, object? callback = null, CancellationToken ct = default);
+    Task<object?> GetAsync(object key, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <summary>
     /// Mutator for the subset of attributes adjustable after creation.
@@ -100,12 +100,12 @@ public interface IRegion
     /// <summary>Invalidate <paramref name="key"/>
     /// on the server — the key stays, the value becomes <see langword="null"/>.
     /// </summary>
-    Task InvalidateAsync(object key, object? callback = null, CancellationToken ct = default);
+    Task InvalidateAsync(object key, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <summary>
     /// Invalidates every entry in the region on the server (keys stay, values cleared).
     /// </summary>
-    Task InvalidateRegionAsync(object? callback = null, CancellationToken ct = default);
+    Task InvalidateRegionAsync(object? callbackArgument = null, CancellationToken ct = default);
 
     /// <summary>
     /// Snapshot of locally-cached keys.
@@ -113,59 +113,59 @@ public interface IRegion
     IReadOnlyList<object> Keys();
 
     /// <summary>
-    /// Clears every entry from the local entry map only.
+    /// Clears every entry from the local entry map only; never propagated to the server.
     /// </summary>
-    void LocalClear(object? callback = null);
+    Task LocalClearAsync(object? callbackArgument = null, CancellationToken ct = default);
 
     /// <summary>
     /// Local-only strict insert; throws if <paramref name="key"/> already exists.
     /// </summary>
-    void LocalCreate(object key, object value, object? callback = null);
+    void LocalCreate(object key, object value, object? callbackArgument = null);
 
     /// <summary>
     /// Local-only destroy of <paramref name="key"/>.
     /// </summary>
-    void LocalDestroy(object key, object? callback = null);
+    void LocalDestroy(object key, object? callbackArgument = null);
 
     /// <summary>
-    /// Destroys this region locally only (server stays unchanged); <paramref name="callback"/> reaches local <c>CacheWriter</c>/<c>CacheListener</c>.
+    /// Destroys this region locally only (server stays unchanged); <paramref name="callbackArgument"/> reaches local <c>CacheWriter</c>/<c>CacheListener</c>.
     /// </summary>
-    void LocalDestroyRegion(object? callback = null);
+    void LocalDestroyRegion(object? callbackArgument = null);
 
     /// <summary>
     /// Local-only invalidate (value cleared, key stays).
     /// </summary>
-    void LocalInvalidate(object key, object? callback = null);
+    void LocalInvalidate(object key, object? callbackArgument = null);
 
     /// <summary>
     /// Invalidates every entry's value locally (keys stay).
     /// </summary>
-    void LocalInvalidateRegion(object? callback = null);
+    void LocalInvalidateRegion(object? callbackArgument = null);
 
     /// <summary>
     /// Local-only put against the in-memory entry map (no server roundtrip).
     /// </summary>
-    void LocalPut(object key, object value, object? callback = null);
+    void LocalPut(object key, object value, object? callbackArgument = null);
 
     /// <summary>
     /// Local-only remove of <paramref name="key"/>/<paramref name="value"/>; <see langword="true"/> when removed.
     /// </summary>
-    bool LocalRemove(object key, object value, object? callback = null);
+    bool LocalRemove(object key, object value, object? callbackArgument = null);
 
     /// <summary>
     /// Local-only remove of <paramref name="key"/> ignoring value; <see langword="true"/> when removed.
     /// </summary>
-    bool LocalRemoveEx(object key, object? callback = null);
+    bool LocalRemoveEx(object key, object? callbackArgument = null);
 
     /// <summary>
     /// Put every entry in <paramref name="map"/> on the server in one roundtrip.
     /// </summary>
-    Task PutAllAsync(IReadOnlyDictionary<object, object> map, object? callback = null, CancellationToken ct = default);
+    Task PutAllAsync(IReadOnlyDictionary<object, object> map, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <summary>
     /// Put <paramref name="value"/> under <paramref name="key"/> on the server.
     /// </summary>
-    Task PutAsync(object key, object? value, object? callback = null, CancellationToken ct = default);
+    Task PutAsync(object key, object? value, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <summary>
     /// Runs an OQL <paramref name="predicate"/> (WHERE-clause only, or a full
@@ -202,19 +202,19 @@ public interface IRegion
     /// <summary>
     /// Remove every key in <paramref name="keys"/> from the region in one server roundtrip.
     /// </summary>
-    Task RemoveAllAsync(IReadOnlyCollection<object> keys, object? callback = null, CancellationToken ct = default);
+    Task RemoveAllAsync(IReadOnlyCollection<object> keys, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <summary>
     /// Conditional remove: removes <paramref name="key"/> only when its current value
     /// equals <paramref name="value"/>; mirrors cppcache <c>Region::remove(key, value, cb)</c>.
     /// </summary>
-    Task<bool> RemoveAsync(object key, object value, object? callback = null, CancellationToken ct = default);
+    Task<bool> RemoveAsync(object key, object value, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <summary>
     /// Unconditional remove of <paramref name="key"/>; mirrors cppcache <c>Region::removeEx(key, cb)</c>.
     /// Returns <see langword="true"/> when the key existed.
     /// </summary>
-    Task<bool> RemoveExAsync(object key, object? callback = null, CancellationToken ct = default);
+    Task<bool> RemoveExAsync(object key, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <summary>
     /// Single-result OQL lookup: <see langword="null"/> when no match, the value when exactly one match,
@@ -320,10 +320,10 @@ public interface IRegion<TKey, TValue> : IRegion
     bool ContainsValueForKey(TKey key);
 
     /// <inheritdoc cref="IRegion.CreateAsync(object, object, object?, CancellationToken)" />
-    Task CreateAsync(TKey key, TValue value, object? callback = null, CancellationToken ct = default);
+    Task CreateAsync(TKey key, TValue value, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <inheritdoc cref="IRegion.DestroyAsync(object, object?, CancellationToken)" />
-    Task DestroyAsync(TKey key, object? callback = null, CancellationToken ct = default);
+    Task DestroyAsync(TKey key, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <summary>
     /// Fetch every key in <paramref name="keys"/> from the server in one roundtrip;
@@ -331,33 +331,33 @@ public interface IRegion<TKey, TValue> : IRegion
     /// (not present with <see langword="null"/>).
     /// </summary>
     Task<IReadOnlyDictionary<TKey, TValue?>> GetAllAsync(
-        IReadOnlyCollection<TKey> keys, object? callback = null, CancellationToken ct = default);
+        IReadOnlyCollection<TKey> keys, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <inheritdoc cref="IRegion.GetAsync(object, object?, CancellationToken)" />
-    Task<TValue?> GetAsync(TKey key, object? callback = null, CancellationToken ct = default);
+    Task<TValue?> GetAsync(TKey key, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <inheritdoc cref="IRegion.GetEntry(object)" />
     IRegionEntry? GetEntry(TKey key);
 
     /// <inheritdoc cref="IRegion.InvalidateAsync(object, object?, CancellationToken)" />
-    Task InvalidateAsync(TKey key, object? callback = null, CancellationToken ct = default);
+    Task InvalidateAsync(TKey key, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <inheritdoc cref="IRegion.Keys" />
     new IReadOnlyList<TKey> Keys();
 
     /// <inheritdoc cref="IRegion.PutAllAsync(IReadOnlyDictionary{object,object}, object?, CancellationToken)" />
-    Task PutAllAsync(IReadOnlyDictionary<TKey, TValue> map, object? callback = null, CancellationToken ct = default);
+    Task PutAllAsync(IReadOnlyDictionary<TKey, TValue> map, object? callbackArgument = null, CancellationToken ct = default);
     /// <inheritdoc cref="IRegion.PutAsync(object, object?, object?, CancellationToken)" />
-    Task PutAsync(TKey key, TValue? value, object? callback = null, CancellationToken ct = default);
+    Task PutAsync(TKey key, TValue? value, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <inheritdoc cref="IRegion.RemoveAllAsync(IReadOnlyCollection{object}, object?, CancellationToken)" />
-    Task RemoveAllAsync(IReadOnlyCollection<TKey> keys, object? callback = null, CancellationToken ct = default);
+    Task RemoveAllAsync(IReadOnlyCollection<TKey> keys, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <inheritdoc cref="IRegion.RemoveAsync(object, object, object?, CancellationToken)" />
-    Task<bool> RemoveAsync(TKey key, TValue value, object? callback = null, CancellationToken ct = default);
+    Task<bool> RemoveAsync(TKey key, TValue value, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <inheritdoc cref="IRegion.RemoveExAsync(object, object?, CancellationToken)" />
-    Task<bool> RemoveExAsync(TKey key, object? callback = null, CancellationToken ct = default);
+    Task<bool> RemoveExAsync(TKey key, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <inheritdoc cref="IRegion.SelectValueAsync(string, CancellationToken)" />
     new Task<TValue?> SelectValueAsync(string predicate, CancellationToken ct = default);

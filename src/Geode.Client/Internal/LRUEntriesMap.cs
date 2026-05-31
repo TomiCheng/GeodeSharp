@@ -297,6 +297,34 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
     /// Mirrors cppcache <c>LRUEntriesMap::clear</c>
     /// (<c>cppcache/src/LRUEntriesMap.cpp:102-105</c>).
     /// </remarks>
+    /// <summary>
+    /// cppcache <c>LRUEntriesMap::close</c> (<c>LRUEntriesMap.cpp:94-100</c>):
+    /// <code>
+    /// void LRUEntriesMap::close() {
+    ///   if (m_evictionControllerPtr != nullptr) {
+    ///     m_evictionControllerPtr->incrementHeapSize(-m_currentMapSize);
+    ///     m_evictionControllerPtr->unregisterRegion(m_name);
+    ///   }
+    ///   ConcurrentEntriesMap::close();
+    /// }
+    /// </code>
+    /// Cache 拆解時由 <see cref="RegionInternal"/>.<c>DisposeAsync</c> 串下來,
+    /// 把這個 region 從 cache-scoped <see cref="EvictionController"/> 名單退出。
+    /// </summary>
+    public override async ValueTask DisposeAsync()
+    {
+        if (_evictionController is not null)
+        {
+            // TODO: cppcache 還有 `incrementHeapSize(-m_currentMapSize)` 把
+            //   本 region 累積過的 heap-size 從 EC 總和扣回去。先 skip —
+            //   `EvictionController.IncrementHeapSize` 還是 NIE,且
+            //   `_currentMapSize` 在 `UpdateMapSize` 落地前永遠 0,扣 0 沒實效。
+            //   兩者一起接通時補。
+            _evictionController.UnregisterRegion(_name);
+        }
+        await base.DisposeAsync().ConfigureAwait(false);
+    }
+
     public override async Task ClearAsync(CancellationToken ct = default)
     {
         // cppcache LRUEntriesMap::clear (LRUEntriesMap.cpp:102-105):

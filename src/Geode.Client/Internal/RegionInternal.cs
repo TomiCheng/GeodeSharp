@@ -24,8 +24,20 @@ namespace Geode.Client.Internal;
 /// </para>
 /// </remarks>
 internal abstract class RegionInternal(RegionAttributes attributes)
-    : IRegion
+    : IRegion, IAsyncDisposable
 {
+    /// <summary>
+    /// Async teardown — mirrors cppcache <c>LocalRegion::release</c>
+    /// (<c>cppcache/src/LocalRegion.cpp</c>). Default body is a no-op so
+    /// region types without per-instance state inherit it for free;
+    /// <see cref="LocalRegion"/> overrides to flush the entries map
+    /// (which cascades into <c>LRUEntriesMap.DisposeAsync</c> →
+    /// <see cref="EvictionController.UnregisterRegion"/>) and mark the
+    /// region destroyed. Called from <c>GeodeCache.CloseAsync</c> before
+    /// the pool drain, so cache-scoped DI services are still reachable.
+    /// </summary>
+    public virtual ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
 
     /// <summary>
     /// Explicit-interface impl for <see cref="IRegion.Attributes"/> —

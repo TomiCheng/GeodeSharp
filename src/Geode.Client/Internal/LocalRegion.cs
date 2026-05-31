@@ -1105,6 +1105,35 @@ internal partial class LocalRegion : RegionInternal
 
     internal EntriesMap InternalEntriesMap => _localEntriesMap.Value!;
 
+    /// <summary>
+    /// cppcache <c>LocalRegion::release</c> 對應 — mark destroyed,
+    /// dispose the local entries map(cascades into
+    /// <c>LRUEntriesMap.DisposeAsync</c> →
+    /// <see cref="EvictionController.UnregisterRegion"/>),最後 forward 到 base。
+    /// 由 <c>GeodeCache.CloseAsync</c> 在 pool drain 之前呼叫,EC / DI scope
+    /// 都還活著。Idempotent — DI scope teardown 會再 dispose 一次當安全網。
+    /// </summary>
+    public override async ValueTask DisposeAsync()
+    {
+        if (_released) return;
+        _destroyPending = true;
+        _released = true;
+
+        // Lazy 未 materialize → 沒人碰過 entries map,沒東西可釋放。
+        // Value 為 null → caching disabled(factory return null);也跳。
+        if (_localEntriesMap.IsValueCreated && _localEntriesMap.Value is { } map)
+        {
+            await map.DisposeAsync().ConfigureAwait(false);
+        }
+
+        // TODO Phase 1.5+: cppcache LocalRegion::release 還會
+        //   * cancel expiry tasks(RegionTimeToLive / EntryTimeToLive 經 ExpiryTaskManager)
+        //   * dispose callbacks(m_listener / m_writer / m_loader 若 IDisposable)
+        //   等對應子系統落地時補進來。
+
+        await base.DisposeAsync().ConfigureAwait(false);
+    }
+
     public override async Task ClearAsync(object? callback = null, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();

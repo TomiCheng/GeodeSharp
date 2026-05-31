@@ -20,7 +20,12 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private Task? _initTask;
     readonly PoolManager _poolManager = serviceProvider.GetRequiredService<PoolManager>();
-    private readonly ConcurrentDictionary<string, IRegion> _regions = new(StringComparer.Ordinal);
+    // 存 RegionInternal(非 IRegion):cppcache `m_regions` 存 `shared_ptr<Region>`
+    // 後 controller / internal helper 還要 `dynamic_pointer_cast<RegionInternal>` 一次;
+    // C# 強型別不用付這個 cast — 進來的就一定是 RegionInternal subclass
+    // (LocalRegion / ThinClientPoolRegion),把不變式抓進 compile-time。
+    // 公開 GetRegion 仍 return IRegion?(implicit upcast),public API 不變。
+    private readonly ConcurrentDictionary<string, RegionInternal> _regions = new(StringComparer.Ordinal);
     readonly SerializationRegistry _serializationRegistry = serviceProvider.GetRequiredService<SerializationRegistry>();
     readonly SystemProperties _systemProperties = serviceProvider.GetRequiredService<SystemProperties>();
     readonly TcrConnectionManager _tcrConnectionManager = serviceProvider.GetRequiredService<TcrConnectionManager>();
@@ -106,7 +111,7 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache
     /// mirrors cppcache <c>CacheImpl::createRegion</c> map insertion
     /// (<c>cppcache/src/CacheImpl.cpp:395-398, 440</c>).
     /// </summary>
-    internal void RegisterRegion(string name, IRegion region)
+    internal void RegisterRegion(string name, RegionInternal region)
     {
         ObjectDisposedException.ThrowIf(IsClosed, this);
         if (!_regions.TryAdd(name, region))
@@ -208,7 +213,7 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache
     /// (<c>cppcache/src/CacheImpl.cpp:365-580</c>) — owns the RegionKind
     /// switch and orchestrates the full create-region pipeline.
     /// </summary>
-    internal async Task<IRegion> CreateRegionAsync(string name, RegionAttributes attrs, CancellationToken ct = default)
+    internal async Task<RegionInternal> CreateRegionAsync(string name, RegionAttributes attrs, CancellationToken ct = default)
     {
         // ── 1. First-time init block (cppcache CacheImpl.cpp:368-381)
         // TODO Phase 1.5: lock _initDoneLock, when !_initDone &&
@@ -254,7 +259,7 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache
 
         // ── 8. createRegion_internal kind dispatch (cppcache
         //    CacheImpl.cpp:401-418, body at :520-581).
-        IRegion region;
+        RegionInternal region;
         try
         {
             region = await CreateRegionInternalAsync(name, parent: null, attrs, shared: false, ct).ConfigureAwait(false);
@@ -311,7 +316,7 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache
     /// <c>CacheImpl::createRegion_internal</c>
     /// (<c>cppcache/src/CacheImpl.cpp:520-581</c>).
     /// </summary>
-    private async Task<IRegion> CreateRegionInternalAsync(
+    private async Task<RegionInternal> CreateRegionInternalAsync(
         string name,
         RegionInternal? parent,
         RegionAttributes attrs,
@@ -649,20 +654,42 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache
         //   TODO Phase 1.5: TCCM.CloseAsync — stop background workers
         //     (m_tcrConnectionManager->close() comes first in cppcache so
         //     scheduled ping tasks can't fire on torn-down state).
-        //   TODO Phase 1.2: destroy regions (region drop happens between
-        //     TCCM stop and pool close in cppcache).
+        //   ✓ Regions release(下面 snapshot + dispose 迴圈)
+        //   ✓ Pool close
+        //   ✓ IsClosed flip(最末,對齊 cppcache m_closed)
+
+        // ── Regions dispose ──────────────────────────────────────
+        // Snapshot 取出 + 立刻 Clear,避免 dispose 迴圈跑到一半有人
+        // 透過 Register/GetRegion 看到「半生不熟」的狀態。Dispose 本身
+        // 是 idempotent(LocalRegion.DisposeAsync 用 _released guard),
+        // 所以 DI scope 後續 teardown 再叫一次也安全。
         //
-        // Pool drain — cascades pool.DestroyAsync into each
-        // ThinClientPoolDM (cancels its conn-management loop, releases
-        // timers, drains connections). PoolManager.CloseAsync is
-        // internally idempotent so a later DI-scope dispose is safe.
+        // 每個 region dispose 失敗不該打斷 cache teardown — try/catch
+        // 圈起來逐個釋放,把錯誤吞掉繼續(TODO: 加 ILogger<GeodeCache>
+        // 後改成 LogWarning,目前先安靜處理避免噪音)。
         //
-        // IsValueCreated guard: if no one ever read `PoolManager`, the
-        // Lazy never materialised, so there's nothing to drain — skip
-        // force-building one on the dispose path. (Critical when
-        // DisposeAsync fires during ServiceProvider teardown: the SP is
-        // already disposed and ActivatorUtilities.CreateInstance would
-        // throw ObjectDisposedException.)
+        // 順序考量:在 pool drain 之前 dispose,確保 region 拆解時
+        // cache-scoped DI services(EvictionController / PoolManager /
+        // TcrConnectionManager)還活著 — LRUEntriesMap.DisposeAsync 會
+        // 走到 EvictionController.UnregisterRegion,EC 此時還在 scope 內。
+        var regionsToDispose = _regions.Values.ToList();
+        _regions.Clear();
+        foreach (var region in regionsToDispose)
+        {
+            try
+            {
+                await region.DisposeAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                // TODO: structured log once ILogger<GeodeCache> is injected.
+            }
+        }
+
+        // ── Pool drain ───────────────────────────────────────────
+        // 把 pool.DestroyAsync cascade 進每個 ThinClientPoolDM(取消
+        // conn-management loop、釋放 timers、drain connections)。
+        // PoolManager.CloseAsync 自身 idempotent,DI scope 之後 dispose 安全。
         await _poolManager.CloseAsync(keepAlive: false, ct).ConfigureAwait(false);
         IsClosed = true;
     }

@@ -9,8 +9,21 @@ namespace Geode.Client.Internal;
 /// land with the caching-enabled work; concrete impl is
 /// <see cref="ConcurrentEntriesMap"/>.
 /// </summary>
-internal abstract class EntriesMap
+internal abstract class EntriesMap : IAsyncDisposable
 {
+    /// <summary>
+    /// Async teardown — mirrors cppcache <c>EntriesMap::close</c>
+    /// (<c>cppcache/src/EntriesMap.hpp</c>, pure virtual) +
+    /// <c>ConcurrentEntriesMap::close</c> /
+    /// <c>LRUEntriesMap::close</c> overrides. Default body is a no-op so
+    /// the plain-concurrent path inherits it for free;
+    /// <see cref="LRUEntriesMap"/> overrides to deregister from the
+    /// <see cref="EvictionController"/> and flush the heap-size accounting.
+    /// Called from <c>RegionInternal.DisposeAsync</c> on cache teardown.
+    /// </summary>
+    public virtual ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+
     /// <summary>
     /// Number of entries currently held. Mirrors cppcache
     /// <c>EntriesMap::size()</c> (<c>cppcache/src/EntriesMap.hpp:133</c>,

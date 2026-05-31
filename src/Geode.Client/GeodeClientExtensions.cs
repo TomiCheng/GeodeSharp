@@ -189,6 +189,7 @@ public static class GeodeClientExtensions
         services.TryAddScoped<SerializationRegistry>();
         services.TryAddScoped<ExpiryTaskManager>();
         services.TryAddScoped<CachePerfStatistics>();
+        services.TryAddScoped<EvictionController>();
         services.TryAddSingleton<DmContextAccessor>();
         return services;
     }

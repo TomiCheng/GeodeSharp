@@ -59,12 +59,13 @@ internal abstract class EntriesMap
     /// convention. cppcache <c>GfErrType</c> collapses to throws
     /// (<see cref="EntryExistsException"/> for the present-key case).
     /// </summary>
-    public (MapEntry? Entry, object? OldValue) Create(
+    public Task<(MapEntry? Entry, object? OldValue)> CreateAsync(
         object key,
         object newValue,
         int updateCount,
         int destroyTracker,
-        VersionTag? versionTag) => throw new NotImplementedException();
+        VersionTag? versionTag,
+        CancellationToken ct = default) => throw new NotImplementedException();
     public int AddTrackerForEntry(object key, object? oldValue, bool addIfAbsent, bool failIfPresent, bool value) => throw new NotImplementedException();
     /// <summary>
     /// Drops the tracker for <paramref name="key"/>. Mirrors cppcache
@@ -75,9 +76,10 @@ internal abstract class EntriesMap
     public abstract void RemoveTrackerForEntry(object key);
 
 
-    public abstract (MapEntry Entry, object? OldValue, bool IsUpdate) Put(
+    public abstract Task<(MapEntry Entry, object? OldValue, bool IsUpdate)> PutAsync(
         object key, object newValue, int updateCount, int destroyTracker, VersionTag? versionTag,
-        DataInput? delta = null);
+        DataInput? delta = null,
+        CancellationToken ct = default);
 
     /// <summary>
     /// Removes the entry under <paramref name="key"/>; returns the prior
@@ -88,11 +90,12 @@ internal abstract class EntriesMap
     /// returned tuple per the codebase out-param → tuple convention.
     /// Body lives on <see cref="ConcurrentEntriesMap.Remove"/>.
     /// </summary>
-    public abstract (MapEntry? Entry, object? OldValue) Remove(
+    public abstract Task<(MapEntry? Entry, object? OldValue)> RemoveAsync(
         object key,
         int updateCount,
         VersionTag? versionTag,
-        bool afterRemote);
+        bool afterRemote,
+        CancellationToken ct = default);
 
     /// <summary>
     /// 把 overflow 到磁碟的 entry value 撈回記憶體。Mirrors cppcache
@@ -103,7 +106,7 @@ internal abstract class EntriesMap
     /// 表 persistence manager 撈不回(已被 GC 或檔案損毀),caller 應視為
     /// <c>InvalidDelta</c> / get-miss。
     /// </summary>
-    public abstract object? GetFromDisk(object key, MapEntry entry);
+    public abstract Task<object?> GetFromDiskAsync(object key, MapEntry entry, CancellationToken ct = default);
 
     /// <summary>
     /// Removes every entry from the map. Mirrors cppcache
@@ -112,5 +115,5 @@ internal abstract class EntriesMap
     /// LRU subclass overrides to also reset its heap-size accounting
     /// (<see cref="LRUEntriesMap.Clear"/>).
     /// </summary>
-    public abstract void Clear();
+    public abstract Task ClearAsync(CancellationToken ct = default);
 }

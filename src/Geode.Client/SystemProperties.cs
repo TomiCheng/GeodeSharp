@@ -53,13 +53,19 @@ public sealed class SystemProperties
     /// <summary>Default number of connections per pool. Default: <c>5</c>.</summary>
     public uint ConnectionPoolSize { get; set; } = 5;
 
-    /// <summary>Heap-LRU eviction trigger in bytes; <c>0</c> disables heap-LRU. Default: <c>0</c>.</summary>
+    /// <summary>
+    /// Heap-LRU eviction trigger in <b>MB</b>; <c>0</c> disables heap-LRU. Default: <c>0</c>.
+    /// </summary>
     public long HeapLRULimit { get; set; }
 
-    /// <summary>Process-wide heap-LRU on/off flag; <see langword="true"/> when <see cref="HeapLRULimit"/> &gt; <c>0</c>.</summary>
+    /// <summary>
+    /// Process-wide heap-LRU on/off flag; <see langword="true"/> when <see cref="HeapLRULimit"/> &gt; <c>0</c>.
+    /// </summary>
     public bool HeapLRULimitEnabled => HeapLRULimit > 0;
 
-    /// <summary>Heap-LRU eviction step, in percent of current heap. Default: <c>10</c>.</summary>
+    /// <summary>
+    /// Heap-LRU eviction step, in percent of current heap. Default: <c>10</c>.
+    /// </summary>
     public int HeapLRUDelta { get; set; } = 10;
 
     /// <summary>Socket buffer size in bytes (send and receive). Default: <c>66560</c> (65 KB).</summary>

@@ -127,12 +127,13 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
                 // overflow 到磁碟 → 回讀,撈不回視為 InvalidDelta。
                 if (CacheableToken.IsOverflowed(oldValue))
                 {
-                    oldValue = GetFromDisk(key, existing);
-                    if (oldValue is null)
-                    {
-                        poolDM?.UpdateNotificationStats(false, TimeSpan.Zero);
-                        throw new GfErrTypeException(GfErrType.InvalidDelta);
-                    }
+                    // TODO Phase 4 overflow: GetFromDiskAsync 已是 async,
+                    //   這條 branch 進來需要 await,連帶 PutForTrackedEntry
+                    //   要 cascade 成 async。本 branch 在 overflow 寫入路徑
+                    //   接通前是 dead(IsOverflowed token 不會出現),先 NIE
+                    //   標記,IPersistenceManager 落地時一起 async 化。
+                    throw new NotImplementedException(
+                        "ConcurrentEntriesMap.PutForTrackedEntry: overflow read-back pending IPersistenceManager (needs async cascade through PutForTrackedEntry → PutAsync).");
                 }
 
                 // 既有 value 沒 implement IDelta → 沒法套。
@@ -348,10 +349,11 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
     }
 
     /// <inheritdoc />
-    public override object? GetFromDisk(object key, MapEntry entry) => throw new NotImplementedException();
+    public override Task<object?> GetFromDiskAsync(object key, MapEntry entry, CancellationToken ct = default)
+        => throw new NotImplementedException();
 
     /// <inheritdoc />
-    public override void Clear()
+    public override Task ClearAsync(CancellationToken ct = default)
     {
         // cppcache ConcurrentEntriesMap::clear (ConcurrentEntriesMap.cpp:66-71):
         //   for (index < m_concurrency) m_segments[index].clear();
@@ -364,12 +366,17 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
         // maintained via Interlocked by Put/Remove; reset it atomically to match.
         // Clearing drops everything (tombstones included), so a flat 0 is correct.
         Interlocked.Exchange(ref _size, 0);
+        // Body 是純記憶體 wipe;一旦 IPersistenceManager 落地,要在這之前
+        // 加 `await _pmPtr.DestroyAllAsync(ct).ConfigureAwait(false);` 把
+        // 磁碟那邊一併清掉。Async 簽章是為這條 disk 路徑保留的。
+        return Task.CompletedTask;
     }
 
     /// <inheritdoc />
-    public override (MapEntry Entry, object? OldValue, bool IsUpdate) Put(
+    public override Task<(MapEntry Entry, object? OldValue, bool IsUpdate)> PutAsync(
         object key, object newValue, int updateCount, int destroyTracker, VersionTag? versionTag,
-        DataInput? delta = null)
+        DataInput? delta = null,
+        CancellationToken ct = default)
     {
         // cppcache ConcurrentEntriesMap::put + MapSegment::put 兩層攤平。
         // 能寫的直接寫,缺型別 / 欄位 / 配置的留 `// ` 待補形。
@@ -475,12 +482,11 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
                     // overflow 到磁碟 → 回讀,撈不回視為 InvalidDelta
                     if (CacheableToken.IsOverflowed(existingValue))
                     {
-                        existingValue = GetFromDisk(key, existing);
-                        if (existingValue is null)
-                        {
-                            (region.Pool as ThinClientPoolDM)?.UpdateNotificationStats(false, TimeSpan.Zero);
-                            throw new GfErrTypeException(GfErrType.InvalidDelta);
-                        }
+                        // TODO Phase 4 overflow: 同 PutForTrackedEntry 內的 dead branch —
+                        //   要 await GetFromDiskAsync,連帶 caller chain 要 cascade async。
+                        //   IsOverflowed token 在 overflow 寫入路徑接通前不會出現。
+                        throw new NotImplementedException(
+                            "ConcurrentEntriesMap.PutAsync delta path: overflow read-back pending IPersistenceManager (needs async cascade).");
                     }
 
                     // 既有 value 沒 implement IDelta → 沒法套
@@ -542,15 +548,16 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
         {
             Interlocked.Increment(ref _size);
         }
-        return (entry, oldValue, isUpdate);
+        return Task.FromResult((entry, oldValue, isUpdate));
     }
 
     /// <inheritdoc />
-    public override (MapEntry? Entry, object? OldValue) Remove(
+    public override Task<(MapEntry? Entry, object? OldValue)> RemoveAsync(
         object key,
         int updateCount,
         VersionTag? versionTag,
-        bool afterRemote)
+        bool afterRemote,
+        CancellationToken ct = default)
     {
         // cppcache ConcurrentEntriesMap::remove + MapSegment::remove 兩層攤平。
         // ConcurrentEntriesMap dispatches by key hash; MapSegment 做真實工作。
@@ -560,7 +567,8 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
         // ── cppcache MapSegment::remove L312-321 — concurrency-checks branch ─
         if (region.Attributes.ConcurrencyChecksEnabled)
         {
-            return RemoveWhenConcurrencyEnabled(key, updateCount, versionTag, afterRemote);
+            // helper 維持 sync(純記憶體),這層 Task-wrap 即可。
+            return Task.FromResult(RemoveWhenConcurrencyEnabled(key, updateCount, versionTag, afterRemote));
         }
 
         // ── cppcache L323-337 — happy path (no concurrency-checks) ─────────
@@ -571,7 +579,7 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
             //   destroyTrackers > 0 → m_destroyedKeys[key] = destroyTrackers + 1
             //   destroy-tracker bookkeeping 還沒做,跳過。
             // cppcache returns GF_CACHE_ENTRY_NOT_FOUND; 對應 (null, null)。
-            return (null, null);
+            return Task.FromResult<(MapEntry?, object?)>((null, null));
         }
 
         // ── cppcache L339-342 — updateCount race detection ────────────────
@@ -597,7 +605,7 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider,
         }
 
         // cppcache: `if (oldValue) me = entryImpl;` — entry 只在 value 非 null 時帶出。
-        return (oldValue is null ? null : entry, oldValue);
+        return Task.FromResult<(MapEntry?, object?)>((oldValue is null ? null : entry, oldValue));
     }
 
     /// <inheritdoc />

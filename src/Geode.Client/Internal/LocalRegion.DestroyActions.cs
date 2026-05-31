@@ -49,12 +49,12 @@ partial class LocalRegion
                 (Entry, OldValue) = region.InternalEntriesMap.GetEntry(Key);
             }
         }
-        public Task LocalUpdateAsync(int updateCount, bool remoteOpDone, CancellationToken ct)
+        public async Task LocalUpdateAsync(int updateCount, bool remoteOpDone, CancellationToken ct)
         {
             // cppcache DestroyActions::localUpdate (LocalRegion.cpp:1293-1352).
             // Unlike PutActions (which forwards to LocalRegion::putLocal), destroy
             // inlines its local logic here — the only cross-type call is
-            // EntriesMap.Remove.
+            // EntriesMap.RemoveAsync.
             var cachingEnabled = region.Attributes.CachingEnabled;
 
             if (cachingEnabled)
@@ -63,8 +63,8 @@ partial class LocalRegion
                 MapEntry? entry;
                 try
                 {
-                    (entry, oldValue) = region.InternalEntriesMap.Remove(
-                        key, updateCount, versionTag, remoteOpDone);
+                    (entry, oldValue) = await region.InternalEntriesMap.RemoveAsync(
+                        key, updateCount, versionTag, remoteOpDone, ct).ConfigureAwait(false);
                 }
                 catch
                 {
@@ -74,7 +74,7 @@ partial class LocalRegion
                     // stats below (cppcache returns early when remove fails).
                     if (eventFlags.IsNotification())
                     {
-                        return Task.CompletedTask;
+                        return;
                     }
                     throw;
                 }
@@ -101,7 +101,6 @@ partial class LocalRegion
             // success-path stats (skipped when remove threw above)
             region._regionStats.Destroy();
             region._cachePerfStats.Destroy();
-            return Task.CompletedTask;
         }
         public void LogCacheWriterFailure()
         {

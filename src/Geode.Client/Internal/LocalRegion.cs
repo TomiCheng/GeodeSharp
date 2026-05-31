@@ -304,8 +304,8 @@ internal partial class LocalRegion : RegionInternal
                             {
                                 try
                                 {
-                                    (action.Entry, action.OldValue, _) = _localEntriesMap.Value!.Put(action.Key, newValue1, action.UpdateCount, 0,
-                                        versionTag1 ?? action.VersionTag!);
+                                    (action.Entry, action.OldValue, _) = await _localEntriesMap.Value!.PutAsync(action.Key, newValue1, action.UpdateCount, 0,
+                                        versionTag1 ?? action.VersionTag!, ct: ct).ConfigureAwait(false);
                                 }
                                 catch (GfErrTypeException ex1)
                                 {
@@ -989,13 +989,13 @@ internal partial class LocalRegion : RegionInternal
                 name, FullPath, key, value);
             if (isCreate)
             {
-                (entry, oldValue) = _localEntriesMap.Value!.Create(key, value!, updateCount, destroyTracker, versionTag);
+                (entry, oldValue) = await _localEntriesMap.Value!.CreateAsync(key, value!, updateCount, destroyTracker, versionTag, ct).ConfigureAwait(false);
             }
             else
             {
                 try
                 {
-                    (entry, oldValue, isUpdate) = _localEntriesMap.Value!.Put(key, value!, updateCount, destroyTracker, versionTag!, delta);
+                    (entry, oldValue, isUpdate) = await _localEntriesMap.Value!.PutAsync(key, value!, updateCount, destroyTracker, versionTag!, delta, ct).ConfigureAwait(false);
                 }
                 catch (GfErrTypeException ex) when (ex.Code == GfErrType.InvalidDelta)
                 {
@@ -1004,7 +1004,7 @@ internal partial class LocalRegion : RegionInternal
                         .ConfigureAwait(false);
                     if (newValue1 is not null)
                     {
-                        (entry, oldValue, isUpdate) = _localEntriesMap.Value!.Put(key, newValue1, updateCount, destroyTracker, (versionTag1 ?? versionTag)!);
+                        (entry, oldValue, isUpdate) = await _localEntriesMap.Value!.PutAsync(key, newValue1, updateCount, destroyTracker, (versionTag1 ?? versionTag)!, ct: ct).ConfigureAwait(false);
                     }
                 }
                 // Means that delta is on and there is no failure.
@@ -1142,7 +1142,7 @@ internal partial class LocalRegion : RegionInternal
 
             if (cachingEnabled)
             {
-                InternalEntriesMap.Clear();
+                await InternalEntriesMap.ClearAsync(ct).ConfigureAwait(false);
             }
 
             if (!eventFlags.IsNormal())

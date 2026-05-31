@@ -1,6 +1,7 @@
 using Geode.Client.Protocol;
 using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Geode.Client.Internal;
 
@@ -41,6 +42,9 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
             concurrencyChecksEnabled, concurrency, heapLRUEnabled]);
     }
 
+
+    private readonly ILogger<LRUEntriesMap> _logger;
+
     readonly SerializationRegistry _serializationRegistry;
 
     // ── cppcache LRUEntriesMap members (LRUEntriesMap.hpp:50-58) ──
@@ -64,7 +68,7 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
     private IPersistenceManager? _persistenceManager;
 
     /// <summary>cppcache <c>m_evictionControllerPtr</c>: heap-LRU global controller; null until heap LRU registers.</summary>
-    private EvictionController? _evictionController;
+    private readonly EvictionController? _evictionController;
 
     /// <summary>cppcache <c>m_currentMapSize</c>: running heap-size total (heap LRU). 0 until heap LRU lands.</summary>
     private long _currentMapSize;
@@ -83,24 +87,37 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
         int lruLimit, bool concurrencyChecksEnabled, int concurrency, bool heapLRUEnabled)
         : base(serviceProvider, factory, concurrencyChecksEnabled, region, concurrency)
     {
+        _logger = serviceProvider.GetRequiredService<ILogger<LRUEntriesMap>>();
         _serializationRegistry = serviceProvider.GetRequiredService<SerializationRegistry>();
         _limit = lruLimit;
         _name = region.FullPath;
         _heapLruEnabled = heapLRUEnabled;
         _action = new Lazy<LRUAction>(() => LRUAction.NewLRUAction(serviceProvider, lruEvictionAction, region, this));
-
+        if (_heapLruEnabled)
+        {
+            // cppcache LRUEntriesMap ctor (LRUEntriesMap.cpp:80-88) — gate
+            // 是 `cImpl->getEvictionController() != nullptr`,在我們這邊
+            // 等於 `_heapLruEnabled`(EntriesMapFactory.cs:62-64 已把
+            // `prop.HeapLRULimitEnabled` 攤平成這個 flag)。
+            _evictionController = serviceProvider.GetRequiredService<EvictionController>();
+            _evictionController.RegisterRegion(_name);
+            _logger.LogInformation(
+                "Heap LRU eviction controller registered region {RegionName}",
+                _name);
+        }
 
     }
 
-    public override (MapEntry Entry, object? OldValue, bool IsUpdate) Put(
+    public override async Task<(MapEntry Entry, object? OldValue, bool IsUpdate)> PutAsync(
         object key, object newValue, int updateCount, int destroyTracker, VersionTag? versionTag,
-        DataInput? delta = null)
+        DataInput? delta = null,
+        CancellationToken ct = default)
     {
         MapEntry entry;
         object? oldValue;
         bool isUpdate;
         {
-            (entry, oldValue, isUpdate) = base.Put(key, newValue, updateCount, destroyTracker, versionTag, delta);
+            (entry, oldValue, isUpdate) = await base.PutAsync(key, newValue, updateCount, destroyTracker, versionTag, delta, ct).ConfigureAwait(false);
 
             bool isOldValueToken = CacheableToken.IsToken(oldValue);
             if (CacheableToken.IsOverflowed(oldValue))
@@ -280,7 +297,7 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
     /// Mirrors cppcache <c>LRUEntriesMap::clear</c>
     /// (<c>cppcache/src/LRUEntriesMap.cpp:102-105</c>).
     /// </remarks>
-    public override void Clear()
+    public override async Task ClearAsync(CancellationToken ct = default)
     {
         // cppcache LRUEntriesMap::clear (LRUEntriesMap.cpp:102-105):
         //   updateMapSize(-m_currentMapSize);
@@ -289,14 +306,14 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
         // cppcache's updateMapSize guards internally on m_evictionControllerPtr
         // (heap-LRU only); this port guards at the call site to match Put, so the
         // entry-count LRU path skips it (UpdateMapSize stays Phase-4 NIE because
-        // EvictionController.IncrementHeapSize is NIE) and only base.Clear() runs.
+        // EvictionController.IncrementHeapSize is NIE) and only base.ClearAsync() runs.
         if (_evictionController is not null)
         {
             UpdateMapSize(-_currentMapSize);
         }
 
-        // Wipe the backing map + logical size (ConcurrentEntriesMap.Clear).
-        base.Clear();
+        // Wipe the backing map + logical size (ConcurrentEntriesMap.ClearAsync).
+        await base.ClearAsync(ct).ConfigureAwait(false);
 
         // NOTE: faithful to cppcache — clear() deliberately does NOT drain
         // lru_queue_ nor reset m_validEntries. The queue keeps stale MapEntry

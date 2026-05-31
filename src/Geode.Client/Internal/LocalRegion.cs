@@ -74,8 +74,8 @@ internal partial class LocalRegion : RegionInternal
     /// <summary>cppcache <c>m_listener</c>: <see cref="ICacheListener"/> (Phase 2+; null until a listener is attached).</summary>
     protected ICacheListener? Listener;
 
-    /// <summary>cppcache <c>m_loader</c>: CacheLoader (Phase 2+).</summary>
-    protected object? Loader;
+    /// <summary>cppcache <c>m_loader</c>: <see cref="ICacheLoader"/> read-through hook (null until attached).</summary>
+    protected ICacheLoader? Loader;
 
     /// <summary>cppcache <c>m_entries</c> (<c>EntriesMap*</c>): local entry map (Phase 2+ caching-enabled). Renamed from cppcache's <c>m_entries</c> to (a) avoid clash with <see cref="IRegion.Entries(bool)"/> and (b) separate from the <see cref="EntriesMap"/> type name.</summary>
     protected Lazy<EntriesMap?> LocalEntriesMap;
@@ -114,8 +114,8 @@ internal partial class LocalRegion : RegionInternal
     /// <summary>cppcache <c>m_transactionEnabled</c>: TX support flag.</summary>
     protected bool TransactionEnabled;
 
-    /// <summary>cppcache <c>m_writer</c>: CacheWriter (Phase 2+).</summary>
-    protected object? Writer;
+    /// <summary>cppcache <c>m_writer</c>: <see cref="ICacheWriter"/> veto hook (null until attached).</summary>
+    protected ICacheWriter? Writer;
 
     /// <summary>cppcache <c>m_tombstoneList</c>: CRDT tombstone tracking. Phase 2+ concurrency-checks 落地時 allocate。</summary>
     internal TombstoneList? TombstoneList;
@@ -143,11 +143,11 @@ internal partial class LocalRegion : RegionInternal
         _serviceProvider = serviceProvider;
 
         // cppcache LocalRegion ctor (LocalRegion.cpp:86-95) initializes the
-        // callbacks from attributes (m_listener / m_writer / m_loader). Wire the
-        // listener here so InvokeCacheListenerForEntryEvent actually fires. (The
-        // loader is read directly from Attributes in the get path, so it needs no
-        // field; Writer has the same unwired-field gap — see field decl.)
+        // callbacks from attributes (m_listener / m_writer / m_loader). All three
+        // read their field (not Attributes) on the hot path, like cppcache.
         Listener = attributes.CacheListener;
+        Writer = attributes.CacheWriter;
+        Loader = attributes.CacheLoader;
     }
 
     /// <summary>
@@ -226,7 +226,7 @@ internal partial class LocalRegion : RegionInternal
             // is a CacheableToken then it sets it to nullptr; also determines if it
             // should be BEFORE_UPDATE or BEFORE_CREATE depending on oldValue
             if (!await InvokeCacheWriterForEntryEvent(action.Key, action.OldValue, action.Value,
-                action.CallbackArgument, action.EventFlags, action.BeforeEventType))
+                action.CallbackArgument, action.EventFlags, action.BeforeEventType, ct))
             {
                 action.LogCacheWriterFailure();
                 throw new CacheWriterException($"CacheWriter vetoed {action.Name} on '{FullPath}'.");
@@ -444,28 +444,8 @@ internal partial class LocalRegion : RegionInternal
     /// </summary>
     protected virtual bool GetProcessedMarker() => true;
 
-    /// <summary>
-    /// CacheListener dispatch — 派發到 <c>Listener</c> 的
-    /// <c>AfterCreateAsync</c> / <c>AfterUpdateAsync</c> / <c>AfterDestroyAsync</c> /
-    /// <c>AfterInvalidateAsync</c> callback。Mirrors cppcache
-    /// <c>LocalRegion::invokeCacheListenerForEntryEvent</c>
-    /// (<c>cppcache/src/LocalRegion.hpp:546</c>).
-    /// </summary>
-    /// <remarks>
-    /// Phase 2+ CacheListener feature 落地才填 body。Phase 1.x
-    /// <see cref="Listener"/> 永遠 <see langword="null"/>,call site
-    /// 在 <c>UpdateNoThrowAsync</c> 不被 <see cref="CacheEventFlagsExtensions.IsNoCallbacks"/>
-    /// 擋住的話會走到這 — 之後 body 內部要先看 <c>Listener is null</c>
-    /// 直接 return。NIE stub 純占位讓翻譯行對得起來。
-    /// </remarks>
-    protected async ValueTask InvokeCacheListenerForEntryEvent(
-        object key,
-        object? oldValue,
-        object? newValue,
-        object? callbackArgument,
-        CacheEventFlags eventFlags,
-        EntryEventType type,
-        bool isLocal = false,
+    protected async ValueTask InvokeCacheListenerForEntryEvent(object key, object? oldValue, object? newValue,
+        object? callbackArgument, CacheEventFlags eventFlags, EntryEventType type, bool isLocal = false,
         CancellationToken ct = default)
     {
         if (Listener is not null)
@@ -531,37 +511,65 @@ internal partial class LocalRegion : RegionInternal
         }
     }
 
-    /// <summary>
-    /// CacheWriter dispatch — 依 <paramref name="type"/> 派發到
-    /// <c>Writer</c> 的 <c>BeforeCreateAsync</c> / <c>BeforeUpdateAsync</c> /
-    /// <c>BeforeDestroyAsync</c> / <c>BeforeInvalidateAsync</c> callback;回
-    /// <see langword="true"/> 表 writer 同意該 op,<see langword="false"/>
-    /// 表 veto。Mirrors cppcache
-    /// <c>LocalRegion::invokeCacheWriterForEntryEvent</c>
-    /// (<c>cppcache/src/LocalRegion.cpp:2573-2660</c>).
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// cppcache 的 <c>BEFORE_UPDATE</c> 分支若 <paramref name="oldValue"/>
-    /// 為 <see langword="null"/> 會 fall through 到 <c>BEFORE_CREATE</c>
-    /// — 行為 1:1 翻過來時要保留。
-    /// </para>
-    /// <para>
-    /// Phase 2+ CacheWriter feature 落地才填 body。Phase 1.x
-    /// <see cref="Writer"/> 永遠 <see langword="null"/>,call sites
-    /// 一律被 <c>if (Writer is not null &amp;&amp; ...)</c> 擋住,這個
-    /// method 不會被觸發 — NIE stub 純占位讓翻譯行對得起來。
-    /// </para>
-    /// </remarks>
-    protected ValueTask<bool> InvokeCacheWriterForEntryEvent(
-        object key,
-        object? oldValue,
-        object? newValue,
-        object? aCallbackArgument,
-        CacheEventFlags eventFlags,
-        EntryEventType type) =>
-        throw new NotImplementedException(
-            "LocalRegion.InvokeCacheWriterForEntryEvent: pending Phase 2+ CacheWriter feature.");
+    protected async ValueTask<bool> InvokeCacheWriterForEntryEvent(object key, object? oldValue, object? newValue,
+        object? callbackArgument, CacheEventFlags eventFlags, EntryEventType type, CancellationToken ct = default)
+    {
+        var bCacheWriterReturn = true;
+        if (Writer is not null)
+        {
+            if (oldValue is not null && CacheableToken.IsInvalid(oldValue))
+            {
+                oldValue = null;
+            }
+            var ev = new EntryEvent(this, key, oldValue, newValue, callbackArgument, eventFlags.IsNotification());
+            var eventStr = "unknown";
+            try
+            {
+                var updateStats = true;
+                var writerStart = Stopwatch.GetTimestamp();
+                switch (type)
+                {
+                    case EntryEventType.BeforeUpdate:
+                        if (oldValue is not null)
+                        {
+                            eventStr = "beforeUpdate";
+                            bCacheWriterReturn = await Writer.BeforeUpdateAsync(ev, ct).ConfigureAwait(false);
+                            break;
+                        }
+                        eventStr = "beforeCreate";
+                        bCacheWriterReturn = await Writer.BeforeCreateAsync(ev, ct).ConfigureAwait(false);
+                        break;
+                    case EntryEventType.BeforeCreate:
+                        eventStr = "beforeCreate";
+                        bCacheWriterReturn = await Writer.BeforeCreateAsync(ev, ct).ConfigureAwait(false);
+                        break;
+                    case EntryEventType.BeforeDestroy:
+                        eventStr = "beforeDestroy";
+                        bCacheWriterReturn = await Writer.BeforeDestroyAsync(ev, ct).ConfigureAwait(false);
+                        break;
+                    case EntryEventType.BeforeInvalidate:
+                    case EntryEventType.AfterCreate:
+                    case EntryEventType.AfterUpdate:
+                    case EntryEventType.AfterInvalidate:
+                    case EntryEventType.AfterDestroy:
+                        updateStats = false;
+                        break;
+                }
+                if (updateStats)
+                {
+                    RegionStats.WriterCall(Stopwatch.GetElapsedTime(writerStart));
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(
+                    ex, "Exception in CacheWriter::{EventStr} for key {Key} on region {RegionPath}",
+                    eventStr, key, FullPath);
+                bCacheWriterReturn = false;
+            }
+        }
+        return bCacheWriterReturn;
+    }
 
     /// <summary>
     /// Schedule the entry-level expiry task for a freshly-created (or
@@ -833,7 +841,9 @@ internal partial class LocalRegion : RegionInternal
             var (remoteValue, versionTag) = await GetNoThrowRemoteAsync(key, callbackArgument, ct).ConfigureAwait(false);
             value = remoteValue;
 
-            var loader = Attributes.CacheLoader;
+            // cppcache reads the m_loader field (LocalRegion.cpp:948), wired
+            // from attributes in the ctor — same field model as listener/writer.
+            var loader = Loader;
             if ((value is null || CacheableToken.IsInvalid(value) || CacheableToken.IsTombstone(value))
                 && loader is not null)
             {

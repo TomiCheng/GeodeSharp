@@ -176,7 +176,11 @@ C# 公開介面:`Geode.Client.IRegion` + `Geode.Client.IRegion<TKey,TValue>`(typ
 - ✅ `ICacheListener` after-event dispatch:`InvokeCacheListenerForEntryEvent` 依 `EntryEventType` 派 `AfterCreate`/`AfterUpdate`/`AfterDestroy`/`AfterInvalidate`,`Listener` 從 `Attributes.CacheListener` 接線(ctor)。AFTER_UPDATE 判別式忠實(`oldValue \|\| isNotificationUpdate \|\| isLocal`)。`LocalCacheListenerTests`:新 key→afterCreate、既有 key→afterUpdate、無 listener no-op
 - ✅ `ICacheListener` stat:`CacheListenerCallCompleted`(cache)+ `ListenerCall`(region time)正確記錄(meter capture 驗)
 - ✅ listener callback 拋例外 → `CacheListenerException`(對映 `GF_CACHE_LISTENER_EXCEPTION`;`OperationCanceledException` 例外放行)
-- 🧩 `ICacheWriter` veto(before create/update/destroy):interface + `RegionAttributes.CacheWriter` + `SetCacheWriter` 在,但 **`Writer` field 未從 attributes 接線、dispatch 未接** → 設了不生效
+- ✅ `ICacheWriter` veto(`beforeCreate` / `beforeUpdate`):`InvokeCacheWriterForEntryEvent` 依 `EntryEventType` 派 `BeforeCreate`/`BeforeUpdate`Async,回 `false` 或拋例外 → op 中止拋 `CacheWriterException`。`Writer` 從 `Attributes.CacheWriter` 接線(ctor)。對映 cppcache `invokeCacheWriterForEntryEvent`(LocalRegion.cpp:2573-2641)。`LocalCacheWriterTests`:allow→成功、veto→不寫、throw→veto、existing→beforeUpdate、無 writer no-op
+- ✅ `ICacheWriter` stat:`WriterCall`(region time)記錄(`Put_RecordsWriterStats` 驗 fire 一次;cppcache writer 路徑無 cache-level counter)
+- 🚧 `ICacheWriter` `beforeDestroy`:dispatch case 在 + 經 `DestroyActions.BeforeEventType` 可達,但無 destroy-veto 測試
+- 🧩 `ICacheWriter` region-event veto(`beforeRegionClear` / `beforeRegionDestroy`):介面宣告了,但 cppcache `invokeCacheWriterForRegionEvent`(LocalRegion.cpp:2643-2691)未 port
+- 🧩 `ICacheWriter` / `ICacheListener` / `ICacheLoader` `Close`:介面宣告了,writer/listener-detach 與 region-close 時的呼叫未接
 - 🔨 `UpdateAccessAndModifiedTimeForEntry` entry-level expiry touch:外層 guard 翻好,但 `EntryExpiryEnabled=true` 時 body NIE(`ExpEntryProperties` surface 已建,寫入未接)
 
 ## Interest list / subscription
@@ -234,7 +238,7 @@ cppcache `ExceptionTypes.hpp` 58 個 exception。原則二能 BCL 取代的就�
 - 🔨 `RegionDestroyedException` — region 已銷毀(目前走 text-coded `CacheServerException`)
 - 🔨 `CacheLoaderException` — class 已建 + consumer 已接(`GetNoThrowAsync` loader catch 包 `LoadAsync` 例外);throw path 未測
 - 🔨 `CacheListenerException` — class 已建 + consumer 已接(`InvokeCacheListenerForEntryEvent` catch 包 listener callback 例外,`OperationCanceledException` 放行);throw path 未測
-- 🔨 `CacheWriterException` — class 已建,consumer 待 writer dispatch 上線(`ICacheWriter` veto 未接)
+- ✅ `CacheWriterException` — writer veto(回 `false` 或 callback 拋例外)時拋(`LocalCacheWriterTests` 驗)
 
 ## BCL 取代(不開子類)
 | cppcache | BCL |

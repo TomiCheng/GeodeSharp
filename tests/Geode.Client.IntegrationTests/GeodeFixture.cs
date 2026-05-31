@@ -144,6 +144,34 @@ public sealed class GeodeFixture : IAsyncLifetime
         ServerPort2 = _container.GetMappedPublicPort(Server2ContainerPort);
         ServerPort3 = _container.GetMappedPublicPort(Server3ContainerPort);
         ServerPorts = new[] { ServerPort, ServerPort2, ServerPort3 };
+
+        // The WithWaitStrategy above only proves the server PORTS are open;
+        // `create region --name=test` runs afterwards in the gfsh chain, so a
+        // client op can arrive before the region exists cluster-wide (server
+        // replies RegionDestroyedException). Poll gfsh until the region is
+        // registered, so tests never race region creation.
+        using var regionReadyCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        while (true)
+        {
+            try
+            {
+                var regions = await GfshAsync("list regions", regionReadyCts.Token);
+                if (regions.Contains("test", StringComparison.Ordinal))
+                {
+                    break;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                // gfsh transient (cluster still settling) — retry until the
+                // 30s budget runs out.
+            }
+            await Task.Delay(250, regionReadyCts.Token);
+        }
     }
 
     public async ValueTask DisposeAsync()

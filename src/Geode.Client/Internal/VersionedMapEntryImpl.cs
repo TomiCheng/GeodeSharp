@@ -18,7 +18,7 @@ namespace Geode.Client.Internal;
 /// Skeleton only — composed stamp + override 在 concurrency-checks
 /// 真接時補上。
 /// </remarks>
-internal sealed class VersionedMapEntryImpl : MapEntryImpl
+internal sealed class VersionedMapEntryImpl(object key) : MapEntryImpl(key)
 {
     /// <summary>
     /// Composed <see cref="VersionStamp"/> (cppcache 多重繼承

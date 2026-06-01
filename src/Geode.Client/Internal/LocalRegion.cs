@@ -1106,35 +1106,39 @@ internal partial class LocalRegion : RegionInternal
     internal EntriesMap InternalEntriesMap => _localEntriesMap.Value!;
 
     /// <inheritdoc />
-    internal override Task EvictAsync(float percentage, CancellationToken ct = default)
+    internal override async Task EvictAsync(float percentage, CancellationToken ct = default)
     {
-        throw new NotImplementedException(
-            "LocalRegion.EvictAsync: pending Phase 4 heap-LRU (LRUEntriesMap.ProcessLru(int) overload also pending).");
-        // cppcache LocalRegion::evict (LocalRegion.cpp:3155-3171):
-        //
-        //   void LocalRegion::evict(float percentage) {
-        //     boost::shared_lock<decltype(mutex_)> guard{mutex_};
-        //
-        //     if (m_released || m_destroyPending) {
-        //       return;
-        //     }
-        //
-        //     if (m_entries != nullptr) {
-        //       int32_t size = m_entries->size();
-        //       int32_t entriesToEvict = static_cast<int32_t>(percentage * size);
-        //       // only invoked from EvictionController so static_cast is always safe
-        //       LRUEntriesMap* lruMap = static_cast<LRUEntriesMap*>(m_entries);
-        //       LOGINFO("Evicting %d entries. Current entry count is %d", entriesToEvict,
-        //               size);
-        //       lruMap->processLRU(entriesToEvict);
-        //     }
-        //   }
-        //
-        // Cross-type forward — `lruMap->processLRU(entriesToEvict)` 走的是
-        // cppcache LRUEntriesMap::processLRU(int32_t) overload
-        // (LRUEntriesMap.cpp:187-198),我們目前 C# 只有 zero-arg `ProcessLru()`
-        // (對應 cppcache zero-arg overload),count-arg overload 還沒實作。
-        // 動本 method 之前要先 /cpp-stub 那個 overload。
+        // cppcache LocalRegion::evict (LocalRegion.cpp:3155-3171).
+        // boost::shared_lock → _mutex.EnterReadLockAsync。Released/destroyPending
+        //   guard 對齊。m_entries cast 到 LRUEntriesMap*:cppcache 註解
+        //   「only invoked from EvictionController so static_cast is always safe」 —
+        //   heap-LRU 開時 EntriesMapFactory 一定建 LRUEntriesMap;C# 用
+        //   `is LRUEntriesMap` pattern match,wrong type 自動 silent skip。
+        // LOGINFO → LogInformation,structured params 保留 cppcache 字面措辭。
+        // processLRU(entriesToEvict) → 走 ProcessLruAsync(int) overload。
+        await _mutex.EnterReadLockAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (_released || _destroyPending)
+            {
+                return;
+            }
+
+            if (_localEntriesMap.IsValueCreated
+                && _localEntriesMap.Value is LRUEntriesMap lruMap)
+            {
+                var size = lruMap.Count;
+                var entriesToEvict = (int)(percentage * size);
+                _logger.LogInformation(
+                    "Evicting {EntriesToEvict} entries. Current entry count is {Size}",
+                    entriesToEvict, size);
+                await lruMap.ProcessLruAsync(entriesToEvict, ct).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _mutex.ExitReadLock();
+        }
     }
 
     /// <summary>

@@ -12,8 +12,16 @@ namespace Geode.Client.Internal;
 /// Skeleton only — Key / Value / cleanup / LRU / Exp properties land
 /// with the caching-enabled work.
 /// </summary>
-internal class MapEntryImpl : MapEntry
+internal class MapEntryImpl(object key) : MapEntry
 {
+    /// <summary>
+    /// cppcache <c>m_key</c> — ctor-only,沒 setter(對齊 cppcache
+    /// <c>MapEntryImpl.hpp:56-58</c>)。LRU eviction action 用
+    /// <see cref="LRULocalDestroyAction.EvictAsync"/> 從這拿 key 給
+    /// <c>region.DestroyNoThrowAsync</c>。
+    /// </summary>
+    public override object Key { get; } = key;
+
     /// <inheritdoc />
     public override object? Value { get; set; }
 

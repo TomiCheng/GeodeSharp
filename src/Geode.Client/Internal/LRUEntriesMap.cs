@@ -195,7 +195,7 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
             UpdateMapSize(newSize);
         }
 
-        ProcessLru();
+        await ProcessLruAsync(ct).ConfigureAwait(false);
         return (entry, oldValue, isUpdate);
     }
 
@@ -239,7 +239,7 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
     /// <see cref="_action"/> (<c>LOCAL_DESTROY</c> →
     /// <see cref="ConcurrentEntriesMap.TryEvictEntry"/>).
     /// </remarks>
-    private bool EvictionHelper()
+    private async Task<bool> EvictionHelperAsync(CancellationToken ct = default)
     {
         // cppcache LRUEntriesMap::evictionHelper (LRUEntriesMap.cpp:169-185).
         // GfErrType loop-control collapses to bool: true = evicted (keep going),
@@ -250,10 +250,10 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
             return false;   // GF_ENOENT: nothing to evict.
         }
 
-        // m_action->evict(entry): LOCAL_DESTROY → region.DestroyNoThrow
-        //   (still NIE on LRULocalDestroyAction.Evict, pending DestroyNoThrow
-        //   + MapEntry.Key).
-        var evictDone = _action.Value.Evict(entry);
+        // m_action->evict(entry): LOCAL_DESTROY → region.DestroyNoThrowAsync
+        //   (still NIE on LRULocalDestroyAction.EvictAsync, pending
+        //   DestroyNoThrowAsync + MapEntry.Key).
+        var evictDone = await _action.Value.EvictAsync(entry, ct).ConfigureAwait(false);
 
         // overflow-only valid-count adjust (deferred path).
         if (_action.Value.Overflows && evictDone)
@@ -276,11 +276,39 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
     /// into the entry-count + LOCAL_DESTROY loop; heap-LRU branches +
     /// non-destroy actions deferred.
     /// </remarks>
-    private void ProcessLru()
+    private async Task ProcessLruAsync(CancellationToken ct = default)
     {
         while (MustEvict())
         {
-            EvictionHelper();
+            await EvictionHelperAsync(ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Evict up to <paramref name="numEntriesToEvict"/> entries from the LRU
+    /// head. Mirrors cppcache <c>LRUEntriesMap::processLRU(int32_t)</c>
+    /// overload (<c>cppcache/src/LRUEntriesMap.cpp:187-198</c>) — called from
+    /// <see cref="LocalRegion.EvictAsync"/> with the controller-computed count.
+    /// </summary>
+    /// <remarks>
+    /// 跟 zero-arg overload 區別:這條走「指定數量」(EvictionController 算出
+    /// 的 entriesToEvict),zero-arg 是「踢到不超過 limit 為止」。
+    /// cppcache 的 <c>int32_t evicted = 0; ...; evicted++</c> 是 dead local
+    /// (沒 log 讀它,純為 future LOGFINE 預留),C# 鏡像時 drop。
+    /// </remarks>
+    internal async Task ProcessLruAsync(int numEntriesToEvict, CancellationToken ct = default)
+    {
+        for (var i = 0; i < numEntriesToEvict; i++)
+        {
+            // cppcache `m_validEntries > 0 && size() > 0` guard —
+            //   tombstones-only 殘留時 _validEntries 是 0(tombstone 不算 valid),
+            //   保護無限 loop。EvictionHelperAsync 的回傳 false(queue 空)
+            //   cppcache 並未 break,我們也照鏡像不 break。
+            if (_validEntries <= 0 || Count <= 0)
+            {
+                break;
+            }
+            await EvictionHelperAsync(ct).ConfigureAwait(false);
         }
     }
 

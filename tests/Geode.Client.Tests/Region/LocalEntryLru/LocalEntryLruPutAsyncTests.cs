@@ -101,13 +101,9 @@ public class LocalEntryLruPutAsyncTests(IGeodeCacheFactory factory)
 
     // LRU eviction: with a 2-entry limit, putting a 3rd entry must evict the
     // least-recently-used one, capping the local entry count at 2.
-    // Skipped: eviction is async (evict -> async local destroy / backing-store
-    // read-back), but the entry-map Put override that triggers it is synchronous
-    // (mirrors cppcache ConcurrentEntriesMap::put). Driving the async eviction
-    // path from a sync Put is the Phase 4 work deferred alongside the
-    // IPersistenceManager async move — no sync-over-async bridge. Un-skip when
-    // that path lands.
-    [Fact(Skip = "Pending Phase 4 async eviction path (sync Put cannot drive async evict).")]
+    // EntriesMap mutators 全面 async 化 + LRULocalDestroyAction.EvictAsync 接通後
+    // (commit fad0859 / 後續 chain),整條 sync→async 的橋接已解開,Skip 拔掉。
+    [Fact]
     public async Task PutAsync_BeyondLruLimit_EvictsToLimit()
     {
         const string cacheName = nameof(LocalEntryLruPutAsyncTests) + "_lruEvict";

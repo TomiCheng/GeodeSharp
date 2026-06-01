@@ -69,12 +69,12 @@ internal class EntryFactory(IServiceProvider serviceProvider, bool concurrencyCh
             }
         }
 
-        // cppcache EntryFactory::newMapEntry — concurrency-checks 切兩種 entry 型別
+        // cppcache EntryFactory::newMapEntry — concurrency-checks 切兩種 entry 型別。
+        // cppcache `m_entryFactory->newMapEntry(_, key, newEntry)` 把 key 寫進 m_key;
+        // 對應到 C# ctor 收 key 進 readonly Key 屬性(ctor-only,無 setter)。
         MapEntry entry = ConcurrencyChecksEnabled
-            ? new VersionedMapEntryImpl()
-            : new MapEntryImpl();
-        // cppcache `m_entryFactory->newMapEntry(_, key, newEntry)` 之後 key 寫進
-        //   m_key — C# 港 MapEntry 還沒 Key field,待 GetEntry 路徑要用時補。
+            ? new VersionedMapEntryImpl(key)
+            : new MapEntryImpl(key);
         entry.Value = newValue;
         if (ConcurrencyChecksEnabled)
         {

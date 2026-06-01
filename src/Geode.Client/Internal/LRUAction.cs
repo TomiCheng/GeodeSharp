@@ -49,9 +49,11 @@ internal abstract class LRUAction
     /// <summary>
     /// Perform the eviction action on <paramref name="entry"/>; returns
     /// <see langword="true"/> when done. Mirrors cppcache <c>evict</c>
-    /// (<c>cppcache/src/LRUAction.hpp:82</c>, pure virtual).
+    /// (<c>cppcache/src/LRUAction.hpp:82</c>, pure virtual) — cppcache 是
+    /// sync,我們 async-first(OVERFLOW_TO_DISK 走 IPersistenceManager.WriteAsync,
+    /// 其他 action 走 region.DestroyNoThrowAsync / InvalidateAsync,都是 async)。
     /// </summary>
-    public abstract bool Evict(MapEntry entry);
+    public abstract Task<bool> EvictAsync(MapEntry entry, CancellationToken ct = default);
     public static LRUAction NewLRUAction(IServiceProvider serviceProvider,
         Action action, LocalRegion region, LRUEntriesMap lRUEntriesMap)
     {
@@ -91,10 +93,41 @@ internal sealed class LRUDestroyAction : LRUAction
     /// <summary>
     /// cppcache: <c>m_regionPtr-&gt;destroyNoThrow(key, EVICTION, …)</c> when
     /// the region isn't already destroyed. Pending the region destroy path
-    /// (Phase 2+); needs <c>MapEntry</c> key + <c>DestroyNoThrow</c>.
+    /// (Phase 2+); needs <c>MapEntry</c> key + <c>DestroyNoThrowAsync</c>.
     /// </summary>
-    public override bool Evict(MapEntry entry) => throw new NotImplementedException(
-        "LRUDestroyAction.Evict: pending region DestroyNoThrow (EVICTION) path.");
+    public override Task<bool> EvictAsync(MapEntry entry, CancellationToken ct = default)
+    {
+        throw new NotImplementedException(
+            "LRUDestroyAction.EvictAsync: pending region DestroyNoThrow (EVICTION) path.");
+        // cppcache LRUDestroyAction::evict (LRUAction.hpp:111-125, inline):
+        //
+        //   bool evict(const std::shared_ptr<MapEntryImpl>& mePtr) override {
+        //     std::shared_ptr<CacheableKey> keyPtr;
+        //     mePtr->getKeyI(keyPtr);
+        //     std::shared_ptr<VersionTag> versionTag;
+        //     //  we should invoke the destroyNoThrow with appropriate
+        //     // flags to correctly invoke listeners
+        //     LOGDEBUG("LRUDestroy: evicting entry with key [%s]",
+        //              Utils::nullSafeToString(keyPtr).c_str());
+        //     GfErrType err = GF_NOERR;
+        //     if (!m_regionPtr->isDestroyed()) {
+        //       err = m_regionPtr->destroyNoThrow(keyPtr, nullptr, -1,
+        //                                         CacheEventFlags::EVICTION, versionTag);
+        //     }
+        //     return (err == GF_NOERR);
+        //   }
+        //
+        // Cross-type forward — `m_regionPtr->destroyNoThrow(...)` lands in
+        // cppcache LocalRegion::destroyNoThrow,我們 C# 已有
+        // LocalRegion.DestroyNoThrowAsync (LocalRegion.cs:691)。
+        // Dependencies:
+        //   - MapEntry.Key getter(取出 keyPtr,cppcache `mePtr->getKeyI(keyPtr)`)
+        //   - RegionInternal.IsDestroyed property(目前 NIE,需 LocalRegion override
+        //     回 `_released || _destroyPending`)
+        //   - CacheEventFlags.Eviction 旗標(現有,Phase 2 已落)
+        //   - versionTag 由 cppcache 從 caller 帶下來但這裡只當 out-shape 占位,
+        //     C# 對應 DestroyNoThrowAsync 直接收 null。
+    }
 }
 
 /// <summary>
@@ -120,8 +153,9 @@ internal sealed class LRULocalInvalidateAction : LRUAction
     /// invalidate of the entry's value. Pending the region invalidate path
     /// (Phase 2+).
     /// </summary>
-    public override bool Evict(MapEntry entry) => throw new NotImplementedException(
-        "LRULocalInvalidateAction.Evict: pending region local-invalidate path.");
+    public override Task<bool> EvictAsync(MapEntry entry, CancellationToken ct = default)
+        => throw new NotImplementedException(
+            "LRULocalInvalidateAction.EvictAsync: pending region local-invalidate path.");
 }
 
 /// <summary>
@@ -150,8 +184,9 @@ internal sealed class LRUOverFlowToDiskAction : LRUAction
     /// value to disk + swap in <see cref="CacheableToken"/>.Overflowed.
     /// Pending the persistence manager (Phase 4).
     /// </summary>
-    public override bool Evict(MapEntry entry) => throw new NotImplementedException(
-        "LRUOverFlowToDiskAction.Evict: pending Phase 4 persistence manager (overflow-to-disk).");
+    public override Task<bool> EvictAsync(MapEntry entry, CancellationToken ct = default)
+        => throw new NotImplementedException(
+            "LRUOverFlowToDiskAction.EvictAsync: pending Phase 4 persistence manager (overflow-to-disk).");
 }
 
 /// <summary>
@@ -160,16 +195,20 @@ internal sealed class LRUOverFlowToDiskAction : LRUAction
 /// (<c>cppcache/src/LRULocalDestroyAction.hpp:38</c>). Default eviction
 /// action for <c>LocalEntryLru</c>.
 /// </summary>
-internal sealed class LRULocalDestroyAction
-    : LRUAction
+internal sealed class LRULocalDestroyAction : LRUAction
 {
     private readonly LocalRegion _region;
     private readonly LRUEntriesMap _entriesMap;
+    private readonly ILogger<LRULocalDestroyAction> _logger;
 
-    public LRULocalDestroyAction(LocalRegion region, LRUEntriesMap entriesMap)
+    public LRULocalDestroyAction(
+        LocalRegion region,
+        LRUEntriesMap entriesMap,
+        ILogger<LRULocalDestroyAction> logger)
     {
         _region = region;
         _entriesMap = entriesMap;
+        _logger = logger;
         // local destroy: removes the entry but does NOT distribute (no m_distributes).
         Destroys = true;
     }
@@ -179,29 +218,40 @@ internal sealed class LRULocalDestroyAction
 
     /// <summary>
     /// cppcache <c>LRULocalDestroyAction::evict</c>
-    /// (<c>cppcache/src/LRULocalDestroyAction.cpp</c>): <c>getKeyI</c> →
-    /// <c>m_regionPtr-&gt;destroyNoThrow(key, EVICTION | LOCAL, …)</c>,
-    /// returns <c>err == GF_NOERR</c>. Pending region <c>DestroyNoThrow</c>
-    /// + <c>MapEntry.Key</c>.
+    /// (<c>cppcache/src/LRULocalDestroyAction.cpp:27-39</c>):
+    /// <c>getKeyI</c> → <c>region.destroyNoThrow(key, EVICTION | LOCAL, …)</c>。
+    /// 成功 (err == GF_NOERR) 回 true,失敗或 region 已 destroy 回 false。
     /// </summary>
-    public override bool Evict(MapEntry entry)
+    public override async Task<bool> EvictAsync(MapEntry entry, CancellationToken ct = default)
     {
-        throw new NotImplementedException(
-            "LRULocalDestroyAction.Evict: pending region DestroyNoThrow (EVICTION | LOCAL) + MapEntry.Key.");
-        // cppcache LRULocalDestroyAction::evict (LRULocalDestroyAction.cpp:27-39):
-        //
-        //   bool LRULocalDestroyAction::evict(const std::shared_ptr<MapEntryImpl>& mePtr) {
-        //     std::shared_ptr<CacheableKey> keyPtr;
-        //     mePtr->getKeyI(keyPtr);
-        //     std::shared_ptr<VersionTag> versionTag;
-        //     //  we should invoke the destroyNoThrow with appropriate
-        //     // flags to correctly invoke listeners
-        //     LOGDEBUG("LRULocalDestroy: evicting entry with key [%s]",
-        //              Utils::nullSafeToString(keyPtr).c_str());
-        //     GfErrType err = m_regionPtr->destroyNoThrow(
-        //         keyPtr, nullptr, -1, CacheEventFlags::EVICTION | CacheEventFlags::LOCAL,
-        //         versionTag);
-        //     return (err == GF_NOERR);
-        //   }
+        // cppcache LRULocalDestroyAction::evict (LRULocalDestroyAction.cpp:27-39).
+        // cppcache `mePtr->getKeyI(keyPtr)` → C# `entry.Key`(MapEntryImpl ctor 收進)。
+        // LOGDEBUG → LogDebug + structured。
+        // err-code → exception:`DestroyNoThrowAsync` throw 視為 evict 失敗,
+        //   try/catch 收 GeodeException 系列轉 false 給 caller。
+        // versionTag = null:cppcache 是 out-param 起始 null,給 DestroyNoThrowAsync
+        //   的 default 直接吃。
+        // CacheEventFlags.Eviction | .Local — 對應 cppcache 旗標。
+        // cppcache `if (!m_regionPtr->isDestroyed())` 對應 LocalRegion 自己會在
+        //   DestroyActions 路徑檢查 _released / _destroyPending,這裡省略外層 guard。
+        var key = entry.Key;
+        _logger.LogDebug("LRULocalDestroy: evicting entry with key [{Key}]", key);
+
+        try
+        {
+            await _region.DestroyNoThrowAsync(
+                key,
+                callbackArgument: null,
+                updateCount: -1,
+                eventFlags: CacheEventFlags.Eviction | CacheEventFlags.Local,
+                versionTag: null,
+                ct: ct).ConfigureAwait(false);
+            return true;
+        }
+        catch (GeodeException)
+        {
+            // 對應 cppcache `err != GF_NOERR` 路徑 — 不丟,通知 caller 沒成功。
+            return false;
+        }
     }
 }

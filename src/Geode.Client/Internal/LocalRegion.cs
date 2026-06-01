@@ -1108,14 +1108,25 @@ internal partial class LocalRegion : RegionInternal
     /// <inheritdoc />
     internal override async Task EvictAsync(float percentage, CancellationToken ct = default)
     {
-        // cppcache LocalRegion::evict (LocalRegion.cpp:3155-3171).
-        // boost::shared_lock → _mutex.EnterReadLockAsync。Released/destroyPending
-        //   guard 對齊。m_entries cast 到 LRUEntriesMap*:cppcache 註解
-        //   「only invoked from EvictionController so static_cast is always safe」 —
-        //   heap-LRU 開時 EntriesMapFactory 一定建 LRUEntriesMap;C# 用
-        //   `is LRUEntriesMap` pattern match,wrong type 自動 silent skip。
-        // LOGINFO → LogInformation,structured params 保留 cppcache 字面措辭。
-        // processLRU(entriesToEvict) → 走 ProcessLruAsync(int) overload。
+        // cppcache LocalRegion::evict (LocalRegion.cpp:3155-3171) holds a
+        // boost::shared_lock for the WHOLE evict. We can't: our Phase-1.x
+        // AsyncReaderWriterLock is an exclusive non-reentrant SemaphoreSlim
+        // (see its remarks). The per-entry destroy chain
+        //   ProcessLruAsync → EvictionHelperAsync → LRULocalDestroyAction
+        //   → DestroyNoThrowAsync → UpdateNoThrowAsync → CheckDestroyPendingAsync
+        // re-acquires _mutex, so holding it across ProcessLruAsync would
+        // self-deadlock. So we take the lock ONLY to read the released/
+        // destroyPending guard + snapshot the map reference, release it, then
+        // drive ProcessLruAsync lock-free.
+        //
+        // Safe despite the early release: the LRUEntriesMap reference is stable
+        // once the Lazy is materialised, and each per-entry destroy re-checks
+        // _destroyPending itself — a region torn down mid-evict surfaces
+        // RegionDestroyedException, which LRULocalDestroyAction.EvictAsync
+        // swallows (returns false). This is the same lock-free-during-eviction
+        // shape the entry-count LRU path already relies on (Put doesn't hold
+        // _mutex across its ProcessLruAsync either).
+        LRUEntriesMap? lruMap = null;
         await _mutex.EnterReadLockAsync(ct).ConfigureAwait(false);
         try
         {
@@ -1124,21 +1135,32 @@ internal partial class LocalRegion : RegionInternal
                 return;
             }
 
+            // m_entries cast → LRUEntriesMap:heap-LRU 開時 EntriesMapFactory
+            //   一定建 LRUEntriesMap;wrong type / 未 materialize → silent skip。
             if (_localEntriesMap.IsValueCreated
-                && _localEntriesMap.Value is LRUEntriesMap lruMap)
+                && _localEntriesMap.Value is LRUEntriesMap m)
             {
-                var size = lruMap.Count;
-                var entriesToEvict = (int)(percentage * size);
-                _logger.LogInformation(
-                    "Evicting {EntriesToEvict} entries. Current entry count is {Size}",
-                    entriesToEvict, size);
-                await lruMap.ProcessLruAsync(entriesToEvict, ct).ConfigureAwait(false);
+                lruMap = m;
             }
         }
         finally
         {
             _mutex.ExitReadLock();
         }
+
+        if (lruMap is null)
+        {
+            return;
+        }
+
+        // LOGINFO → LogInformation,structured params 保留 cppcache 字面措辭。
+        // processLRU(entriesToEvict) → ProcessLruAsync(int) overload。
+        var size = lruMap.Count;
+        var entriesToEvict = (int)(percentage * size);
+        _logger.LogInformation(
+            "Evicting {EntriesToEvict} entries. Current entry count is {Size}",
+            entriesToEvict, size);
+        await lruMap.ProcessLruAsync(entriesToEvict, ct).ConfigureAwait(false);
     }
 
     /// <summary>

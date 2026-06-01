@@ -200,6 +200,51 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
     }
 
     /// <summary>
+    /// Remove override that keeps the heap-LRU bookkeeping in sync. Mirrors
+    /// cppcache <c>LRUEntriesMap::remove</c>
+    /// (<c>cppcache/src/LRUEntriesMap.cpp:432-474</c>) — base remove, then
+    /// pull the entry out of the MRU queue, drop the valid-entry count, and
+    /// decrement the running heap total by key + value size.
+    /// </summary>
+    /// <remarks>
+    /// 整段 gate 在 <c>_evictionController is not null</c>(= heap-LRU 開)。
+    /// entry-count LRU path(controller 為 null)維持 base 行為 — queue 留
+    /// stale handle、不動 heap 帳(對齊現有 Clear() 的容忍註解)。
+    /// <para>
+    /// 關鍵:沒有這個 decrement,eviction destroy 走回本 method 卻不扣
+    /// <c>_heapSize</c>,EvictionController 會永遠看到 over-limit、無限驅逐。
+    /// cppcache 正是在這裡用 <c>updateMapSize(-sizeToRemove)</c> 讓控制迴圈收斂。
+    /// </para>
+    /// </remarks>
+    public override async Task<(MapEntry? Entry, object? OldValue)> RemoveAsync(
+        object key, int updateCount, VersionTag? versionTag, bool afterRemote,
+        CancellationToken ct = default)
+    {
+        var (entry, oldValue) = await base
+            .RemoveAsync(key, updateCount, versionTag, afterRemote, ct)
+            .ConfigureAwait(false);
+
+        if (_evictionController is not null && entry is not null && oldValue is not null)
+        {
+            // cppcache L444-448: 從 MRU 佇列拔掉 + 調整 valid-entry 計數。
+            // Eviction 路徑下 entry 已被 EvictionHelperAsync Pop 過,這裡的
+            // Remove 是無害 no-op;user 直接 destroy heap-LRU region 時才做真正清理。
+            _lruQueue.Remove(entry);
+            if (!CacheableToken.IsToken(oldValue))
+            {
+                --_validEntries;
+            }
+
+            // cppcache L465-468: 用 key + value 的 size 把 heap 總和扣回去。
+            var sizeToRemove = _serializationRegistry.CheckAndGetObjectSize(key)
+                             + _serializationRegistry.CheckAndGetObjectSize(oldValue);
+            UpdateMapSize(-sizeToRemove);
+        }
+
+        return (entry, oldValue);
+    }
+
+    /// <summary>
     /// Count of non-token (valid) entries. Mirrors cppcache
     /// <c>LRUEntriesMap::validEntriesSize</c>
     /// (<c>cppcache/src/LRUEntriesMap.hpp:124</c>,

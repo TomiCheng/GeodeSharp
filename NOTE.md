@@ -109,6 +109,20 @@ cppcache `cppcache/src/TcrMessage.hpp`)。
   那條(`LocalRegion.cpp:999-1007`)無法忠實複製,只能 keep fetched
   value。Phase 1.x 不可達(concurrency checks 未驅動);等 entries map
   能回 race-loser value 再修。
+- **`LocalRegion.EvictAsync` 提早釋 `_mutex`(不持鎖跨逐出)** — cppcache
+  `LocalRegion::evict` 取 `boost::shared_lock` **持鎖跨整段** evict(讀鎖
+  可共存,下游 `destroyNoThrow` 也取 shared lock 不卡)。我們的 Phase-1.x
+  `AsyncReaderWriterLock` 是 `SemaphoreSlim(1,1)` — **排他 + 非重入**,
+  若持鎖跑 `ProcessLruAsync`,逐出鏈
+  (`LRULocalDestroyAction → DestroyNoThrowAsync → UpdateNoThrowAsync →
+  CheckDestroyPendingAsync`)會再取同一把鎖 → **self-deadlock**。
+  對策:`EvictAsync` 只圈最開頭(`_released`/`_destroyPending` guard +
+  snapshot `LRUEntriesMap` 參考)就釋鎖,`ProcessLruAsync` 在鎖外跑。
+  安全性靠「map 參考 materialize 後穩定 + 下游各自 re-check
+  `_destroyPending`(torn-down race → `RegionDestroyedException` 被
+  `LRULocalDestroyAction` catch 掉)」補回 —— 跟 entry-count LRU 既有形狀
+  一致(`Put` 也沒持鎖跨它的 `ProcessLruAsync`)。等 `AsyncReaderWriterLock`
+  升級成真讀寫鎖(讀鎖可共存)再回到 cppcache「持鎖跨整段」形狀。
 
 ---
 

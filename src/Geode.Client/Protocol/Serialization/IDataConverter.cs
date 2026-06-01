@@ -125,4 +125,19 @@ internal interface IDataConverter
     /// <summary>Async 版本的 <see cref="Read"/>;default interface method,wrap sync。</summary>
     ValueTask<object?> ReadAsync(DataInput reader, byte dsCode, int depth, CancellationToken ct) =>
         ValueTask.FromResult(Read(reader, dsCode, depth));
+
+    /// <summary>
+    /// 估算 <paramref name="value"/> 的記憶體佔用(bytes),供 heap-LRU
+    /// 帳本(<c>LRUEntriesMap._currentMapSize</c>)累計使用。對映 cppcache
+    /// <c>Serializable::objectSize()</c>(<c>cppcache/include/geode/Serializable.hpp</c>,
+    /// default 回 0,「只有用 HeapLRU 才需實作」)。
+    /// </summary>
+    /// <remarks>
+    /// 估算精度不需 byte 級準(cppcache 也是估)— 直覺:<c>string</c> ?= <c>Length*2</c>、
+    /// <c>int[]</c> ?= <c>Length*4</c>、<c>byte[]</c> ?= <c>Length</c>(可加 DSCode tag
+    /// + 長度前綴幾 bytes)。default interface method 回 0 = 本 converter 不參與 heap 控管
+    /// (跟 cppcache 行為一致),個別 converter 視需要 override。
+    /// <see cref="DataConverter{T}"/> 走 typed bridge 過 <see cref="IDataConverter{T}.GetObjectSize"/>。
+    /// </remarks>
+    int GetObjectSize(object value) => 0;
 }

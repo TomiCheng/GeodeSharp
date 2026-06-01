@@ -37,6 +37,14 @@ internal abstract class DataConverter<T> : IDataConverter<T>
     public virtual ValueTask<T?> ReadAsync(DataInput reader, byte dsCode, int depth, CancellationToken ct) =>
         ValueTask.FromResult(Read(reader, dsCode, depth));
 
+    /// <summary>
+    /// 預設回 0 — 對齊 cppcache <c>Serializable::objectSize()</c> default,
+    /// 「不參與 heap-LRU 控管」。要參與的 converter 自己 override
+    /// (典型:<c>StringDataConverter</c> 回 <c>value.Length * 2</c>,
+    /// <c>byte[]</c> 回 <c>value.Length</c> 等)。
+    /// </summary>
+    public virtual int GetObjectSize(T value) => 0;
+
     // Bridges to the non-generic interface — registry holds IDataConverter,
     // dispatches via these overloads. Casts are safe because the registry
     // looks codecs up by ManagedType / DsCodes.
@@ -51,4 +59,7 @@ internal abstract class DataConverter<T> : IDataConverter<T>
 
     async ValueTask<object?> IDataConverter.ReadAsync(DataInput reader, byte dsCode, int depth, CancellationToken ct) =>
         await ReadAsync(reader, dsCode, depth, ct);
+
+    int IDataConverter.GetObjectSize(object value) =>
+        GetObjectSize((T)value);
 }

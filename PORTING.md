@@ -140,9 +140,19 @@ C# 公開介面:`Geode.Client.IRegion` + `Geode.Client.IRegion<TKey,TValue>`(typ
 - 🔨 `LocalClear` 清空 local map
 - 🔨 `LocalInvalidateRegion` 整 region local 標 invalid
 
-## LocalLRU
-- ⏳ 配 LRU eviction 後 `LocalPut` 觸發逐出
-- ⏳ LRU 不影響 server-side 操作
+## LRU eviction
+對應 cppcache `LRUEntriesMap` / `LRUAction` / `EvictionController`。
+
+### LRU Type
+
+- ✅ Count LRU
+- 🚧 Heap LRU(端到端可動;偏離見 NOTE.md)
+
+### LRUAction(4 subclass)
+- ✅ `LRULocalDestroyAction`(`LocalDestroy`,count + heap 預設)
+- 🔨 `LRUDestroyAction`(`Destroy`)— scaffold,待 `IsDestroyed`
+- 🔨 `LRULocalInvalidateAction`(`Invalidate`)
+- 🔨 `LRUOverFlowToDiskAction`(`OverflowToDisk`)— 待 Phase 4 persistence
 
 ## 列舉 / 巡訪
 - 🔨 `Keys` / `Values` / `Entries` 列 local
@@ -193,6 +203,17 @@ C# 公開介面:`Geode.Client.IRegion` + `Geode.Client.IRegion<TKey,TValue>`(typ
 
 ## Back-ref
 - 🔨 `RegionService` 回所屬 cache
+
+---
+
+# Serialization
+
+對應 cppcache `Serializable` / `DataSerializable` / `PdxSerializable`。
+C# 公開介面:`IDataConverter` / `IPdxSerializable<TSelf>` / `IPdxSerializer<T>`。
+
+## Heap sizing(`GetObjectSize`,對映 cppcache `Serializable::objectSize`)
+- 🚧 非 PDX(`IDataConverter`)
+- 🔨 PDX(`IPdxSerializable` / `IPdxSerializer`)
 
 ---
 

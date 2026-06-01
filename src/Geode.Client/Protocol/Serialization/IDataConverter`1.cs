@@ -27,4 +27,11 @@ internal interface IDataConverter<T> : IDataConverter
 
     /// <summary>Typed async 版,no boxing。</summary>
     new ValueTask<T?> ReadAsync(DataInput reader, byte dsCode, int depth, CancellationToken ct);
+
+    /// <summary>
+    /// Typed counterpart to <see cref="IDataConverter.GetObjectSize"/>;
+    /// no boxing。實作者只需 override 這個 typed 版本,non-generic 由
+    /// <see cref="DataConverter{T}"/> 自動 bridge。
+    /// </summary>
+    int GetObjectSize(T value);
 }

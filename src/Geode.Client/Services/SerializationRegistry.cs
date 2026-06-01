@@ -369,9 +369,49 @@ internal sealed class SerializationRegistry(
         //     remote-schema divergence scenario shows up.
         return value;
     }
+    /// <summary>
+    /// 估算 <paramref name="newValue"/> 的記憶體佔用(bytes),供
+    /// <see cref="Geode.Client.Internal.LRUEntriesMap.UpdateMapSize"/> 累計
+    /// 到 heap-LRU 帳本。對映 NOTE.md「Heap-LRU entry sizing」三路 dispatch:
+    /// </summary>
+    /// <remarks>
+    /// <list type="number">
+    ///   <item>已註冊的 built-in converter → <see cref="IDataConverter.GetObjectSize"/>
+    ///         (generic-open form fallback,對齊 <see cref="WriteObjectAsync"/>)。</item>
+    ///   <item>PDX 註冊型別 → <c>PdxEntry.GetObjectSize</c>(intrusive
+    ///         <c>IPdxSerializable&lt;T&gt;.GetObjectSize()</c> 或
+    ///         external <c>IPdxSerializer&lt;T&gt;.GetObjectSize(obj)</c>)。</item>
+    ///   <item>都不是 → 0(對齊 cppcache「回 0 = 不參與 heap 控管」default)。</item>
+    /// </list>
+    /// Return type <see cref="long"/> 配合 <c>LRUEntriesMap._currentMapSize</c>
+    /// 累計型別;個別 converter 回 <see cref="int"/> 隱式拓展。
+    /// </remarks>
     public long CheckAndGetObjectSize(object? newValue)
     {
-        // TODO
+        if (newValue is null) return 0L;
+
+        var type = newValue.GetType();
+
+        // Path 1: built-in IDataConverter(對齊 TryWriteBuiltInAsync 的查表方式 —
+        // 先精確型別,失敗再試 generic-open form 給 List<>/HashSet<>/Dictionary<,>)。
+        if (!_byType.TryGetValue(type, out var converter) && type.IsGenericType)
+        {
+            _byType.TryGetValue(type.GetGenericTypeDefinition(), out converter);
+        }
+        if (converter is not null)
+        {
+            return converter.GetObjectSize(newValue);
+        }
+
+        // Path 2: PDX-registered 型別(intrusive 走 IPdxSerializable.GetObjectSize,
+        // external 走 IPdxSerializer.GetObjectSize,兩條都收進 PdxEntry.GetObjectSize delegate)。
+        if (typeRegistry.TryGetEntry(type, out var entry))
+        {
+            return entry.GetObjectSize(newValue);
+        }
+
+        // Path 3: 沒對映 — cppcache Serializable::objectSize() default 回 0,
+        // 語意「該型別不參與 heap 控管」。
         return 0L;
     }
 }

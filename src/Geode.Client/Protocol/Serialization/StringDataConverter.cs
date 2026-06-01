@@ -90,6 +90,15 @@ internal sealed class StringDataConverter(SystemProperties systemProperties)
     public override byte[] DsCodes => _dsCodes;
 
     /// <summary>
+    /// Heap-LRU size estimate:CLR <see cref="string"/> 內部以 UTF-16
+    /// 儲存,每 char 2 bytes,故估 <c>Length * 2</c>。對齊 NOTE.md
+    /// 「Heap-LRU entry sizing」的 <c>string ?= Length*2</c> 直覺值;
+    /// 不含 DSCode tag / 長度前綴那幾 bytes(估算不需 byte 級精準,
+    /// cppcache <c>objectSize</c> 也是估)。
+    /// </summary>
+    public override int GetObjectSize(string value) => value.Length * 2;
+
+    /// <summary>
     /// Pick which of the four encode DSCodes to emit for
     /// <paramref name="value"/>. Algorithm matches cppcache
     /// <c>DataOutput::writeString</c>: count chars, add per-char

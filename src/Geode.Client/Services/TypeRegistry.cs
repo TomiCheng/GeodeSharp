@@ -24,7 +24,8 @@ internal sealed class TypeRegistry(ILogger<TypeRegistry> logger) : ITypeRegistry
             ClrType: typeof(T),
             ClassName: className ?? typeof(T).FullName!,
             Write: (obj, w) => ((T)obj).ToData(w),
-            Read: r => T.FromData(r)!);
+            Read: r => T.FromData(r)!,
+            GetObjectSize: obj => ((T)obj).GetObjectSize());
 
         AddOrThrow(entry);
     }
@@ -42,7 +43,8 @@ internal sealed class TypeRegistry(ILogger<TypeRegistry> logger) : ITypeRegistry
             ClrType: typeof(T),
             ClassName: className ?? typeof(T).FullName!,
             Write: (obj, w) => serializer.ToData((T)obj, w),
-            Read: r => serializer.FromData(r)!);
+            Read: r => serializer.FromData(r)!,
+            GetObjectSize: obj => serializer.GetObjectSize((T)obj));
 
         AddOrThrow(entry);
     }
@@ -84,5 +86,6 @@ internal sealed class TypeRegistry(ILogger<TypeRegistry> logger) : ITypeRegistry
         Type ClrType,
         string ClassName,
         Action<object, IPdxWriter> Write,
-        Func<IPdxReader, object> Read);
+        Func<IPdxReader, object> Read,
+        Func<object, int> GetObjectSize);
 }

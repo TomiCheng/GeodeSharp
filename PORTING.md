@@ -149,10 +149,17 @@ C# 公開介面:`Geode.Client.IRegion` + `Geode.Client.IRegion<TKey,TValue>`(typ
 - 🚧 Heap LRU(端到端可動;偏離見 NOTE.md)
 
 ### LRUAction(4 subclass)
+> `EntriesMapFactory` 只依 DiskPolicy 在 `LocalDestroy` / `OverflowToDisk`
+> 間選(line 63 寫死,不讀 `LruEvictionAction`,鏡像 cppcache)→
+> `Destroy` / `Invalidate` 結構性不可達。
+
 - ✅ `LRULocalDestroyAction`(`LocalDestroy`,count + heap 預設)
-- 🔨 `LRUDestroyAction`(`Destroy`)— scaffold,待 `IsDestroyed`
-- 🔨 `LRULocalInvalidateAction`(`Invalidate`)
-- 🔨 `LRUOverFlowToDiskAction`(`OverflowToDisk`)— 待 Phase 4 persistence
+- 🚧 `LRUDestroyAction`(`Destroy`)— 實作完成,但 factory 不選此 action(不可達 + 無測試)
+- 🔨 `LRULocalInvalidateAction`(`Invalidate`)— 不可達;且需先實作 region
+  `InvalidateAsync`(目前 NIE)
+- 🔨 `LRUOverFlowToDiskAction`(`OverflowToDisk`)— value 寫磁碟
+  (`IPersistenceManager.WriteAsync`)+ 記憶體換 overflow token;待 Phase 4
+  persistence manager 實作
 
 ## 列舉 / 巡訪
 - 🔨 `Keys` / `Values` / `Entries` 列 local

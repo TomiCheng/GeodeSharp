@@ -62,6 +62,13 @@ internal partial class LocalRegion : RegionInternal
     /// <summary>cppcache <c>m_destroyPending</c>: region teardown in progress.</summary>
     protected bool _destroyPending;
 
+    /// <summary>
+    /// cppcache <c>LocalRegion::isDestroyed</c> — region 已銷毀或正在銷毀。
+    /// <c>m_released || m_destroyPending</c> 的 OR。供
+    /// <see cref="LRUDestroyAction"/> 逐出前的 guard 等使用。
+    /// </summary>
+    public override bool IsDestroyed => _released || _destroyPending;
+
     /// <summary>cppcache <c>m_enableTimeStatistics</c>: time-histogram flag (OTel always on; kept for parity).</summary>
     protected bool _enableTimeStatistics;
 

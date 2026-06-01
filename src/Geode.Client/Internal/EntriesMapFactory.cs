@@ -65,6 +65,14 @@ internal static class EntriesMapFactory
             }
             else
             {
+                // dpType 非 Overflows / 非 None + heapLRU 沒開(實務上 = Persist
+                // disk policy)。cppcache 同樣回 nullptr(EntriesMapFactory.cpp:64)。
+                // TODO Phase 4 disk-policy: caller 缺 null guard —
+                //   LocalRegion lazy / CacheImpl.CreateRegionInternalAsync 直接把
+                //   null 收進 _localEntriesMap,之後 InternalEntriesMap (`Value!`)
+                //   會 NRE。cppcache 在 CacheImpl 端檢 nullptr → RegionCreationFailed。
+                //   接 Persist / overflow-to-disk(LRUOverFlowToDiskAction 仍 NIE)時
+                //   一併補 caching-enabled + null-map 的拒絕路徑。目前不可達。
                 return null;
             }
             if (ttl > TimeSpan.Zero || idle > TimeSpan.Zero)

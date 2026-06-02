@@ -1,3 +1,4 @@
+using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -44,7 +45,7 @@ internal abstract class LRUAction
     public bool Distributes { get; protected set; }
 
     /// <summary>cppcache <c>m_overflows</c>: action spills the value to disk.</summary>
-    public bool Overflows { get; protected set; }
+    public virtual bool Overflows => false;
 
     /// <summary>
     /// Perform the eviction action on <paramref name="entry"/>; returns
@@ -166,29 +167,74 @@ internal sealed class LRULocalInvalidateAction : LRUAction
 /// <c>LRUOverFlowToDiskAction</c>
 /// (<c>cppcache/src/LRUAction.hpp:157-175</c>).
 /// </summary>
-internal sealed class LRUOverFlowToDiskAction : LRUAction
+internal sealed class LRUOverFlowToDiskAction(
+    ILogger<LRUOverFlowToDiskAction> logger,
+    SerializationRegistry serializationRegistry,
+    LocalRegion region,
+    LRUEntriesMap entriesMap)
+    : LRUAction
 {
-    private readonly LocalRegion _region;
-    private readonly LRUEntriesMap _entriesMap;
-
-    public LRUOverFlowToDiskAction(LocalRegion region, LRUEntriesMap entriesMap)
-    {
-        _region = region;
-        _entriesMap = entriesMap;
-        Overflows = true;
-    }
 
     /// <inheritdoc />
     public override Action ActionType => Action.OverflowToDisk;
 
-    /// <summary>
-    /// cppcache out-of-line <c>LRUOverFlowToDiskAction::evict</c> — write the
-    /// value to disk + swap in <see cref="CacheableToken"/>.Overflowed.
-    /// Pending the persistence manager (Phase 4).
-    /// </summary>
-    public override Task<bool> EvictAsync(MapEntry entry, CancellationToken ct = default)
-        => throw new NotImplementedException(
-            "LRUOverFlowToDiskAction.EvictAsync: pending Phase 4 persistence manager (overflow-to-disk).");
+    public override bool Overflows => true;
+
+    public override async Task<bool> EvictAsync(MapEntry entry, CancellationToken ct = default)
+    {
+        if (region.IsDestroyed)
+        {
+            logger.LogError(
+                "[internal error] :: OverflowAction: region is being destroyed, so not evicting entries");
+            return false;
+        }
+
+        var key = entry.Key;
+        var value = entry.Value;
+        if (value is null)
+        {
+            logger.LogError("[internal error]:: OverflowAction: destroyed entry added to LRU list");
+            throw new FatalInternalException("OverflowAction: destroyed entry added to LRU list");
+        }
+
+        var lruProps = entry.LRUProperties;
+        var persistenceInfo = lruProps.PersistenceInfo;
+        var setInfo = false;
+        if (persistenceInfo is null)
+        {
+            setInfo = true;
+        }
+        var pm = region.PersistenceManager;
+        try
+        {
+            persistenceInfo = await pm!.WriteAsync(key, value, persistenceInfo, ct).ConfigureAwait(false);
+        }
+        catch (DiskFailureException ex)
+        {
+            logger.LogError(ex, "DiskFailureException");
+            return false;
+        }
+        catch (GeodeException ex)
+        {
+            logger.LogError(ex, "write to persistence layer failed");
+            return false;
+        }
+        if (setInfo == true)
+        {
+            lruProps.PersistenceInfo = persistenceInfo;
+        }
+
+        region.RegionStats.Overflow();
+        region.CachePerfStats.Overflow();
+
+        entry.Value = CacheableToken.Overflowed;
+        if (entriesMap is not null)
+        {
+            var newSize = CacheableToken.Overflowed.ObjectSize - serializationRegistry.CheckAndGetObjectSize(value);
+            entriesMap.UpdateMapSize(newSize);
+        }
+        return true;
+    }
 }
 
 /// <summary>

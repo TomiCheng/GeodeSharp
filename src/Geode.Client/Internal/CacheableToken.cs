@@ -38,4 +38,5 @@ internal sealed class CacheableToken
     /// <summary>Any of the four sentinel tokens (mirrors cppcache <c>isToken</c>).</summary>
     public static bool IsToken(object? value) =>
         IsInvalid(value) || IsDestroyed(value) || IsOverflowed(value) || IsTombstone(value);
+    public long ObjectSize { get; } = 4;
 }

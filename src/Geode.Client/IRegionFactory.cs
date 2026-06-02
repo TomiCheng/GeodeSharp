@@ -60,6 +60,12 @@ public interface IRegionFactory
     /// </summary>
     IRegionFactory SetCacheListener(ICacheListener cacheListener);
 
+    /// <summary>How LRU-evicted entries are handled (none / overflow-to-disk).</summary>
+    IRegionFactory SetDiskPolicy(CacheDiskPolicy diskPolicy);
+
+    /// <summary>Overflow-to-disk backing store; required when <see cref="SetDiskPolicy"/> is <see cref="CacheDiskPolicy.Overflows"/>.</summary>
+    IRegionFactory SetPersistenceManager(IPersistenceManager persistenceManager);
+
     /// <summary>Build the client-side region under <paramref name="name"/> and register it on the cache.</summary>
     /// <exception cref="RegionExistsException">A region with <paramref name="name"/> is already registered.</exception>
     /// <exception cref="ObjectDisposedException">The owning cache is closed.</exception>

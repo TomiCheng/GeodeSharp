@@ -95,8 +95,7 @@ internal partial class LocalRegion : RegionInternal
     /// </summary>
     protected readonly AsyncReaderWriterLock _mutex = new();
 
-    /// <summary>cppcache <c>m_persistenceManager</c>: PersistenceManager (CLAUDE.md «Not implemented»).</summary>
-    protected object? _persistenceManager;
+    protected readonly IPersistenceManager? _persistenceManager;
 
     /// <summary>
     /// cppcache <c>m_regionStats</c>: per-region Meter sink.
@@ -149,12 +148,10 @@ internal partial class LocalRegion : RegionInternal
         _cachePerfStats = serviceProvider.GetRequiredService<CachePerfStatistics>();
         _serviceProvider = serviceProvider;
 
-        // cppcache LocalRegion ctor (LocalRegion.cpp:86-95) initializes the
-        // callbacks from attributes (m_listener / m_writer / m_loader). All three
-        // read their field (not Attributes) on the hot path, like cppcache.
         _listener = attributes.CacheListener;
         _writer = attributes.CacheWriter;
         _loader = attributes.CacheLoader;
+        _persistenceManager = attributes.PersistenceManager;
     }
 
     /// <summary>
@@ -1112,6 +1109,43 @@ internal partial class LocalRegion : RegionInternal
 
     internal EntriesMap InternalEntriesMap => _localEntriesMap.Value!;
 
+    /// <summary>
+    /// Region async init — wires the overflow-to-disk persistence manager when
+    /// DiskPolicy == Overflows. Mirrors cppcache <c>CacheImpl::createRegion</c>
+    /// OVERFLOWS branch (<c>CacheImpl.cpp:428-437</c>) +
+    /// <c>LocalRegion::setPersistenceManager</c> (<c>LocalRegion.cpp:698-706</c>).
+    /// </summary>
+    public override async Task InitializeAsync(CancellationToken ct = default)
+    {
+        await base.InitializeAsync(ct).ConfigureAwait(false);
+
+        // cppcache CacheImpl.cpp:428-437 — only the OVERFLOWS policy needs a pm.
+        if (Attributes.DiskPolicy != CacheDiskPolicy.Overflows)
+        {
+            return;
+        }
+
+        // cppcache `if (pmPtr == nullptr) throw NullPointerException(...)`.
+        // NullPointerException → InvalidOperationException(不一致的 attribute
+        // 組合,不是傳給本 method 的 null 參數)。
+        if (_persistenceManager is null)
+        {
+            throw new InvalidOperationException(
+                $"Region \"{FullPath}\": DiskPolicy.Overflows requires a PersistenceManager, but none was set.");
+        }
+
+        // cppcache `pmPtr->init(regionPtr, props)` — props 對應
+        //   getPersistenceProperties(),我們 RegionAttributes 還沒這欄位,傳 null。
+        await _persistenceManager.InitAsync(this, diskProperties: null, ct).ConfigureAwait(false);
+
+        // cppcache `setPersistenceManager(pmPtr)` → 下傳給 LRUEntriesMap
+        //   (LocalRegion.cpp:702-704 的 dynamic_cast + lruMap->setPersistenceManager)。
+        if (_localEntriesMap.Value is LRUEntriesMap lruMap)
+        {
+            lruMap.SetPersistenceManager(_persistenceManager);
+        }
+    }
+
     /// <inheritdoc />
     internal override async Task EvictAsync(float percentage, CancellationToken ct = default)
     {
@@ -1537,4 +1571,11 @@ internal partial class LocalRegion : RegionInternal
     /// <inheritdoc />
     public override IPool? Pool => null;
 
+
+    internal IPersistenceManager? PersistenceManager => _persistenceManager;
+
+    internal RegionStatistics RegionStats => _regionStats;
+
+    /// <summary>cppcache <c>getCacheImpl()-&gt;getCachePerfStats()</c> — cache-level perf stats(我們存在 region 上,直接出)。</summary>
+    internal CachePerfStatistics CachePerfStats => _cachePerfStats;
 }

@@ -55,8 +55,8 @@ internal abstract class MapEntry
     /// <see cref="LRUEntryProperties"/>. No LRU-variant entry exists yet, so
     /// the base always throws; reached only on the overflow path.
     /// </summary>
-    public virtual LRUEntryProperties LRUProperties => throw new NotImplementedException(
-        "MapEntry.LRUProperties: non-LRU entry has none; pending LRU-variant entry.");
+    public virtual LRUEntryProperties LRUProperties
+        => throw new NotImplementedException("MapEntry.LRUProperties: non-LRU entry has none; pending LRU-variant entry.");
 
     /// <summary>
     /// This entry's key (set once at construction, never reassigned).

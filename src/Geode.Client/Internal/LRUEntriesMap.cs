@@ -65,8 +65,16 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
     /// <summary>cppcache <c>m_limit</c>: entry-count (or heap) eviction cap.</summary>
     private int _limit;
 
-    /// <summary>cppcache <c>m_pmPtr</c>: overflow-to-disk manager; null until set (Phase 4).</summary>
+    /// <summary>cppcache <c>m_pmPtr</c>: overflow-to-disk manager; null until <see cref="SetPersistenceManager"/>.</summary>
     private IPersistenceManager? _persistenceManager;
+
+    /// <summary>
+    /// Attach the overflow-to-disk manager. Mirrors cppcache
+    /// <c>LRUEntriesMap::setPersistenceManager</c>
+    /// (<c>cppcache/src/LRUEntriesMap.hpp:98-100</c>) — forwarded from
+    /// <see cref="LocalRegion.InitializeAsync"/> when DiskPolicy == Overflows.
+    /// </summary>
+    internal void SetPersistenceManager(IPersistenceManager pmPtr) => _persistenceManager = pmPtr;
 
     /// <summary>cppcache <c>m_evictionControllerPtr</c>: heap-LRU global controller; null until heap LRU registers.</summary>
     private readonly EvictionController? _evictionController;
@@ -434,18 +442,25 @@ internal sealed class LRUEntriesMap : ConcurrentEntriesMap
         // there's evidence the divergence matters (cppcache-scope-parity).
     }
 
-    private void UpdateMapSize(long size)
+    internal void UpdateMapSize(long size)
     {
-        // cppcache LRUEntriesMap::updateMapSize (LRUEntriesMap.cpp:476-483).
-        // Caller(Put / Clear / DisposeAsync 的 heap-LRU 分支)都已經
-        //   `if (_evictionController is not null)` 守過,直接 `!` 解 null。
-        //   cppcache 自己的 TODO 也說「caller 已 null-check,內層判斷可移除」。
+        // cppcache LRUEntriesMap::updateMapSize (LRUEntriesMap.cpp:476-483) —
+        // 內層 guard `if (m_evictionControllerPtr != nullptr)` 照搬。多數 caller
+        // (Put / Clear / DisposeAsync)已在 call site 守過(冗餘但無害);但
+        // LRUOverFlowToDiskAction.EvictAsync 沒守,而 overflow region 的
+        // _evictionController 是 null(EntriesMapFactory OVERFLOWS 分支不設
+        // heapLRUEnabled)→ 沒這個 guard 會 NRE。overflow 不參與 heap 帳,no-op 正確。
+        if (_evictionController is null)
+        {
+            return;
+        }
+
         // Interlocked.Add 對應 atomic increment — Put 跨 segment 可能並行,
         //   `_currentMapSize` 是 region 全域累計,要原子。cppcache 是 plain
         //   `m_currentMapSize += size`,在 segment 鎖外執行,接受 eventually-
         //   consistent;我們用 Interlocked 收緊。
         // 順序對齊 cppcache:先更 local,再 forward 給 EC。
         Interlocked.Add(ref _currentMapSize, size);
-        _evictionController!.IncrementHeapSize(size);
+        _evictionController.IncrementHeapSize(size);
     }
 }

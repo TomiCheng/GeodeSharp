@@ -156,6 +156,19 @@ internal class RegionFactory(IServiceProvider serviceProvider, RegionShortcut sh
         return this;
     }
 
+    public IRegionFactory SetDiskPolicy(CacheDiskPolicy diskPolicy)
+    {
+        _attrsFactory.SetDiskPolicy(diskPolicy);
+        return this;
+    }
+
+    public IRegionFactory SetPersistenceManager(IPersistenceManager persistenceManager)
+    {
+        ArgumentNullException.ThrowIfNull(persistenceManager);
+        _attrsFactory.SetPersistenceManager(persistenceManager);
+        return this;
+    }
+
     /// <inheritdoc />
     public async Task<IRegion<TKey, TValue>> CreateAsync<TKey, TValue>(string name, CancellationToken ct = default)
         where TKey : IEquatable<TKey>

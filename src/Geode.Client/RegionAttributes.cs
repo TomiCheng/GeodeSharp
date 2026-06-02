@@ -19,13 +19,19 @@ public sealed class RegionAttributes : ICloneable
     /// <summary>Estimated concurrent-writer count sizing the local entry map's striping.</summary>
     public int ConcurrencyLevel { get; set; } = 16;
 
-    /// <summary>Max local entries before LRU eviction; <c>0</c> disables LRU.</summary>
+    /// <summary>
+    /// Max local entries before LRU eviction; <c>0</c> disables LRU.
+    /// </summary>
     public int LruEntriesLimit { get; set; }
 
-    /// <summary>What happens to entries past the LRU limit (none / overflow-to-disk).</summary>
+    /// <summary>
+    /// What happens to entries past the LRU limit (none / overflow-to-disk).
+    /// </summary>
     public CacheDiskPolicy DiskPolicy { get; set; } = CacheDiskPolicy.None;
 
-    /// <summary>Action applied to an LRU-evicted entry (local-destroy / invalidate).</summary>
+    /// <summary>
+    /// Action applied to an LRU-evicted entry (local-destroy / invalidate).
+    /// </summary>
     public CacheExpirationAction LruEvictionAction { get; set; } = CacheExpirationAction.LocalDestroy;
 
     // ── Caching / cloning / concurrency ──────────────────────────
@@ -83,7 +89,9 @@ public sealed class RegionAttributes : ICloneable
     /// <summary>Resolver mapping entries to partition buckets for single-hop routing, or <see langword="null"/> for none.</summary>
     public IPartitionResolver? PartitionResolver { get; set; }
 
-    /// <summary>Overflow-to-disk backing store for LRU eviction, or <see langword="null"/> for none.</summary>
+    /// <summary>
+    /// Overflow-to-disk backing store for LRU eviction, or <see langword="null"/> for none.
+    /// </summary>
     public IPersistenceManager? PersistenceManager { get; set; }
 
     // ── Pool ─────────────────────────────────────────────────────

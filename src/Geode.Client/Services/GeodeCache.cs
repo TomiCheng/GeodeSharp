@@ -227,6 +227,17 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache
         //   mutual exclusion. We have no endpoints field on
         //   RegionAttributes so the check is structurally redundant.
         _ = name;
+
+        // Overflow-to-disk requires a PersistenceManager. cppcache checks this
+        // in the OVERFLOWS branch of createRegion (LocalRegion.cpp:285-288,
+        // throws NullPointerException); we lift it to fail fast before building
+        // the region. NullPointerException → InvalidOperationException
+        //   (inconsistent attribute combination, not a null parameter to us).
+        if (attrs.DiskPolicy == CacheDiskPolicy.Overflows && attrs.PersistenceManager is null)
+        {
+            throw new InvalidOperationException(
+                $"Region \"{name}\": DiskPolicy.Overflows requires a PersistenceManager, but none was set.");
+        }
     }
 
     /// <summary>

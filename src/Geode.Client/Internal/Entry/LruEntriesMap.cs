@@ -230,6 +230,64 @@ internal class LruEntriesMap :
     }
 
     /// <summary>
+    /// Overflow-aware get. Mirrors cppcache <c>LRUEntriesMap::get</c>
+    /// (<c>cppcache/src/LRUEntriesMap.cpp:368-430</c>): on an overflowed entry,
+    /// read the value back from the persistence manager, re-cache it (replacing
+    /// the token), re-push to the LRU queue, adjust heap size, then re-run
+    /// <see cref="ProcessLruAsync(CancellationToken)"/>. Non-overflow entries are
+    /// returned as-is (cppcache also <c>move_to_end</c>s the LRU node — deferred
+    /// with the read-back so the MRU-touch lands as one piece).
+    /// </summary>
+    public override async Task<(MapEntry? Entry, object? Value)> GetAsync(object key, CancellationToken ct = default)
+    {
+        var (entry, value) = GetEntry(key);
+        if (entry is null)
+        {
+            return (entry, value);
+        }
+
+
+        if (!CacheableToken.IsOverflowed(value))
+        {
+            _lruQueue.MoveToEnd(entry);
+            return (entry, value);
+        }
+
+        var lruProps = ((ILruEntryProperties)entry).LruProperties;
+        object? readValue;
+        try
+        {
+            readValue = await _persistenceManager!
+                .ReadAsync(key, lruProps.PersistenceInfo, ct).ConfigureAwait(false);
+        }
+        catch (GeodeException ex)
+        {
+            _logger.LogError(ex, "read on the persistence layer failed for key {Key}", key);
+            return (null, null);
+        }
+
+        _region.RegionStats.Retrieve();
+        _region.CachePerfStats.Retrieve();
+
+        (entry, _, _) = await base
+            .PutAsync(key, readValue!, updateCount: 0, destroyTracker: 0, versionTag: null, ct: ct)
+            .ConfigureAwait(false);
+
+        ++_validEntries;
+        _lruQueue.Push(entry);
+
+        if (_evictionController is not null)
+        {
+            var newSize = _serializationRegistry.CheckAndGetObjectSize(readValue)
+                        - CacheableToken.Overflowed.ObjectSize;
+            UpdateMapSize(newSize);
+        }
+
+        await ProcessLruAsync(ct).ConfigureAwait(false);
+        return (entry, readValue);
+    }
+
+    /// <summary>
     /// Count of non-token (valid) entries. Mirrors cppcache
     /// <c>LRUEntriesMap::validEntriesSize</c>
     /// (<c>cppcache/src/LRUEntriesMap.hpp:124</c>,

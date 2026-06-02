@@ -18,6 +18,17 @@ internal abstract class EntriesMap
     public virtual ValueTask DisposeAsync() => ValueTask.CompletedTask;
     public abstract (MapEntry? Entry, object? Value) GetEntry(object key);
 
+    /// <summary>
+    /// User-facing read: entry + value for <paramref name="key"/>, applying any
+    /// read-back the concrete map needs. Base delegates to <see cref="GetEntry"/>
+    /// (cppcache <c>ConcurrentEntriesMap::get</c> == <c>segmentFor-&gt;getEntry</c>);
+    /// <see cref="LruEntriesMap"/> overrides it for overflow read-back. cppcache's
+    /// GET path (<c>LocalRegion.cpp:892</c>) calls <c>get</c>, NOT <c>getEntry</c> —
+    /// put/destroy machinery keeps using the raw <see cref="GetEntry"/>.
+    /// </summary>
+    public virtual Task<(MapEntry? Entry, object? Value)> GetAsync(object key, CancellationToken ct = default)
+        => Task.FromResult(GetEntry(key));
+
     public virtual Task<object?> GetFromDiskAsync(object key, MapEntry entry, CancellationToken ct = default)
         => Task.FromResult<object?>(null);
     public virtual void Open(int initialCapacity) { }

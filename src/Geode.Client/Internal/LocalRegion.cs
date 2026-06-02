@@ -779,7 +779,7 @@ internal partial class LocalRegion : RegionInternal
         object? localValue = null;
         if (cachingEnabled)
         {
-            var (me, localGet) = InternalEntriesMap.GetEntry(key);
+            var (me, localGet) = await InternalEntriesMap.GetAsync(key, ct).ConfigureAwait(false);
             value = localGet;
             isLocal = me is not null;
             if (isLocal && value is not null && !CacheableToken.IsInvalid(value))

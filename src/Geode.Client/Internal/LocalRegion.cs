@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using Geode.Client.Internal.Entry;
 using Geode.Client.Protocol;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -796,7 +797,7 @@ internal partial class LocalRegion : RegionInternal
             if (!Attributes.ConcurrencyChecksEnabled)
             {
                 updateCount = InternalEntriesMap.AddTrackerForEntry(
-                    key, value, addIfAbsent: true, failIfPresent: false, value: false);
+                    key, value, addIfAbsent: true, failIfPresent: false, incUpdateCount: false);
                 _logger.LogDebug("Region::get: added tracking with update counter {UpdateCount} for key {Key} with value {Value}",
                     updateCount, key, value);
             }
@@ -1023,9 +1024,9 @@ internal partial class LocalRegion : RegionInternal
                 name, FullPath, isUpdate ? "updated" : "created", key, value);
 
             // entry/region expiration
-            if (EntryExpiryEnabled)
+            if (EntryExpiryEnabled && entry is IExpEntryProperties exp)
             {
-                if (isUpdate && entry!.IsExpiryTaskScheduled)
+                if (isUpdate && exp.ExpProperties.TaskScheduled)
                 {
                     UpdateAccessAndModifiedTimeForEntry(entry, true);
                 }
@@ -1140,7 +1141,7 @@ internal partial class LocalRegion : RegionInternal
 
         // cppcache `setPersistenceManager(pmPtr)` → 下傳給 LRUEntriesMap
         //   (LocalRegion.cpp:702-704 的 dynamic_cast + lruMap->setPersistenceManager)。
-        if (_localEntriesMap.Value is LRUEntriesMap lruMap)
+        if (_localEntriesMap.Value is LruEntriesMap lruMap)
         {
             lruMap.SetPersistenceManager(_persistenceManager);
         }
@@ -1167,7 +1168,7 @@ internal partial class LocalRegion : RegionInternal
         // swallows (returns false). This is the same lock-free-during-eviction
         // shape the entry-count LRU path already relies on (Put doesn't hold
         // _mutex across its ProcessLruAsync either).
-        LRUEntriesMap? lruMap = null;
+        LruEntriesMap? lruMap = null;
         await _mutex.EnterReadLockAsync(ct).ConfigureAwait(false);
         try
         {
@@ -1179,7 +1180,7 @@ internal partial class LocalRegion : RegionInternal
             // m_entries cast → LRUEntriesMap:heap-LRU 開時 EntriesMapFactory
             //   一定建 LRUEntriesMap;wrong type / 未 materialize → silent skip。
             if (_localEntriesMap.IsValueCreated
-                && _localEntriesMap.Value is LRUEntriesMap m)
+                && _localEntriesMap.Value is LruEntriesMap m)
             {
                 lruMap = m;
             }

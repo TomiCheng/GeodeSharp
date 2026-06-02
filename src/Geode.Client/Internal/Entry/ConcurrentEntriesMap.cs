@@ -395,7 +395,13 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider, EntryFacto
             // cppcache: versionStamp = entry->getVersionStamp();
             //   stamp 是 reference type,後續 mutate 對 entry 立即可見;
             //   cppcache 因為是 value-copy 才需要最後再 setVersions 寫回。
-            if (entry is IVersionStamp stamp)
+            // versionTag == null = 本地發起的 remove(eviction / local-destroy):
+            //   沒有 server 版本可比,跳過 conflict check。對齊舊
+            //   Internal/ConcurrentEntriesMap:241 的 `if (versionTag is not null)`
+            //   guard —— 搬進 Entry/ 時這個 guard 掉了,導致每次 eviction 的
+            //   local-destroy(versionTag 永遠 null)都打到 ProcessVersionTag 的
+            //   Phase-2 NIE,連帶 heap-LRU 背景驅逐被吞掉、entry-LRU / destroy 直接紅。
+            if (entry is IVersionStamp stamp && versionTag is not null)
             {
                 // cppcache: processVersionTag err → 早退;C# 拋 GfErrTypeException,
                 //   UpdateNoThrowAsync catch switch 接 (CacheConcurrentModification
@@ -414,8 +420,7 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider, EntryFacto
             //   list 等 GC。失敗 (race / version conflict) 透過 GfErrTypeException
             //   往上拋,跳過 TombstoneList.Add。
             PutForTrackedEntry(entry, key, CacheableToken.Tombstone, updateCount, delta: null);
-            throw new NotImplementedException();
-            //region._tombstoneList?.Add(entry); 
+            region._tombstoneList?.Add(entry); 
 
             if (CacheableToken.IsTombstone(oldValue))
             {
@@ -444,8 +449,7 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider, EntryFacto
             var mapEntry = factory.NewEntry(key, CacheableToken.Tombstone,
                 updateCount: -1, destroyTracker: 0, versionTag);
             _map[key] = mapEntry;
-            throw new NotImplementedException();
-            //region._tombstoneList?.Add(entry); 
+            region._tombstoneList?.Add(mapEntry); 
         }
 
         // cppcache: afterRemote ? GF_NOERR : GF_CACHE_ENTRY_NOT_FOUND。

@@ -5,7 +5,7 @@ internal interface IMapEntry
     object Key { get; }
     object? Value { get; set; }
     int UpdateCount { get; }
-    void Cleanup(CacheEventFlags eventFlags) { }
+    void Cleanup(CacheEventFlags eventFlags);
     void IncrementUpdateCount(IMapEntry newEntry);
 
     /// <summary>

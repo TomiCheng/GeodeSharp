@@ -21,15 +21,15 @@ internal static class EntriesMapFactory
 
         if ((lruLimit != 0) || prop.HeapLRULimitEnabled)
         {
-            LRUAction.Action lruEvictionAction;
+            LruAction.Action lruEvictionAction;
             var dpType = attributes.DiskPolicy;
             if (dpType == CacheDiskPolicy.Overflows)
             {
-                lruEvictionAction = LRUAction.Action.OverflowToDisk;
+                lruEvictionAction = LruAction.Action.OverflowToDisk;
             }
             else if ((dpType == CacheDiskPolicy.None) || prop.HeapLRULimitEnabled)
             {
-                lruEvictionAction = LRUAction.Action.LocalDestroy;
+                lruEvictionAction = LruAction.Action.LocalDestroy;
                 if (prop.HeapLRULimitEnabled) heapLRUEnabled = true;
             }
             else

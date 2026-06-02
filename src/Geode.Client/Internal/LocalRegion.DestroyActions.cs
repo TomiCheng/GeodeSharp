@@ -1,3 +1,4 @@
+using Geode.Client.Internal.Entry;
 using Geode.Client.Protocol;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;

@@ -25,7 +25,6 @@ internal class MapEntry(object key) : IMapEntry
 
     public int UpdateCount => _updateCount;
 
-    /// <summary>cppcache <c>getTrackingNumber</c> (<c>MapEntry.hpp:105</c>); <c>0</c> = not tracked.</summary>
     public int TrackingNumber => _trackingNumber;
 
     /// <summary>
@@ -65,4 +64,6 @@ internal class MapEntry(object key) : IMapEntry
     /// update sequence. <paramref name="newEntry"/> morph out-param unused.
     /// </summary>
     public virtual void IncrementUpdateCount(IMapEntry newEntry) => _updateCount++;
+
+    public virtual void Cleanup(CacheEventFlags eventFlags) { }
 }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using Geode.Client.Internal.Entry;
 using Geode.Client.Protocol;
 
 namespace Geode.Client.Internal;

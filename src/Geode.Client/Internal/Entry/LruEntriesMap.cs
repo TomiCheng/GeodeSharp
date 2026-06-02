@@ -10,11 +10,11 @@ internal class LruEntriesMap :
 {
     static readonly ObjectFactory<LruEntriesMap> _objectFactory
     = ActivatorUtilities.CreateFactory<LruEntriesMap>(
-        [typeof(EntryFactory), typeof(LocalRegion), typeof(LRUAction.Action), typeof(int),
+        [typeof(EntryFactory), typeof(LocalRegion), typeof(LruAction.Action), typeof(int),
                 typeof(bool), typeof(int), typeof(bool)]);
 
     public static LruEntriesMap? Create(IServiceProvider serviceProvider, EntryFactory factory,
-        LocalRegion region, LRUAction.Action action, int lruLimit, bool concurrencyChecksEnabled,
+        LocalRegion region, LruAction.Action action, int lruLimit, bool concurrencyChecksEnabled,
         int concurrency, bool heapLRUEnabled)
         => _objectFactory(serviceProvider, [factory, region, action, lruLimit,
             concurrencyChecksEnabled, concurrency, heapLRUEnabled]);
@@ -237,16 +237,28 @@ internal class LruEntriesMap :
     /// overflow branch.
     /// </summary>
     /// <remarks>
-    /// NIE for now: trivially <c>_validEntries</c>, but the token-aware
-    /// <c>_validEntries</c> accounting only matters on the overflow path
-    /// (Phase 4) and isn't exercised first-cut — flag rather than expose a
-    /// not-yet-trustworthy count.
+    /// <c>_validEntries</c> is maintained by <see cref="PutAsync"/> (++ on a
+    /// fresh non-token insert) and <see cref="EvictionHelperAsync"/> (-- when an
+    /// overflow action spills an entry to disk). The overflow branch of
+    /// <see cref="MustEvict"/> needs it because overflowed entries stay in the
+    /// backing map as tokens — <see cref="EntriesMap.Count"/> never drops, so
+    /// only the valid-entry count converges the eviction loop.
     /// </remarks>
-    private int ValidEntriesSize() => throw new NotImplementedException(
-        "LRUEntriesMap.ValidEntriesSize: pending Phase 4 overflow path (return _validEntries).");
+    private int ValidEntriesSize() => _validEntries;
 
     private bool MustEvict()
     {
+        // cppcache LRUEntriesMap::mustEvict (LRUEntriesMap.hpp:110-123).
+        // Overflow path MUST compare validEntriesSize(), NOT size(): an
+        // overflowed entry stays in the backing map as a token (size()
+        // unchanged), so a size()-based loop never drops below the limit and
+        // ProcessLruAsync spins forever (queue drains, EvictionHelperAsync
+        // returns false, but the while-condition stays true). The valid-entry
+        // count drops one per overflow → the loop converges.
+        if (_action.Value.Overflows)
+        {
+            return ValidEntriesSize() > _limit;
+        }
         if (_heapLruEnabled && _limit == 0)
         {
             return false;

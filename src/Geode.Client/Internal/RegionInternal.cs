@@ -38,6 +38,22 @@ internal abstract class RegionInternal(RegionAttributes attributes)
     /// </summary>
     public virtual ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
+    /// <summary>
+    /// Post-construction async init, called by
+    /// <c>GeodeCache.CreateRegionInternalAsync</c> after the region object
+    /// exists. Default body is a no-op; <see cref="LocalRegion"/> overrides
+    /// to wire the overflow-to-disk <see cref="IPersistenceManager"/> when
+    /// <c>DiskPolicy == Overflows</c>. Distinct from
+    /// <c>ThinClientRegion.InitTcrAsync</c>(DM 接線,subclass-specific)—
+    /// 這條是 base region concern,所有 kind 都跑。
+    /// </summary>
+    /// <remarks>
+    /// 失敗時 caller 負責 dispose 半成品(<see cref="DisposeAsync"/>)再
+    /// rethrow:cppcache 靠 RAII 自動清,C# 得顯式補,因為 pm.InitAsync
+    /// 可能已開 OS 資源(file handle)GC 管不到。
+    /// </remarks>
+    public virtual Task InitializeAsync(CancellationToken ct = default) => Task.CompletedTask;
+
 
     /// <summary>
     /// Explicit-interface impl for <see cref="IRegion.Attributes"/> —

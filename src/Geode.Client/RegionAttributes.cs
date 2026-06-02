@@ -83,6 +83,9 @@ public sealed class RegionAttributes : ICloneable
     /// <summary>Resolver mapping entries to partition buckets for single-hop routing, or <see langword="null"/> for none.</summary>
     public IPartitionResolver? PartitionResolver { get; set; }
 
+    /// <summary>Overflow-to-disk backing store for LRU eviction, or <see langword="null"/> for none.</summary>
+    public IPersistenceManager? PersistenceManager { get; set; }
+
     // ── Pool ─────────────────────────────────────────────────────
 
     /// <summary>Name of the pool the region attaches to; empty falls back to the cache's default pool.</summary>
@@ -127,6 +130,7 @@ public sealed class RegionAttributes : ICloneable
             CacheWriter = CacheWriter,
             CacheListener = CacheListener,
             PartitionResolver = PartitionResolver,
+            PersistenceManager = PersistenceManager,
             PoolName = PoolName,
             ClientNotificationEnabled = ClientNotificationEnabled,
         };

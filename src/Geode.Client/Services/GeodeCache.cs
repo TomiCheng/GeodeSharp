@@ -285,7 +285,7 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache
         RegionInternal region;
         try
         {
-            region = await CreateRegionInternalAsync(name, parent: null, attrs, shared: false, ct).ConfigureAwait(false);
+            region = await CreateRegionInternalAsync(name, parent: null, attrs, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -307,8 +307,11 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache
         //   from the moment the region exists. ThinClientHARegion-only.
 
         // ── 11. PersistenceManager init (cppcache CacheImpl.cpp:428-437)
-        // CUT per CLAUDE.md «Not implemented» — disk overflow /
-        //   persistence backup has no .NET counterpart we plan to port.
+        // Moved into CreateRegionInternalAsync via region.InitializeAsync
+        //   (per-kind, with dispose-on-failure RAII) — keeps the pm wiring
+        //   next to construction so failure cleanup is local. No-op today
+        //   unless DiskPolicy == Overflows (LocalRegion.InitializeAsync
+        //   override still pending).
 
         // ── 12. acquireReadLock (cppcache CacheImpl.cpp:439)
         // TODO Phase 2+: LocalRegion.Mutex (boost::shared_mutex) reader
@@ -343,56 +346,29 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache
         string name,
         RegionInternal? parent,
         RegionAttributes attrs,
-        bool shared,
         CancellationToken ct)
     {
-        // cppcache `bool shared` is the `enableTimeStatistics` flag in
-        // disguise — OTel histograms are always on so the flag is moot;
-        // accepted for ctor parity but ignored.
-        _ = shared;
+        // cppcache `bool shared` (= enableTimeStatistics) 不 port — OTel
+        // histogram 一律開,旗標無意義,直接拿掉。
 
         var kind = GetRegionKind(attrs);
-
-        switch (kind)
+        var region = kind switch
         {
-            case RegionKind.ThinClient:
-                // cppcache CacheImpl.cpp:555-561 — non-pool legacy.
-                // Per pool-only-no-non-pool memory we don't run this
-                // path; the case exists for cppcache parity so future
-                // search for "THINCLIENT_REGION" lands here.
-                throw new NotImplementedException(
-                    "RegionKind.ThinClient (non-pool legacy) is structurally unreachable; see pool-only-no-non-pool memory.");
-
-            case RegionKind.ThinClientHA:
-                // cppcache CacheImpl.cpp:562-567.
-                // TODO Phase 4+: subscription / HA wiring —
-                //   ThinClientHARegion ctor takes (sp, name, parent,
-                //   attrs, enableNotification). Once subscription /
-                //   interest-list lands, instantiate via
-                //   ActivatorUtilities and call InitTcrAsync (HA DM
-                //   override).
-                throw new NotImplementedException(
-                    "RegionKind.ThinClientHA: subscription / HA wiring lands in Phase 4+.");
-
-            case RegionKind.ThinClientPool:
-            {
-                // cppcache CacheImpl.cpp:568-574.
-                var poolRegion = ThinClientPoolRegion.Create(serviceProvider, name, parent, attrs);
-
-                // cppcache `tmp->initTCR()` after construction — pool
-                // variant looks up the pool by name and attaches its
-                // ThinClientPoolDM. See ThinClientPoolRegion.InitTcrAsync
-                // override (currently inherited NIE from base).
-                await poolRegion.InitTcrAsync(ct).ConfigureAwait(false);
-
-                return poolRegion;
-            }
-
-            case RegionKind.Local:
-            default:
-                // cppcache CacheImpl.cpp:575-579 — no initTCR for LOCAL.
-                return LocalRegion.Create(serviceProvider, name, parent, attrs);
+            RegionKind.ThinClient => ThinClientRegion.Create(serviceProvider, name, parent, attrs), 
+            RegionKind.ThinClientHA => ThinClientHARegion.Create(serviceProvider, name, parent, attrs),
+            RegionKind.ThinClientPool => ThinClientPoolRegion.Create(serviceProvider, name, parent, attrs),
+            _ => LocalRegion.Create(serviceProvider, name, parent, attrs),
+        };
+        try
+        {
+            await region.InitializeAsync(ct).ConfigureAwait(false);
         }
+        catch
+        {
+            await region.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+        return region;
     }
 
 

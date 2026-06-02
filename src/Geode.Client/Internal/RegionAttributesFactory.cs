@@ -105,6 +105,25 @@ internal sealed class RegionAttributesFactory
     }
 
     /// <summary>
+    /// Set the overflow-to-disk backing store. cppcache
+    /// <c>RegionAttributesFactory::setPersistenceManager</c> — 搭
+    /// <see cref="SetDiskPolicy"/>(<c>Overflows</c>)才生效;create-time
+    /// 接線仍 CUT(Phase 4)。
+    /// </summary>
+    public RegionAttributesFactory SetPersistenceManager(IPersistenceManager persistenceManager)
+    {
+        _attrs.PersistenceManager = persistenceManager;
+        return this;
+    }
+
+    /// <summary>Set the LRU disk policy (<c>None</c> / <c>Overflows</c>). cppcache <c>RegionAttributesFactory::setDiskPolicy</c>.</summary>
+    public RegionAttributesFactory SetDiskPolicy(CacheDiskPolicy diskPolicy)
+    {
+        _attrs.DiskPolicy = diskPolicy;
+        return this;
+    }
+
+    /// <summary>
     /// Snapshot the current attribute set; mirrors cppcache
     /// <c>RegionAttributesFactory::create()</c> (return-by-value).
     /// </summary>

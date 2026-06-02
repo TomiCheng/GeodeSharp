@@ -55,7 +55,7 @@ internal sealed class ThinClientPoolRegion(
     readonly ILogger<ThinClientPoolRegion> _logger = serviceProvider.GetRequiredService<ILogger<ThinClientPoolRegion>>();
     readonly PoolManager _poolManager = serviceProvider.GetRequiredService<PoolManager>();
 
-    public override Task InitTcrAsync(CancellationToken ct = default)
+    protected override Task InitTcrAsync(CancellationToken ct = default)
     {
         try
         {

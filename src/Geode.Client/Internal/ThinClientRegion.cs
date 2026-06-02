@@ -427,7 +427,24 @@ internal partial class ThinClientRegion(
         }
     }
 
-    public virtual async Task InitTcrAsync(CancellationToken ct = default)
+    /// <summary>
+    /// Region init — base (overflow-to-disk persistence) + the ThinClient DM
+    /// attachment. Mirrors cppcache <c>tmp-&gt;initTCR()</c> after region
+    /// construction. Called by <c>GeodeCache.CreateRegionInternalAsync</c>.
+    /// </summary>
+    public override async Task InitializeAsync(CancellationToken ct = default)
+    {
+        await base.InitializeAsync(ct).ConfigureAwait(false);
+        await InitTcrAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Attach the distribution manager. Plain ThinClient builds its own
+    /// <see cref="TcrDistributionManager"/>; <see cref="ThinClientPoolRegion"/>
+    /// overrides to attach the pool's shared DM instead. Protected — internal
+    /// init detail, only reached through <see cref="InitializeAsync"/>.
+    /// </summary>
+    protected virtual async Task InitTcrAsync(CancellationToken ct = default)
     {
         try
         {

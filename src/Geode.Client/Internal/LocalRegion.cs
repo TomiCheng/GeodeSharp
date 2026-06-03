@@ -919,17 +919,7 @@ internal partial class LocalRegion : RegionInternal
     /// (<c>cppcache/src/LocalRegion.hpp:477</c>), which delegates to
     /// <c>TSSTXStateWrapper::get().getTXState()</c>.
     /// </summary>
-    internal TXState? GetTXState()
-    {
-        // TODO Phase 4+ (transactions): wire to TSSTXStateWrapper
-        //   equivalent — likely a static AsyncLocal<TXState?> on a
-        //   TSSTXStateWrapper helper, set by CacheTransactionManager
-        //   .Begin / cleared by Commit / Rollback. Returning null today
-        //   matches the "no transaction in progress" branch in every
-        //   caller (e.g. LocalRegion::size line 619-629), so call sites
-        //   can already reference this method without behavioural drift.
-        return null;
-    }
+    internal TXState? GetTXState() => TSSTXStateWrapper.Current;
 
     /// <summary>
     /// Whether the current op is local-only — either because this region

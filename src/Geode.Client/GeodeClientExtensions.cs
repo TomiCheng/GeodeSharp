@@ -190,6 +190,7 @@ public static class GeodeClientExtensions
         services.TryAddScoped<ExpiryTaskManager>();
         services.TryAddScoped<CachePerfStatistics>();
         services.TryAddScoped<EvictionController>();
+        services.TryAddScoped<CacheTransactionManager, CacheTransactionManager2PC>();
         services.TryAddSingleton<DmContextAccessor>();
         return services;
     }

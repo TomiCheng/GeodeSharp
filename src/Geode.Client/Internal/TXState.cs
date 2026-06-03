@@ -7,5 +7,11 @@ namespace Geode.Client.Internal;
 /// </summary>
 internal sealed class TXState
 {
-    public void SetDirty() => throw new NotImplementedException();
+    public TXId TransactionId { get; } = new();
+
+    public bool IsDirty { get; private set; }
+
+    public void SetDirty() => IsDirty = true;
+    public ThinClientBaseDM? DM { get; set; }
+    public bool IsPrepared { get; private set; }
 }

@@ -37,15 +37,7 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache
     readonly SystemProperties _systemProperties = serviceProvider.GetRequiredService<SystemProperties>();
     readonly TcrConnectionManager _tcrConnectionManager = serviceProvider.GetRequiredService<TcrConnectionManager>();
     readonly TypedResultAdapter _typedResultAdapter = serviceProvider.GetRequiredService<TypedResultAdapter>();
-
-    /// <summary>
-    /// Build-time snapshot of the public <see cref="GeodeClientOptions"/>
-    /// into the internal <see cref="SystemProperties"/> bag (cppcache
-    /// "geode.properties → SystemProperties at cache build"). Subsequent
-    /// mutations to the caller's <paramref name="opts"/> do NOT affect
-    /// this cache.
-    /// </summary>
-
+    readonly CacheTransactionManager _cacheTransactionManager = serviceProvider.GetRequiredService<CacheTransactionManager>();
 
     private async Task InitializeCoreAsync(CancellationToken ct = default)
     {
@@ -101,9 +93,6 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache
         // TODO: if (_options.Cache?.Pdx is { } pdx) apply pdx
         //   ignoreUnreadFields / readSerialized to _pdxTypeRegistry.
     }
-
-
-
     internal async Task InitializeAsync(CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(IsClosed, this);
@@ -863,6 +852,15 @@ internal sealed class GeodeCache(IServiceProvider serviceProvider) : IGeodeCache
     public string Name => _systemProperties.Name;
 
     public IPoolManager PoolManager => _poolManager;
+
+    public ICacheTransactionManager TransactionManager
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(IsClosed, this);
+            return _cacheTransactionManager;
+        }
+    }
 
 
     //    public ITypeRegistry TypeRegistry { get; } = typeRegistry;

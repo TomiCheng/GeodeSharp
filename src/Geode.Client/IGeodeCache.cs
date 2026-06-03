@@ -36,6 +36,11 @@ public interface IGeodeCache : IRegionService
     /// </summary>
     IPoolManager PoolManager { get; }
 
+    /// <summary>
+    /// Client-side transaction manager for this cache.
+    /// </summary>
+    ICacheTransactionManager TransactionManager { get; }
+
     ///// <summary>Drop fields the local schema doesn't know about on read.</summary>
     //bool PdxIgnoreUnreadFields { get; }
 

@@ -248,6 +248,63 @@ C# 公開介面:`Geode.Client.IQueryService` + `Geode.Client.IQuery<T>`。
 
 ---
 
+# Transaction
+
+對應 cppcache `CacheTransactionManager` / `CacheTransactionManagerImpl` /
+`InternalCacheTransactionManager2PCImpl` / `TXState` / `TXId` /
+`TSSTXStateWrapper` / `TXCleaner` / `TXCommitMessage` / `RegionCommit` /
+`FarSideEntryOp`。C# 公開介面:`Geode.Client.ICacheTransactionManager` +
+`Geode.Client.ITransactionId`;internal impl:`CacheTransactionManager` ←
+`CacheTransactionManager2PC`(DI 註冊 `TryAddScoped<CacheTransactionManager, CacheTransactionManager2PC>`)。
+
+## 生命週期
+- ✅ `Begin` 設 `TSSTXStateWrapper.Current` + `AddTx`(`LocalRegionTransactionTests` × 2 過)
+- 🔨 `PrepareAsync` 2PC 第一階段(NIE,沒 cpp paste)
+- 🚧 2PC `CommitAsync` / `RollbackAsync` 路由 `AfterCompletionAsync` — 1PC base + DM null 短路 / `!IsPrepared` fallback / TxSynchronization 訊息送出 / reply switch 全翻;deps(`TXCleaner.Dispose` / `TXCommitMessage.Apply` / 1PC base) 仍 NIE
+- 🔨 1PC base `CommitAsync` / `RollbackAsync` / `RollbackAsync(TXState, bool)` private helper — 全 NIE + cpp paste(2PC fallback path 會撞)
+- 🔨 `GetDM()` protected helper — NIE
+
+## Suspend / resume
+- 🔨 `Suspend` / `ResumeAsync(id)` / `TryResumeAsync(id)` / `TryResumeAsync(id, TimeSpan)` / `IsSuspended(id)` 全 NIE — sticky conn / suspended map / expiry task 都沒 port
+
+## 查詢(sync,純 local)
+- 🚧 `Exists()` → `TSSTXStateWrapper.Current is not null`
+- 🚧 `Exists(id)` → cast `TXId` + `FindTx`
+- 🚧 `TransactionId` property → `TSSTXStateWrapper.Current?.TransactionId`(nullable,修 cppcache null deref bug)
+
+## TransactionId
+- 🚧 公開 `ITransactionId` empty marker;internal `TXId` 全 impl(`int Id` + atomic CAS counter,wrap 1 skip 0 wire sentinel)
+- ❌ `setInitalTransactionIDValue` — cppcache 測試專用 counter reset,無 caller 不 port
+
+## Internal types(deserialize / apply pipeline)
+- 🚧 `TXState` — `TransactionId` / `IsDirty` / `SetDirty` / `DM` / `IsPrepared` 全欄位;`replay()` ❌(cppcache 自己 unconditional `GF_NOTSUP`);ctor 不收 `Cache` ❌(dead-code-only dep)
+- 🚧 `TSSTXStateWrapper` — static `AsyncLocal<TXState?>` slot,thread-local wrapper class 折掉
+- 🚧 `TXCleaner` struct + `using`(RAII)— `Clean()` 翻譯完;`Dispose()` NIE;`getTXState()` ❌ 折進直接讀 `Current`
+- 🔨 `TXCommitMessage(FromData / Apply)` — class 在,methods NIE,no `ToData`(cppcache 自己空 body)
+- 🔨 `RegionCommit(FromData / Apply)` — class 在,methods NIE;`fillEvents` / `getRegion` 兩個未 port(無 caller)
+- 🔨 `FarSideEntryOp(FromData / Apply)` + `FarSideEntryOperation` enum 47 個成員;`cmp` ❌(無 caller)
+- ✅ enums `TxCompletionStatus`(`Committed=3` / `RolledBack=4`) / `CommitOp`(`BeforeCommit=0` / `AfterCommit=1`)— wire byte 值維持
+
+## 跟 cppcache 偏離(原則三 — 設計意圖抓出來,語法不能照搬)
+- **`TSSTXStateWrapper` 收成 static class** — cppcache `thread_local` Meyers singleton + dtor heap cleanup,在 C# 兩個前提都不在(`AsyncLocal` flow 而非 thread;GC 不需 dtor)
+- **DM 改放 `TXState.DM`** — cppcache `TssConnectionWrapper` thread-sticky conn 三段跳到 DM,async 接不住;折進 TXState 由第一個 op 寫入(suspend 時 cppcache 才把 `m_pooldm` 存進 TXState — 我們提前到 op-time)
+- **`TXCleaner` 是 struct + `Clean()` live-read `Current`** — cppcache class 有 `m_txState` snapshot 欄位,我們不 snapshot;commit 流程內 Current 不會被別 thread 改,行為等價且二次呼叫更安全(snapshot 派會重複 `removeTx`,雖然 idempotent)
+- **TxId 在 wire header 自動 stamp** — `TcrMessageBuilder.BuildAsync` 每次 build 都 peek `TSSTXStateWrapper.Current?.TransactionId.Id ?? -1`,不靠 caller 顯式設(cppcache 在 `TcrMessage::writeHeader` 內做同樣的事)
+
+## Routed elsewhere
+- TcrMessage header txId stamp → [TcrMessageBuilder.BuildAsync](src/Geode.Client/Protocol/TcrMessageBuilder.cs)
+- `LocalRegion::getTXState()` → [LocalRegion.GetTXState](src/Geode.Client/Internal/LocalRegion.cs) 一行 `=> TSSTXStateWrapper.Current`
+- `TcrMessage::getException()` → [TcrMessageExtensions.GetException](src/Geode.Client/Protocol/TcrMessageExtensions.cs) 路由 `TcrMessageHelper.DecodeExceptionPreview`
+- `TcrMessage::getValue()` → [TcrMessageExtensions.GetValue<T>](src/Geode.Client/Protocol/TcrMessageExtensions.cs) `Parts[0]` + `SerializationRegistry.ReadObject` + `as T`
+- `ThinClientRegion::handleServerException` → [ThinClientRegion.HandleServerException](src/Geode.Client/Internal/ThinClientRegion.cs) 完整字串→`GfErrType` dispatch + structured logging
+
+## Deferred deps(別 domain 才會落地)
+- ⏳ `RegionInternal.TxPut` / `TxDestroy` / `TxInvalidate`(`FarSideEntryOp.Apply` 內 dispatch 用)— 未宣告
+- ⏳ `TcrMessage::readVersionTagPart`(`FarSideEntryOp.FromData` 讀 versionTag 用)— 未宣告
+- ⏳ `SerializationRegistry` 對 `TXCommitMessage` / `RegionCommit` / `FarSideEntryOp` 的 DSFid factory 註冊 — 未做,所以 `GetValue<TXCommitMessage>()` 目前回 null
+
+---
+
 # Exceptions
 
 cppcache `ExceptionTypes.hpp` 58 個 exception。原則二能 BCL 取代的就直接用 BCL,不另開子類;剩下 Geode-runtime 語意才開 `GeodeException` 子類。

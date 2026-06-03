@@ -883,6 +883,59 @@ internal partial class ThinClientRegion(
                 $"selectValue has more than one result (got {results.Count})."),
         };
     }
+    /// <summary>
+    /// Map a Java exception text from a server EXCEPTION reply to a
+    /// <see cref="GfErrType"/>. Mirrors cppcache
+    /// <c>ThinClientRegion::handleServerException</c>
+    /// (<c>cppcache/src/ThinClientRegion.cpp:2634-2694</c>).
+    /// </summary>
+    public static GfErrType HandleServerException(ILogger logger, string func, string exceptionMsg)
+    {
+        // TODO setThreadLocalExceptionMessage equivalent — cppcache stashes
+        //   the raw exception text in TLS for downstream retrieval. We pass
+        //   it back via the throw / log path; deferred until a real consumer
+        //   asks for the TLS escape hatch.
+
+        var error = exceptionMsg switch
+        {
+            var m when m.Contains("org.apache.geode.security.NotAuthorizedException")
+                => GfErrType.NotAuthorizedException,
+            var m when m.Contains("org.apache.geode.cache.CacheWriterException")
+                => GfErrType.CacheWriterException,
+            var m when m.Contains("org.apache.geode.security.AuthenticationFailedException")
+                => GfErrType.AuthenticationFailedException,
+            var m when m.Contains("org.apache.geode.internal.cache.execute.InternalFunctionInvocationTargetException")
+                => GfErrType.InternalFunctionInvocationTargetException,
+            var m when m.Contains("org.apache.geode.cache.execute.FunctionException")
+                => GfErrType.FunctionException,
+            var m when m.Contains("org.apache.geode.cache.CommitConflictException")
+                => GfErrType.CommitConflictException,
+            var m when m.Contains("org.apache.geode.cache.TransactionDataNodeHasDepartedException")
+                => GfErrType.TransactionDataNodeHasDepartedException,
+            var m when m.Contains("org.apache.geode.cache.TransactionDataRebalancedException")
+                => GfErrType.TransactionDataRebalancedException,
+            var m when m.Contains("org.apache.geode.security.AuthenticationRequiredException")
+                => GfErrType.AuthenticationRequiredException,
+            var m when m.Contains("org.apache.geode.cache.LowMemoryException")
+                => GfErrType.LowMemoryException,
+            var m when m.Contains("org.apache.geode.cache.query.QueryExecutionLowMemoryException")
+                => GfErrType.QueryExecutionLowMemoryException,
+            _ => GfErrType.CacheServerException,
+        };
+
+        // cppcache: LOGFINER for AUTH_REQUIRED (expected during handshake),
+        // LOGERROR otherwise.
+        if (error == GfErrType.AuthenticationRequiredException)
+        {
+            logger.LogTrace("{Func}: An exception ({ExceptionMsg}) happened at remote server.", func, exceptionMsg);
+        }
+        else
+        {
+            logger.LogError("{Func}: An exception ({ExceptionMsg}) happened at remote server.", func, exceptionMsg);
+        }
+
+        return error;
+    }
 
 
     /// <inheritdoc />

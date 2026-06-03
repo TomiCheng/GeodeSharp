@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using Geode.Client.Internal;
 using Geode.Client.Services;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -26,15 +27,15 @@ namespace Geode.Client.Protocol;
 /// result directly when they want full control over reply dispatch.
 /// </para>
 /// <para>
-/// All MessageTypes use <see cref="MetaTransactionId"/> = -1 unless they
-/// participate in a Geode transaction (Phase 11+). Mirrors cppcache
-/// <c>TcrMessage::writeHeader</c>: <c>m_txId = -1</c> when no
-/// <c>TxState</c> is present.
+/// Every <see cref="TcrMessage"/> header stamps the ambient
+/// <see cref="TSSTXStateWrapper.Current"/>'s transaction id (or <c>-1</c>
+/// when none), read at <see cref="BuildAsync"/> time. Mirrors cppcache
+/// <c>TcrMessage::writeHeader</c> peeking
+/// <c>TSSTXStateWrapper::get().getTXState()</c>.
 /// </para>
 /// </remarks>
 internal sealed partial class TcrMessageBuilder(IServiceProvider serviceProvider, MessageType messageType)
 {
-    int _transactionId = -1;
     byte _earlyAck = 0;
     readonly List<TcrPartBuilder> _tcrPartBuilders = [];
     readonly SerializationRegistry _serializationRegistry = serviceProvider.GetRequiredService<SerializationRegistry>();
@@ -142,7 +143,8 @@ internal sealed partial class TcrMessageBuilder(IServiceProvider serviceProvider
         // sp-teardown path, and ActivatorUtilities would re-enter the
         // disposing ServiceProvider to resolve `IServiceProvider`, throwing
         // ObjectDisposedException. We already hold every ctor arg.
-        return new TcrMessage(serviceProvider, messageType, _transactionId, _earlyAck, parts);
+        var transactionId = TSSTXStateWrapper.Current?.TransactionId.Id ?? -1;
+        return new TcrMessage(serviceProvider, messageType, transactionId, _earlyAck, parts);
 
     }
 }

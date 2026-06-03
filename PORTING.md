@@ -114,7 +114,7 @@ C# 公開介面:`Geode.Client.IRegion` + `Geode.Client.IRegion<TKey,TValue>`(typ
 - 🔨 `Remove`(strict)值不符回 false
 - ✅ `DestroyAsync` 移除已存在 entry(LocalCount 1→0)
 - ✅ `DestroyAsync` 對 missing key lenient 靜默成功(對映 cppcache `destroy()` NORMAL flag,afterRemote 容忍 not-found)
-- 🔨 `Invalidate` 命中 server
+- 🌐 `InvalidateAsync` 清值留 key:put → invalidate → 值清(get miss 觸發重載)、key 留(對比 `DestroyAsync` 移除整 entry)。管線 `InvalidateActions`(鏡像 Put/Destroy)→ `InvalidateLocalAsync`(cppcache `LocalRegion::invalidateLocal`)→ `ConcurrentEntriesMap.InvalidateAsync`(攤平 `ConcurrentEntriesMap::invalidate` + `MapSegment::invalidate`:設 `CacheableToken.Invalid`、留 key、tombstone/absent → `CacheEntryNotFound`);remote 走 `ThinClientRegion.InvalidateNoThrowRemoteAsync`(`TcrMessageInvalidate`)。單元:Local/LocalEntryLru;整合:CachingProxy `put→invalidate→get` round-trip 回 null
 - 🔨 `Clear` 清空 region
 - ✅ `ContainsKeyAsync` 本地查(5 種 RegionShortcut;Proxy 永遠 false,caching 走 local map,tombstone 算 false)
 - 🌐 `ContainsKeyOnServerAsync` 查 server:LocalRegion 拋 `NotSupportedException`,ThinClientRegion 走 wire。10 單元(5 shortcut × true/false,wire-going 用 `ServerOptional`)+ 6 整合(真 server:`AfterPut`→true / `NeverPut`→false)
@@ -155,8 +155,8 @@ C# 公開介面:`Geode.Client.IRegion` + `Geode.Client.IRegion<TKey,TValue>`(typ
 
 - ✅ `LRULocalDestroyAction`(`LocalDestroy`,count + heap 預設)
 - 🚧 `LRUDestroyAction`(`Destroy`)— 實作完成,但 factory 不選此 action(不可達 + 無測試)
-- 🔨 `LRULocalInvalidateAction`(`Invalidate`)— 不可達;且需先實作 region
-  `InvalidateAsync`(目前 NIE)
+- 🔨 `LRULocalInvalidateAction`(`Invalidate`)— 不可達(factory 不選此 action);
+  region `InvalidateAsync` 已實作,此 action 的 `EvictAsync` 仍待接
 - 🔨 `LRUOverFlowToDiskAction`(`OverflowToDisk`)— value 寫磁碟
   (`IPersistenceManager.WriteAsync`)+ 記憶體換 overflow token;待 Phase 4
   persistence manager 實作

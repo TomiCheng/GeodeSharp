@@ -1460,8 +1460,105 @@ internal partial class LocalRegion : RegionInternal
     }
 
     /// <inheritdoc />
-    public override Task InvalidateAsync(object key, object? callback = null, CancellationToken ct = default) =>
-        throw new NotImplementedException("LocalRegion.InvalidateAsync: pending local entry map.");
+    public override async Task InvalidateAsync(object key, object? callback = null, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        await InvalidateNoThrowAsync(
+            key, callback,
+            updateCount: -1,
+            eventFlags: CacheEventFlags.Normal,
+            ct: ct).ConfigureAwait(false);
+    }
+
+    internal async Task InvalidateNoThrowAsync(
+        object key,
+        object? callbackArgument,
+        int updateCount,
+        CacheEventFlags eventFlags,
+        VersionTag? versionTag = null,
+        CancellationToken ct = default)
+    {
+        var action = InvalidateActions.Create(_serviceProvider, this, key, callbackArgument, updateCount, eventFlags, versionTag);
+        await UpdateNoThrowAsync(action, ct).ConfigureAwait(false);
+    }
+
+    internal virtual Task<VersionTag?> InvalidateNoThrowRemoteAsync(
+        object key,
+        object? aCallbackArgument,
+        CancellationToken ct = default)
+        => Task.FromResult((VersionTag?)null);
+
+    internal async Task InvalidateLocalAsync(
+        string name,
+        object key,
+        object? value,
+        CacheEventFlags eventFlags,
+        VersionTag? versionTag,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(key, nameof(key));
+        await CheckDestroyPendingAsync(ct);
+
+        var cachingEnabled = Attributes.CachingEnabled;
+        object? oldValue;
+        MapEntry? me;
+
+        if (!eventFlags.IsNotification() || GetProcessedMarker())
+        {
+            if (cachingEnabled)
+            {
+                _logger.LogDebug("{Name}: region [{FullPath}] invalidating key [{Key}], value [{Value}]",
+                    name, FullPath, key, value);
+                try
+                {
+                    (me, oldValue) = await InternalEntriesMap.InvalidateAsync(key, versionTag, ct);
+                    _logger.LogDebug("Region::invalidate: region [{FullPath}] invalidated key [{Key}]",
+                        FullPath, key);
+                }
+                catch (Exception ex)
+                {
+                    if (eventFlags.IsNotification())
+                    {
+                        _logger.LogDebug(ex, "Region::invalidate: region [{FullPath}] invalidate key [{Key}] failed",
+                            FullPath, key);
+                    }
+
+                    if (ex is GfErrTypeException ex1)
+                    {
+                        if (ex1.Code == GfErrType.CacheConcurrentModificationException)
+                        {
+                            _logger.LogDebug(
+                                "Region::invalidateLocal: invalidate for key [{Key}] failed because the cache already contains an entry with higher version. The cache listener will not be invoked.",
+                                key);
+                            return;
+                        }
+                        if (!eventFlags.IsNotification() || ex1.Code != GfErrType.CacheEntryNotFound)
+                        {
+                            throw;
+                        }
+                    }
+                    else
+                    {
+                        throw;
+                    }
+                }
+
+                // entry/region expiration
+                if (!eventFlags.IsEvictOrExpire())
+                {
+                    UpdateAccessAndModifiedTime(true);
+                }
+            }
+        }
+        else
+        {
+            if (cachingEnabled)
+            {
+                (_, _) = InternalEntriesMap.GetEntry(key);
+
+            }
+        }
+    }
 
     /// <inheritdoc />
     public override Task PutAllAsync(IReadOnlyDictionary<object, object> map, object? callback = null, CancellationToken ct = default) =>

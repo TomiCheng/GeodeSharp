@@ -43,6 +43,12 @@ internal abstract class EntriesMap
         VersionTag? versionTag,
         bool afterRemote,
         CancellationToken ct = default);
+
+    public abstract Task<(MapEntry? Entry, object? OldValue)> InvalidateAsync(
+        object key,
+        VersionTag? versionTag = null,
+        CancellationToken ct = default);
+
     public abstract void RemoveTrackerForEntry(object key);
 
     public abstract int Count { get; }

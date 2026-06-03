@@ -227,6 +227,48 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider, EntryFacto
         // cppcache: `if (oldValue) me = entryImpl;` — entry 只在 value 非 null 時帶出。
         return Task.FromResult<(MapEntry?, object?)>((oldValue is null ? null : entry, oldValue));
     }
+
+    public override Task<(MapEntry? Entry, object? OldValue)> InvalidateAsync(
+        object key,
+        VersionTag? versionTag = null,
+        CancellationToken ct = default)
+    {
+        if (!_map.TryGetValue(key, out var existing))
+        {
+            // cppcache MapSegment::invalidate else-branch: key absent. Under
+            //   concurrency-checks seed an INVALID token (so a later versioned
+            //   update has a stamp to compare), count it, then report not-found.
+            if (region.Attributes.ConcurrencyChecksEnabled)
+            {
+                _map[key] = factory.NewEntry(key, CacheableToken.Invalid,
+                    updateCount: -1, destroyTracker: -1, versionTag);
+                Interlocked.Increment(ref _size);
+            }
+            throw new GfErrTypeException(GfErrType.CacheEntryNotFound);
+        }
+
+        if (region.Attributes.ConcurrencyChecksEnabled
+            && versionTag is not null
+            && existing is IVersionStamp stamp)
+        {
+            stamp.Stamp.ProcessVersionTag(region, key, versionTag, deltaCheck: false);
+            stamp.Stamp.SetVersions(versionTag);
+        }
+
+        var oldValue = existing.Value;
+        if (CacheableToken.IsTombstone(oldValue))
+        {
+            throw new GfErrTypeException(GfErrType.CacheEntryNotFound);
+        }
+
+        existing.Value = CacheableToken.Invalid;
+        IncrementUpdateCount(key, existing);
+
+        // cppcache: me carried out only when there was a live old value; _size
+        //   unchanged on a hit (the key stays, just its value is invalidated).
+        return Task.FromResult<(MapEntry?, object?)>((oldValue is null ? null : existing, oldValue));
+    }
+
     public override void RemoveTrackerForEntry(object key)
         => throw new NotImplementedException();
 

@@ -623,6 +623,16 @@ internal partial class ThinClientRegion(
     /// every pool-mode <c>PutAsync</c>; translation lands when wire
     /// pipeline is filled in line-by-line.
     /// </summary>
+    // cppcache ThinClientRegion::createNoThrow_remote (ThinClientRegion.cpp:950-957):
+    //   wire create reuses the put message — delegate to putNoThrow_remote with
+    //   checkDelta=false (create never carries a delta).
+    internal override Task<VersionTag?> CreateNoThrowRemoteAsync(
+        object key,
+        object? value,
+        object? aCallbackArgument,
+        CancellationToken ct = default)
+        => PutNoThrowRemoteAsync(key, value, aCallbackArgument, checkDelta: false, ct);
+
     internal override async Task<VersionTag?> PutNoThrowRemoteAsync(
         object key,
         object? value,

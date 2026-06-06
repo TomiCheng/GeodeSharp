@@ -1,44 +1,20 @@
 using Xunit;
 
-namespace Geode.Client.Tests.Region.LocalEntryLru;
+namespace Geode.Client.IntegrationTests.Region.LocalEntryLru;
 
 /// <summary>
-/// <see cref="IRegion.CreateAsync"/> behavioural tests for
-/// <see cref="RegionShortcut.LocalEntryLru"/>.
+/// Integration counterpart of
+/// <c>Geode.Client.Tests.Region.LocalEntryLru.LocalEntryLruCreateAsyncTests</c>.
+/// Pool exists on the cache but the region is
+/// <see cref="RegionShortcut.LocalEntryLru"/> — strict create stays pure-local;
+/// the LRU bound doesn't change the semantics.
 /// </summary>
-public class LocalEntryLruCreateAsyncTests(IGeodeCacheFactory factory)
+[Collection(nameof(GeodeCollection))]
+public class LocalEntryLruCreateAsyncTests(GeodeFixture fx, IGeodeCacheFactory factory)
 {
     private Task<IGeodeCache> NewCacheAsync(string name) =>
         factory.CreateAsync(name, ct: default);
 
-    [Fact(Skip = "Pending ct entry guard")]
-    public async Task CreateAsync_AlreadyCancelledToken_Throws()
-    {
-        const string cacheName = nameof(LocalEntryLruCreateAsyncTests);
-        try
-        {
-            var cache = await NewCacheAsync(cacheName);
-            var region = await cache
-                .CreateRegionFactory(RegionShortcut.LocalEntryLru)
-                .CreateAsync<string, string>("orders", TestContext.Current.CancellationToken);
-
-            using var cts = new CancellationTokenSource();
-            await cts.CancelAsync();
-
-            await Assert.ThrowsAsync<OperationCanceledException>(
-                () => region.CreateAsync("k", "v", ct: cts.Token));
-        }
-        finally
-        {
-            await factory.DisposeCacheAsync(cacheName);
-        }
-    }
-
-    // Strict insert on a fresh key: the entry must land in the local map
-    // (LocalCount 0 -> 1) and be readable back. Same CreateActions pipeline
-    // as Local; the LRU bound doesn't change strict-create semantics. Red
-    // until RegionInternal.CreateAsync's NIE is replaced by the
-    // UpdateNoThrowAsync<CreateActions> wiring.
     [Fact]
     public async Task CreateAsync_NewKey_StoresEntry()
     {
@@ -47,6 +23,9 @@ public class LocalEntryLruCreateAsyncTests(IGeodeCacheFactory factory)
         try
         {
             var cache = await NewCacheAsync(cacheName);
+            await cache.PoolManager.CreateFactory()
+                .AddServer(fx.LocatorHost, fx.ServerPort)
+                .BuildAsync("pool", ct);
             var region = await cache
                 .CreateRegionFactory(RegionShortcut.LocalEntryLru)
                 .CreateAsync<string, string>("orders", ct);
@@ -62,9 +41,6 @@ public class LocalEntryLruCreateAsyncTests(IGeodeCacheFactory factory)
         }
     }
 
-    // Strict semantics: a second create on an existing key must throw
-    // EntryExistsException (cppcache CreateActions::s_failIfPresent = true,
-    // LocalRegion.cpp:1188).
     [Fact]
     public async Task CreateAsync_ExistingKey_ThrowsEntryExists()
     {
@@ -73,6 +49,9 @@ public class LocalEntryLruCreateAsyncTests(IGeodeCacheFactory factory)
         try
         {
             var cache = await NewCacheAsync(cacheName);
+            await cache.PoolManager.CreateFactory()
+                .AddServer(fx.LocatorHost, fx.ServerPort)
+                .BuildAsync("pool", ct);
             var region = await cache
                 .CreateRegionFactory(RegionShortcut.LocalEntryLru)
                 .CreateAsync<string, string>("orders", ct);

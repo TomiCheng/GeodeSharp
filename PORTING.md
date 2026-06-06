@@ -127,7 +127,7 @@ C# 公開介面:`Geode.Client.IRegion` + `Geode.Client.IRegion<TKey,TValue>`(typ
 - 🔨 `RemoveAll` 一次刪多筆
 
 ## 嚴格語意(throw on miss/exists)
-- 🔨 `Create` 重複拋 `EntryExistsException`
+- 🌐 `CreateAsync` 嚴格插入:新 key 存值、重複 key 拋 `EntryExistsException`。管線 `CreateActions`(鏡像 `PutActions`,差 `FailIfPresent=true`、`isCreate=true`、`Before/AfterCreate` event、`GetCallbackOldValue` 空 no-op)→ `CreateNoThrowAsync` → `UpdateNoThrowAsync` → `PutLocalAsync(isCreate:true)` → `ConcurrentEntriesMap.CreateAsync`(攤平 `ConcurrentEntriesMap::create` + `MapSegment::create`:live value → `EntryExistsException`、空 slot / tombstone 可 revive、`++_size`);remote 走 `ThinClientRegion.CreateNoThrowRemoteAsync`(鏡像 cppcache `createNoThrow_remote`,委派 `PutNoThrowRemoteAsync` checkDelta=false,wire 重用 PUT 訊息)。value **可為 null**(cppcache `CreateActions::checkArgs` 只擋 key)。單元:Local/LocalEntryLru(new-key 存值 + 重複拋);整合:5 shortcut。**Proxy 例外**:無本地 map + wire 是 plain PUT(`operation=null`/`flags=0`,無 ifNew)→ create 退化成 put-overwrite,**不拋** `EntryExists`(cppcache parity;Java client 才送 `Operation.CREATE`)
 - 🔨 `LocalDestroyAsync` 缺漏拋 `EntryNotFoundException`(對映 cppcache `localDestroy()` LOCAL flag 的 strict 語意 — API 未實作)
 - ✅ `DestroyAsync` 對 missing 不拋(lenient,跟 cppcache `destroy()` NORMAL flag 一致;見 CRUD 段) 
 
@@ -319,7 +319,7 @@ cppcache `ExceptionTypes.hpp` 58 個 exception。原則二能 BCL 取代的就�
 - ✅ `NotConnectedException` — wire 斷
 - ✅ `AllConnectionsInUseException` — pool 滿
 - 🔨 `EntryNotFoundException` — class 已建,尚無 consumer 拋(等 `LocalDestroyAsync` strict path 上線觸發)
-- 🔨 `EntryExistsException` — class 已建,尚無 consumer 拋(等 `Create` strict path 上線觸發)
+- 🌐 `EntryExistsException` — `Create` 對既存 key 拋(caching 模式本地 `ConcurrentEntriesMap.CreateAsync` FailIfPresent;`LocalCreateAsyncTests` 單元 + CachingProxy/CachingProxyEntryLru 整合驗。Proxy 模式退化 put-overwrite 不拋 — 見 Region §嚴格語意)
 - 🔨 `RegionDestroyedException` — region 已銷毀(目前走 text-coded `CacheServerException`)
 - 🔨 `CacheLoaderException` — class 已建 + consumer 已接(`GetNoThrowAsync` loader catch 包 `LoadAsync` 例外);throw path 未測
 - 🔨 `CacheListenerException` — class 已建 + consumer 已接(`InvokeCacheListenerForEntryEvent` catch 包 listener callback 例外,`OperationCanceledException` 放行);throw path 未測

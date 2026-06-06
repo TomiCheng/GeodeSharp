@@ -30,7 +30,7 @@ public interface IRegion
     /// <summary>
     /// Strict insert; throws when <paramref name="key"/> already exists.
     /// </summary>
-    Task CreateAsync(object key, object value, object? callbackArgument = null, CancellationToken ct = default);
+    Task CreateAsync(object key, object? value, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <summary>
     /// Creates a sub-region named <paramref name="name"/> with <paramref name="attributes"/>.
@@ -160,7 +160,8 @@ public interface IRegion
     /// <summary>
     /// Put every entry in <paramref name="map"/> on the server in one roundtrip.
     /// </summary>
-    Task PutAllAsync(IReadOnlyDictionary<object, object> map, object? callbackArgument = null, CancellationToken ct = default);
+    Task PutAllAsync(IReadOnlyDictionary<object, object> map, object? callbackArgument = null,
+        CancellationToken ct = default);
 
     /// <summary>
     /// Put <paramref name="value"/> under <paramref name="key"/> on the server.
@@ -192,17 +193,14 @@ public interface IRegion
     /// <summary>
     /// Registers subscription interest in keys matching <paramref name="regex"/>. See <see cref="RegisterKeysAsync"/> for the flag semantics.
     /// </summary>
-    Task RegisterRegexAsync(
-        string regex,
-        bool isDurable = false,
-        bool getInitialValues = false,
-        bool receiveValues = true,
-        CancellationToken ct = default);
+    Task RegisterRegexAsync(string regex, bool isDurable = false, bool getInitialValues = false,
+        bool receiveValues = true, CancellationToken ct = default);
 
     /// <summary>
     /// Remove every key in <paramref name="keys"/> from the region in one server roundtrip.
     /// </summary>
-    Task RemoveAllAsync(IReadOnlyCollection<object> keys, object? callbackArgument = null, CancellationToken ct = default);
+    Task RemoveAllAsync(IReadOnlyCollection<object> keys, object? callbackArgument = null,
+        CancellationToken ct = default);
 
     /// <summary>
     /// Conditional remove: removes <paramref name="key"/> only when its current value
@@ -320,7 +318,7 @@ public interface IRegion<TKey, TValue> : IRegion
     bool ContainsValueForKey(TKey key);
 
     /// <inheritdoc cref="IRegion.CreateAsync(object, object, object?, CancellationToken)" />
-    Task CreateAsync(TKey key, TValue value, object? callbackArgument = null, CancellationToken ct = default);
+    Task CreateAsync(TKey key, TValue? value, object? callbackArgument = null, CancellationToken ct = default);
 
     /// <inheritdoc cref="IRegion.DestroyAsync(object, object?, CancellationToken)" />
     Task DestroyAsync(TKey key, object? callbackArgument = null, CancellationToken ct = default);

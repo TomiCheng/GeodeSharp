@@ -11,10 +11,10 @@ internal abstract class EntriesMap
         => throw new NotImplementedException();
     public abstract Task ClearAsync(CancellationToken ct = default);
     public abstract bool ContainsKey(object key);
-    public Task<(MapEntry? Entry, object? OldValue)> CreateAsync(object key, object newValue, int updateCount,
+    public abstract Task<(MapEntry? Entry, object? OldValue)> CreateAsync(object key, object newValue, int updateCount,
         int destroyTracker,
         VersionTag? versionTag,
-        CancellationToken ct = default) => throw new NotImplementedException();
+        CancellationToken ct = default);
     public virtual ValueTask DisposeAsync() => ValueTask.CompletedTask;
     public abstract (MapEntry? Entry, object? Value) GetEntry(object key);
 

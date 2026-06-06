@@ -1394,6 +1394,28 @@ internal partial class LocalRegion : RegionInternal
         throw new NotSupportedException("LocalRegion.ContainsKeyOnServerAsync: not supported on a server-less region.");
 
     /// <inheritdoc />
+    public override async Task CreateAsync(object key, object? value, object? callbackArgument = null,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        await CreateNoThrowAsync(key, value, callbackArgument, -1, CacheEventFlags.Normal, ct)
+            .ConfigureAwait(false);
+    }
+
+    internal async Task CreateNoThrowAsync(object key, object? value, object? callbackArgument,
+        int updateCount, CacheEventFlags eventFlags, CancellationToken ct = default)
+    {
+        var create = CreateActions.Create(_serviceProvider, this, key, value, callbackArgument, updateCount, eventFlags);
+        await UpdateNoThrowAsync(create, ct);
+    }
+
+    internal virtual Task<VersionTag?> CreateNoThrowRemoteAsync(object key, object? value, object? aCallbackArgument,
+        CancellationToken ct = default)
+    {
+        return Task.FromResult((VersionTag?)null);
+    }
+    
+    /// <inheritdoc />
     public override async Task DestroyAsync(object key, object? callbackArgument = null, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
@@ -1554,7 +1576,8 @@ internal partial class LocalRegion : RegionInternal
     public override Task PutAllAsync(IReadOnlyDictionary<object, object> map, object? callback = null, CancellationToken ct = default) =>
         throw new NotImplementedException("LocalRegion.PutAllAsync: pending local entry map.");
 
-    public override async Task PutAsync(object key, object? value, object? callbackArgument = null, CancellationToken ct = default)
+    public override async Task PutAsync(object key, object? value, object? callbackArgument = null,
+        CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         var sampleStartTimestamp = Stopwatch.GetTimestamp();
@@ -1568,9 +1591,6 @@ internal partial class LocalRegion : RegionInternal
         }
         finally
         {
-            // cppcache updateStatOpTime (LocalRegion.cpp:364) — record
-            // regardless of success / failure so the histogram counts
-            // both outcomes.
             _regionStats.Put(Stopwatch.GetElapsedTime(sampleStartTimestamp));
         }
     }

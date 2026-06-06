@@ -79,17 +79,9 @@ internal abstract class RegionInternal(RegionAttributes attributes)
     public virtual bool ContainsValueForKey(object key) =>
         throw new NotImplementedException("Local entry map not yet implemented.");
 
-    // ── Phase 2+ surface (cppcache Region.hpp full parity) ─────
-    // All NIE stubs. Bodies arrive with their respective feature
-    // ports: strict semantics (create/destroy) once `EntryExistsException`
-    // / `EntryNotFoundException` paths land; iteration / size / entries
-    // when the local entry map ships; attributes / mutator when the
-    // mutator type is fleshed out; RegionService back-ref when the
-    // cache → region back-pointer is wired.
-
     /// <inheritdoc />
-    public virtual Task CreateAsync(object key, object value, object? callback = null, CancellationToken ct = default) =>
-        throw new NotImplementedException("Strict CreateAsync is not yet wired (Phase 2+).");
+    public abstract Task CreateAsync(object key, object? value, object? callbackArgument = null,
+        CancellationToken ct = default);
 
     /// <inheritdoc />
     public virtual IRegion CreateSubregion(string name, RegionAttributes attributes) =>

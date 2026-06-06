@@ -250,8 +250,8 @@ internal sealed class RegionView<TKey, TValue>(IRegion inner, TypedResultAdapter
     // Typed pairs follow the Put/Get/Remove pattern: typed overload
     // boxes into the non-generic inner call.
 
-    public Task CreateAsync(TKey key, TValue value, object? callback = null, CancellationToken ct = default)
-        => inner.CreateAsync(key!, value!, callback, ct);
+    public Task CreateAsync(TKey key, TValue? value, object? callback = null, CancellationToken ct = default)
+        => inner.CreateAsync(key!, value, callback, ct);
 
     public Task DestroyAsync(TKey key, object? callback = null, CancellationToken ct = default)
         => inner.DestroyAsync(key!, callback, ct);
@@ -283,7 +283,7 @@ internal sealed class RegionView<TKey, TValue>(IRegion inner, TypedResultAdapter
 
     // Object-typed explicit forwarders so an IRegion reference sees the
     // base surface unchanged (the typed Keys/Values above shadow via `new`).
-    Task IRegion.CreateAsync(object key, object value, object? callback, CancellationToken ct)
+    Task IRegion.CreateAsync(object key, object? value, object? callback, CancellationToken ct)
         => inner.CreateAsync(key, value, callback, ct);
     Task IRegion.DestroyAsync(object key, object? callback, CancellationToken ct)
         => inner.DestroyAsync(key, callback, ct);

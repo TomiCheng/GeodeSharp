@@ -44,6 +44,62 @@ internal class ConcurrentEntriesMap(IServiceProvider serviceProvider, EntryFacto
         return (entry, value);
     }
 
+    public override Task<(MapEntry? Entry, object? OldValue)> CreateAsync(object key, object newValue,
+        int updateCount, int destroyTracker, VersionTag? versionTag, CancellationToken ct = default)
+    {
+        // cppcache ConcurrentEntriesMap::create (ConcurrentEntriesMap.cpp:75-88) +
+        //   MapSegment::create (MapSegment.cpp:66-123) 攤平 — ConcurrentDictionary
+        //   自管分段鎖 + rehash,兩層收成一層(同 PutAsync / RemoveAsync）。
+
+        // cppcache find == end → putNoEntry：全新 entry,oldValue 留 null。
+        if (!_map.TryGetValue(key, out var existing))
+        {
+            var fresh = factory.NewEntry(key, newValue, updateCount, destroyTracker, versionTag);
+            _map[key] = fresh;
+            // ConcurrentEntriesMap::create L84-85 — ++m_size when oldValue == null.
+            Interlocked.Increment(ref _size);
+            return Task.FromResult<(MapEntry?, object?)>((fresh, null));
+        }
+
+        // cppcache entryImpl->getValueI(oldValue). 有 live value(非 null、非 tombstone)
+        //   → GF_CACHE_ENTRY_EXISTS (MapSegment.cpp:115)。strict create 直接丟使用者可見
+        //   的 EntryExistsException(終端錯誤,非 pipeline 訊號,不走 GfErrTypeException)。
+        var oldValue = existing.Value;
+        if (oldValue is not null && !CacheableToken.IsTombstone(oldValue))
+        {
+            throw new EntryExistsException($"Entry already exists for key on '{region.FullPath}'.");
+        }
+
+        // cppcache L92-101 — 空 slot / tombstone 才可 revive,先過 version stamp。
+        VersionStamp? versionStamp = null;
+        if (region.Attributes.ConcurrencyChecksEnabled && existing is IVersionStamp stampHolder)
+        {
+            versionStamp = stampHolder.Stamp;
+            if (versionTag is not null)
+            {
+                versionStamp.ProcessVersionTag(region, key, versionTag, deltaCheck: false);
+                versionStamp.SetVersions(versionTag);
+            }
+        }
+
+        if (oldValue is null)
+        {
+            // cppcache L103-105 — 空 slot → putForTrackedEntry(原地寫回)。
+            PutForTrackedEntry(existing, key, newValue, updateCount, delta: null, versionStamp);
+            Interlocked.Increment(ref _size);
+            return Task.FromResult<(MapEntry?, object?)>((existing, null));
+        }
+
+        // cppcache L106-110 — tombstone → remove_entry + 全新 putNoEntry。
+        region._tombstoneList?.Erase(key);
+        _map.TryRemove(key, out var tombstoned);
+        var revived = factory.NewEntry(key, newValue, updateCount, destroyTracker, versionTag,
+            carriedStamp: (tombstoned as IVersionStamp)?.Stamp);
+        _map[key] = revived;
+        Interlocked.Increment(ref _size);
+        return Task.FromResult<(MapEntry?, object?)>((revived, null));
+    }
+
     public override Task<(MapEntry Entry, object? OldValue, bool IsUpdate)> PutAsync(object key, object newValue,
         int updateCount, int destroyTracker, VersionTag? versionTag, DataInput? delta = null,
         CancellationToken ct = default)

@@ -30,9 +30,17 @@ public sealed class RegionAttributes : ICloneable
     public CacheDiskPolicy DiskPolicy { get; set; } = CacheDiskPolicy.None;
 
     /// <summary>
-    /// Action applied to an LRU-evicted entry (local-destroy / invalidate).
+    /// Vestigial parity field for cppcache <c>RegionAttributes::m_lruEvictionAction</c>
+    /// — <b>does not drive eviction</b>. The real LRU eviction action is derived from
+    /// <see cref="DiskPolicy"/> in <c>EntriesMapFactory</c> (<c>Overflows</c> →
+    /// overflow-to-disk, else local-destroy), exactly as cppcache's
+    /// <c>EntriesMapFactory::createMap</c> does — neither reads this field. cppcache
+    /// keeps <c>m_lruEvictionAction</c> only for attribute <c>toData</c>/<c>fromData</c>
+    /// + equality; it is <c>internal</c> here for that future serialization parity,
+    /// not a public knob (Geode's <c>EvictionAction</c> has no invalidate variant, so
+    /// setting it could never select an invalidate action anyway).
     /// </summary>
-    public CacheExpirationAction LruEvictionAction { get; set; } = CacheExpirationAction.LocalDestroy;
+    internal CacheExpirationAction LruEvictionAction { get; set; } = CacheExpirationAction.LocalDestroy;
 
     // ── Caching / cloning / concurrency ──────────────────────────
 

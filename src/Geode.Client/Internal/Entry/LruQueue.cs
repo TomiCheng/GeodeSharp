@@ -6,7 +6,7 @@ namespace Geode.Client.Internal.Entry;
 
 internal class LruQueue
 {
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
     private readonly LinkedList<MapEntry> _container = new();
     private readonly Dictionary<MapEntry, LinkedListNode<MapEntry>> _nodes = [];
 

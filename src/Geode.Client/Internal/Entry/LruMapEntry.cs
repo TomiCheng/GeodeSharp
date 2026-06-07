@@ -7,7 +7,7 @@ internal class LruMapEntry(object key)
 
     public LruEntryProperties LruProperties => _lruEntryProperties;
 
-    public void Cleanup(CacheEventFlags eventFlags)
+    public override void Cleanup(CacheEventFlags eventFlags)
     {
         // cppcache LRUMapEntry::cleanup (LRUMapEntry.hpp:73-79): on a
         // non-eviction removal, unlink this entry from the LRU list. cppcache

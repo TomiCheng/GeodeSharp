@@ -146,20 +146,16 @@ C# 公開介面:`Geode.Client.IRegion` + `Geode.Client.IRegion<TKey,TValue>`(typ
 ### LRU Type
 
 - ✅ Count LRU
-- 🚧 Heap LRU(端到端可動;偏離見 NOTE.md)
+- ✅ Heap LRU(`HeapLruEvictionTests` 端到端綠:背景 `EvictionController` → `LRULocalDestroyAction`;偏離見 NOTE.md)
 
-### LRUAction(4 subclass)
-> `EntriesMapFactory` 只依 DiskPolicy 在 `LocalDestroy` / `OverflowToDisk`
-> 間選(line 63 寫死,不讀 `LruEvictionAction`,鏡像 cppcache)→
-> `Destroy` / `Invalidate` 結構性不可達。
+### Eviction action
 
-- ✅ `LRULocalDestroyAction`(`LocalDestroy`,count + heap 預設)
-- 🚧 `LRUDestroyAction`(`Destroy`)— 實作完成,但 factory 不選此 action(不可達 + 無測試)
-- 🔨 `LRULocalInvalidateAction`(`Invalidate`)— 不可達(factory 不選此 action);
-  region `InvalidateAsync` 已實作,此 action 的 `EvictAsync` 仍待接
-- 🔨 `LRUOverFlowToDiskAction`(`OverflowToDisk`)— value 寫磁碟
-  (`IPersistenceManager.WriteAsync`)+ 記憶體換 overflow token;待 Phase 4
-  persistence manager 實作
+`EntriesMapFactory` 只依 DiskPolicy 選 `LocalDestroy` / `OverflowToDisk`(寫死,鏡像 cppcache `EntriesMapFactory::createMap`),所以使用者碰得到的 eviction 行為只有兩種:
+
+- ✅ `LRULocalDestroyAction`(`LocalDestroy`,count + heap 預設)— `HeapLruEvictionTests` 端到端驗
+- ✅ `LRUOverFlowToDiskAction`(`OverflowToDisk`)— 寫盤 / get 讀回 / 覆寫 overflowed key 三條路全測(`OverflowEvictionTests` 2 案例,鏡像 cppcache `LRUEntriesMap::put`);`LRUEntriesMap` 零 NIE。**內建** production PM(file/sqlite)待 Phase 4,擴充點 + action 本身已綠
+
+> cppcache `LRUAction` 另有 `LRULocalInvalidateAction` / `LRUDestroyAction`,我們完整鏡像了;但 factory 永不選它們(cppcache `newLRUAction` 的 `DESTROY` 也是接到 `LocalDestroy`)→ 結構性不可達、使用者看不到,純結構 parity,不列為行為條目。
 
 ## 列舉 / 巡訪
 - 🔨 `Keys` / `Values` / `Entries` 列 local
